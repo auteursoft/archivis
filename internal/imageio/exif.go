@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -91,6 +92,9 @@ func parseTIFFMeta(t *tiffReader, ifd0 uint32, m *Meta) []jpegCandidate {
 				if eo, ok := d.uint(tagExifIFD); ok {
 					if e, _, err := t.readIFD(eo); err == nil {
 						fillExif(e, m)
+						if m.Lens == "" {
+							m.Lens = makerNoteLens(e, m.Make)
+						}
 					}
 				}
 				if g, ok := d.uint(tagGPSIFD); ok {
@@ -290,4 +294,68 @@ func parseJPEGExif(r io.ReaderAt, off int64, m *Meta) {
 		}
 		pos += 2 + ln
 	}
+}
+
+const (
+	tagMakerNote      = 0x927C
+	tagCanonLensModel = 0x0095 // Canon maker note: lens name
+	tagNikonLens      = 0x0084 // Nikon maker note: focal and aperture range
+)
+
+// makerNoteLens reads the lens from the camera maker's private notes, for
+// cameras that predate the EXIF LensModel tag (most before ~2012). Canon
+// records the lens name; Nikon only its focal and aperture range, which is
+// formatted the way Nikon names lenses ("24-70mm f/2.8"). Other makers'
+// notes are not read.
+func makerNoteLens(exif *ifd, make string) string {
+	e, ok := exif.entries[tagMakerNote]
+	if !ok || e.Count < 16 {
+		return ""
+	}
+	t := exif.t
+	off := t.bo.Uint32(e.inl[:])
+	mk := strings.ToUpper(make)
+	switch {
+	case strings.HasPrefix(mk, "CANON"):
+		// a plain IFD; offsets are relative to the enclosing TIFF header
+		d, _, err := t.readIFD(off)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(d.str(tagCanonLensModel))
+	case strings.HasPrefix(mk, "NIKON"):
+		// "Nikon\0" + version (4 bytes), then a TIFF header of its own
+		var hdr [6]byte
+		if _, err := t.r.ReadAt(hdr[:], t.base+int64(off)); err != nil || string(hdr[:]) != "Nikon\x00" {
+			return ""
+		}
+		nt, ifd0, err := newTIFFReader(t.r, t.base+int64(off)+10, t.size)
+		if err != nil {
+			return ""
+		}
+		d, _, err := nt.readIFD(ifd0)
+		if err != nil {
+			return ""
+		}
+		return nikonLensName(d.floats(tagNikonLens))
+	}
+	return ""
+}
+
+// nikonLensName formats Nikon's lens tag {min focal, max focal, f-number at
+// min focal, f-number at max focal}: "24-70mm f/2.8", "18-55mm f/3.5-5.6",
+// "50mm f/1.4".
+func nikonLensName(v []float64) string {
+	if len(v) != 4 || !(v[0] > 0) || !(v[1] >= v[0]) || !(v[2] > 0) || v[1] > 5000 || v[2] > 64 {
+		return ""
+	}
+	n := strconv.FormatFloat(v[0], 'f', -1, 64)
+	if v[1] > v[0] {
+		n += "-" + strconv.FormatFloat(v[1], 'f', -1, 64)
+	}
+	n += "mm f/" + strconv.FormatFloat(v[2], 'f', -1, 64)
+	if v[3] > v[2] {
+		n += "-" + strconv.FormatFloat(v[3], 'f', -1, 64)
+	}
+	return n
 }

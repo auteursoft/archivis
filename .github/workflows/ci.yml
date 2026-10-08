@@ -77,6 +77,42 @@ jobs:
           ONNXRUNTIME_LIB: ${{ env.DATA }}/lib/${{ matrix.lib }}
         run: go test -count=1 -v -run 'Faces|CLIP|Tokenizer' ./internal/ml/
 
+  # Real camera files (Canon CR2, Nikon NEF, DNG, iPhone HEIC), downloaded
+  # with pinned checksums by tools/samples/fetch.sh. On macOS, HEIC goes
+  # through sips; on Linux through libheif's heif-convert.
+  samples:
+    name: camera files (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install a HEIF converter
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq libheif-examples libheif-plugin-libde265
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/../samples
+          key: samples-${{ hashFiles('tools/samples/fetch.sh') }}
+      - run: tools/samples/fetch.sh "$GITHUB_WORKSPACE/../samples"
+      - name: Sample tests
+        shell: bash
+        env:
+          ARCHIVIS_REQUIRE_SAMPLES: "1"
+        run: |
+          ARCHIVIS_SAMPLES="$GITHUB_WORKSPACE/../samples" go test -count=1 -v -run RealSamples ./internal/imageio/ 2>&1 | tee test.log
+      - name: Report failing tests
+        if: failure()
+        shell: bash
+        run: |
+          msg=$(grep -E -- '--- FAIL|_test\.go:[0-9]+:|^FAIL|panic:' test.log | head -60 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+          echo "::error title=camera files (${{ runner.os }})::${msg}"
+
   install:
     name: go install
     runs-on: ubuntu-latest

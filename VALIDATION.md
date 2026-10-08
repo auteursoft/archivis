@@ -494,10 +494,19 @@ vectors in memory.
 
 ## Not validated / known limitations
 
-* **Real camera RAW and HEIC files** — RAW preview extraction was tested on
-  constructed TIFF-structured files and the fallback scanner, not on files
-  from real cameras; HEIC conversion was not exercised (no converter here).
-* **macOS / CoreML** — all tests ran on Linux CPU.
+* **Camera RAW and HEIC coverage** — eight real files are tested in CI on
+  Linux and macOS (`TestRealSamples`): Canon CR2 from three cameras, Nikon
+  NEF from two, a Canon DNG and two iPhone HEICs. That testing found two
+  bugs, both fixed. An iPhone HEIC whose rotation is recorded only in EXIF
+  came out sideways. Lenses were blank for cameras that record them only in
+  maker notes; Canon and Nikon maker notes are now read, but only for
+  photos indexed from now on. Not yet covered by real files: Sony ARW,
+  Fujifilm RAF, Olympus ORF, Panasonic RW2, Pentax PEF, Canon CR3; lens
+  names from other makers' maker notes. Kodak KDC and Sigma X3F files carry
+  no usable preview and are reported as errors.
+* **macOS / CoreML** — CI runs the whole test suite and the model
+  comparisons on macOS (Apple Silicon, CPU). CoreML itself is not
+  exercised.
 * **Aesthetics of documentary work** — EVA's photos are contest entries
   rated by general viewers. How well "appeal" matches news value or a
   picture editor's judgement has not been measured. Training on an editor's
