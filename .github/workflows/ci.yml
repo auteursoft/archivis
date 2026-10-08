@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check formatting
+        if: runner.os != 'Windows'
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  # The models are real downloads (~800 MB, cached), and the tests compare
+  # them with reference outputs from the Python implementations. They must
+  # run here: ARCHIVIS_REQUIRE_MODELS turns a missing model or library into
+  # a failure rather than a silent skip.
+  models:
+    name: models (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            lib: libonnxruntime.so
+          - os: macos-latest
+            lib: libonnxruntime.dylib
+    runs-on: ${{ matrix.os }}
+    env:
+      DATA: ${{ github.workspace }}/../archivis-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: models-${{ runner.os }}-${{ hashFiles('cmd/archivis/setup.go') }}
+      - name: Download ONNX Runtime and models
+        run: go run ./cmd/archivis setup --data "$DATA"
+      - name: Model tests
+        env:
+          ARCHIVIS_REQUIRE_MODELS: "1"
+          ARCHIVIS_TEST_MODELS: ${{ env.DATA }}/models
+          ONNXRUNTIME_LIB: ${{ env.DATA }}/lib/${{ matrix.lib }}
+        run: go test -count=1 -v -run 'Faces|CLIP|Tokenizer' ./internal/ml/
+
+  install:
+    name: go install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install from the module path
+        run: |
+          go install ./cmd/archivis
+          "$(go env GOPATH)/bin/archivis" --help | head -3
