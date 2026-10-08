@@ -8,7 +8,7 @@ import (
 
 	ort "github.com/yalue/onnxruntime_go"
 
-	"archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/imageio"
 )
 
 // Face is one detected face, in the coordinates of the image passed to Detect.

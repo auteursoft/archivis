@@ -9,11 +9,11 @@ import (
 	"sort"
 	"sync"
 
-	"archivis/internal/imageio"
-	"archivis/internal/indexer"
-	"archivis/internal/ml"
-	"archivis/internal/store"
-	"archivis/internal/vindex"
+	"github.com/auteursoft/archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/vindex"
 )
 
 // Catalog is the searchable photo collection.

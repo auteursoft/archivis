@@ -10,18 +10,24 @@ import (
 	"testing"
 	"time"
 
-	"archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/imageio"
 )
 
 // Model-dependent tests run when ARCHIVIS_TEST_MODELS points at a directory
 // containing buffalo_l/ and clip/ (and ONNXRUNTIME_LIB is set if needed).
+// Otherwise they are skipped, or with ARCHIVIS_REQUIRE_MODELS=1 (as in CI)
+// they fail, so a missing model or library cannot pass unnoticed.
 func modelsDir(t *testing.T) string {
+	skip := t.Skip
+	if os.Getenv("ARCHIVIS_REQUIRE_MODELS") != "" {
+		skip = t.Fatal
+	}
 	d := os.Getenv("ARCHIVIS_TEST_MODELS")
 	if d == "" {
-		t.Skip("ARCHIVIS_TEST_MODELS not set")
+		skip("ARCHIVIS_TEST_MODELS not set")
 	}
 	if err := Init(Options{}); err != nil {
-		t.Skip(err)
+		skip(err)
 	}
 	return d
 }

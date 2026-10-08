@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/indexer"
 )
 
 func TestSplitCommand(t *testing.T) {

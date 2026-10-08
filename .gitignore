@@ -31,3 +31,21 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Archivis: the built binary, catalogues and data never belong in the repo
+/archivis
+*.db
+*.db-wal
+*.db-shm
+*.tmp
+*.download
+*.bundle
+
+# Python validation tools and the old prototype's artefacts (face indexes)
+__pycache__/
+*.py[cod]
+*.pkl
+
+# OS
+.DS_Store
+._*

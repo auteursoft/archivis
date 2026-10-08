@@ -20,11 +20,11 @@ import (
 	"syscall"
 	"time"
 
-	"archivis/internal/catalog"
-	"archivis/internal/indexer"
-	"archivis/internal/ml"
-	"archivis/internal/store"
-	"archivis/internal/web"
+	"github.com/auteursoft/archivis/internal/catalog"
+	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/web"
 )
 
 const usage = `Archivis — face search and quality ranking for large photo archives

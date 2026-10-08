@@ -10,7 +10,7 @@ import (
 	"math"
 	"sort"
 
-	"archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/imageio"
 )
 
 // AnalysisSize is the long edge (px) larger images are resampled to before

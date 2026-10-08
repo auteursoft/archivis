@@ -10,7 +10,7 @@ import (
 
 	ort "github.com/yalue/onnxruntime_go"
 
-	"archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/imageio"
 )
 
 var (

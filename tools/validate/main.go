@@ -28,13 +28,13 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"archivis/internal/catalog"
-	"archivis/internal/imageio"
-	"archivis/internal/indexer"
-	"archivis/internal/ml"
-	"archivis/internal/quality"
-	"archivis/internal/store"
-	"archivis/internal/vindex"
+	"github.com/auteursoft/archivis/internal/catalog"
+	"github.com/auteursoft/archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/quality"
+	"github.com/auteursoft/archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/vindex"
 )
 
 var decodeF16 = vindex.DecodeF16

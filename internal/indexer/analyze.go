@@ -14,11 +14,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"archivis/internal/imageio"
-	"archivis/internal/ml"
-	"archivis/internal/quality"
-	"archivis/internal/store"
-	"archivis/internal/vindex"
+	"github.com/auteursoft/archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/quality"
+	"github.com/auteursoft/archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/vindex"
 )
 
 // Engines bundles the loaded models. Any of them may be nil (that analysis

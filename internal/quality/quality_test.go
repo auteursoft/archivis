@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/imageio"
 )
 
 func load(t *testing.T) *imageio.RGB {

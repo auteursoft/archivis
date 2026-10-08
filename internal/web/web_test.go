@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"archivis/internal/catalog"
-	"archivis/internal/imageio"
-	"archivis/internal/indexer"
-	"archivis/internal/ml"
-	"archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/catalog"
+	"github.com/auteursoft/archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/store"
 )
 
 func newTestServer(t *testing.T) (*Server, *catalog.Catalog, int64) {

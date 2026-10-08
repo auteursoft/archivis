@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"archivis/internal/imageio"
-	"archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/store"
 )
 
 // Byte-identical files share a fingerprint, so concurrent workers can write

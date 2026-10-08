@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"archivis/internal/ml"
-	"archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/store"
 )
 
 // DefaultCategories are zero-shot CLIP classes geared to a photojournalist's
