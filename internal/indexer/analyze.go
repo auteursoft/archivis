@@ -335,7 +335,7 @@ func WriteAtomic(path string, b []byte) error {
 		err = os.Chmod(tmp, 0o644) // CreateTemp makes 0600
 	}
 	if err == nil {
-		err = os.Rename(tmp, path)
+		err = replaceFile(tmp, path)
 	}
 	if err != nil {
 		os.Remove(tmp)

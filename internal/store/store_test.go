@@ -434,6 +434,14 @@ func TestPruneNonASCIIFolders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(nfd); err == nil {
+		// macOS (APFS, HFS+): both spellings name the same, existing folder,
+		// so keep2.jpg is genuinely missing from a folder that is there.
+		if len(res.Gone) != 2 || len(res.Held) != 0 {
+			t.Fatalf("normalisation-insensitive filesystem: gone %v, held %v", res.Gone, res.Held)
+		}
+		return
+	}
 	if len(res.Gone) != 1 || res.Gone[0] != filepath.Join(nfc, "gone.jpg") {
 		t.Fatalf("gone %v", res.Gone)
 	}

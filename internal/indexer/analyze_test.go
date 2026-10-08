@@ -124,7 +124,17 @@ func TestSameEdgesDifferentMiddleIsNotACopy(t *testing.T) {
 	fp := func(p string) string {
 		var f string
 		if err := st.DB.QueryRow(`SELECT fingerprint FROM photos WHERE path = ?`, p).Scan(&f); err != nil {
-			t.Fatalf("%s: %v", p, err)
+			var paths []string
+			rows, _ := st.DB.Query(`SELECT path FROM photos`)
+			for rows != nil && rows.Next() {
+				var q string
+				rows.Scan(&q)
+				paths = append(paths, q)
+			}
+			errs, _ := st.Errors(10)
+			t.Fatalf("%s: %v\ncatalogued: %q\nerrors: %q\nstats: seen %d indexed %d copied %d moved %d unchanged %d errors %d",
+				p, err, paths, errs, ix.Stats.Seen.Load(), ix.Stats.Indexed.Load(), ix.Stats.Copied.Load(),
+				ix.Stats.Moved.Load(), ix.Stats.Unchanged.Load(), ix.Stats.Errors.Load())
 		}
 		return f
 	}
