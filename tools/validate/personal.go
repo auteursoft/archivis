@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"archivis/internal/indexer"
-	"archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/ml"
 )
 
 // personalCmd measures how well training on one person's judgements

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/ml"
 )
 
 func randUnit(rng *rand.Rand) []float32 {

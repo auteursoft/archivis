@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"archivis/internal/ml"
-	"archivis/internal/store"
-	"archivis/internal/vindex"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/vindex"
 )
 
 // AestheticModel is an active aesthetic model with its share of the blend.

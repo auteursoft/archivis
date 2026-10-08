@@ -42,9 +42,8 @@ about a week for 3M photos on a 10-core machine. It is incremental and
 resumable: stop it any time, and the next run continues where it left off.
 Later runs only look at new or changed files.
 
-**Getting the code.** Until pull request #1 is merged, the code is on the
-`photodex-go` branch. If the repository is private, clone with your GitHub
-credentials (`gh auth login`, or an SSH URL).
+**Getting the code.** The code is at
+[github.com/auteursoft/archivis](https://github.com/auteursoft/archivis).
 
 ## macOS
 
@@ -65,7 +64,7 @@ HEIC photos need nothing extra: macOS's built-in `sips` converts them.
 ### 2. Build and install
 
 ```sh
-git clone -b photodex-go https://github.com/auteursoft/DoFISaC.git ~/src/archivis
+git clone https://github.com/auteursoft/archivis.git ~/src/archivis
 cd ~/src/archivis
 go build -o archivis ./cmd/archivis
 sudo mkdir -p /usr/local/bin
@@ -219,7 +218,7 @@ go version
 ### 3. Build and install
 
 ```sh
-git clone -b photodex-go https://github.com/auteursoft/DoFISaC.git ~/src/archivis
+git clone https://github.com/auteursoft/archivis.git ~/src/archivis
 cd ~/src/archivis
 go build -o archivis ./cmd/archivis          # ~3 minutes the first time
 sudo install -m 755 archivis /usr/local/bin/archivis
@@ -425,6 +424,17 @@ new photos with the previous models. To go back to an earlier model:
 prefix.
 
 ## Updating
+
+If you cloned the code from its earlier home (the `photodex-go` branch of
+`auteursoft/DoFISaC`), point your copy at the new repository once:
+
+```sh
+cd ~/src/archivis
+git remote set-url origin https://github.com/auteursoft/archivis.git
+git fetch origin && git checkout -B main origin/main
+```
+
+Then, and for every later update:
 
 ```sh
 cd ~/src/archivis

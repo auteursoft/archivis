@@ -5,14 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
-	"archivis/internal/imageio"
-	"archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/store"
 )
 
 // Byte-identical files share a fingerprint, so concurrent workers can write
@@ -97,11 +98,7 @@ func TestSameEdgesDifferentMiddleIsNotACopy(t *testing.T) {
 	root := t.TempDir()
 	a := filepath.Join(root, "a.jpg")
 	os.WriteFile(a, src, 0o644)
-	b := bytes.Clone(src)
-	mid := len(b) / 2
-	for i := mid; i < mid+256; i++ {
-		b[i] ^= 0x5a
-	}
+	b := alterMiddle(t, src)
 	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +121,17 @@ func TestSameEdgesDifferentMiddleIsNotACopy(t *testing.T) {
 	fp := func(p string) string {
 		var f string
 		if err := st.DB.QueryRow(`SELECT fingerprint FROM photos WHERE path = ?`, p).Scan(&f); err != nil {
-			t.Fatalf("%s: %v", p, err)
+			var paths []string
+			rows, _ := st.DB.Query(`SELECT path FROM photos`)
+			for rows != nil && rows.Next() {
+				var q string
+				rows.Scan(&q)
+				paths = append(paths, q)
+			}
+			errs, _ := st.Errors(10)
+			t.Fatalf("%s: %v | catalogued: %q | errors: %q | stats: seen %d indexed %d copied %d moved %d unchanged %d errors %d",
+				p, err, paths, errs, ix.Stats.Seen.Load(), ix.Stats.Indexed.Load(), ix.Stats.Copied.Load(),
+				ix.Stats.Moved.Load(), ix.Stats.Unchanged.Load(), ix.Stats.Errors.Load())
 		}
 		return f
 	}
@@ -320,4 +327,30 @@ func TestParseCategoriesRejectsTruncation(t *testing.T) {
 	if cats, err := ParseCategories(ok); err != nil || len(cats) != 2 {
 		t.Fatalf("a long but reasonable line: %d %v", len(cats), err)
 	}
+}
+
+// alterMiddle changes bytes in the middle of a JPEG (outside the 64 KiB
+// edges) so that it is a different, still decodable photo. The exact bytes
+// of the encoded test image differ between CPU architectures, so it tries
+// spots until the result decodes. Bytes that are, or follow, 0xFF are left
+// alone, which keeps the JPEG byte stuffing valid.
+func alterMiddle(t *testing.T, src []byte) []byte {
+	t.Helper()
+	for try := 0; try < 64; try++ {
+		b := bytes.Clone(src)
+		start := len(b)/2 + try*997
+		changed := 0
+		for i := start; i < len(b)-64<<10 && changed < 256; i++ {
+			if b[i] >= 0xFE || b[i-1] == 0xFF {
+				continue
+			}
+			b[i] ^= 0x01
+			changed++
+		}
+		if _, err := jpeg.Decode(bytes.NewReader(b)); err == nil && changed == 256 {
+			return b
+		}
+	}
+	t.Fatal("could not alter the test JPEG and keep it decodable")
+	return nil
 }

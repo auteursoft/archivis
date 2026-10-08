@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"archivis/internal/indexer"
-	"archivis/internal/ml"
-	"archivis/internal/store"
-	"archivis/internal/vindex"
+	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/vindex"
 )
 
 func unit(i int) []float32 {

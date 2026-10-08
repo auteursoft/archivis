@@ -21,8 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"archivis/internal/imageio"
-	"archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/store"
 )
 
 // Config controls an indexing run.

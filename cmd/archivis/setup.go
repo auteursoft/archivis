@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/ml"
 )
 
 // ortVersion must match the C API version compiled into onnxruntime_go.

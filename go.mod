@@ -1,4 +1,4 @@
-module archivis
+module github.com/auteursoft/archivis
 
 go 1.24.0
 

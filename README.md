@@ -50,7 +50,9 @@ sudo mkdir -p /usr/local/bin && sudo install -m 755 archivis /usr/local/bin/arch
 archivis setup          # downloads ONNX Runtime + models (~800 MB) into ~/.archivis
 ```
 
-(Without the install step, run it as `./archivis` from this folder instead.)
+(Without the install step, run it as `./archivis` from this folder instead.
+Or skip the clone: `go install github.com/auteursoft/archivis/cmd/archivis@latest`
+puts it in `$(go env GOPATH)/bin`.)
 
 `setup` fetches ONNX Runtime 1.29 for your platform, InsightFace buffalo_l
 (face detection + recognition) and OpenAI CLIP ViT-B/32 as ONNX. The
@@ -149,7 +151,15 @@ ratings at Spearman 0.63 on held-out photos; training on 20 of a person's
 own ratings cuts the aesthetic score's error for that person by a fifth. Rerun everything with
 `tools/validate/`.
 
-Tests: `go test ./...`. The model tests run when you point them at models:
-`ARCHIVIS_TEST_MODELS=~/.archivis/models go test ./internal/ml/`.
+Tests: `go test ./...`. The model tests also need the downloaded models and
+the ONNX Runtime library; without them they are skipped:
 
-The earlier Python prototype is kept in `legacy/` for reference.
+```sh
+ARCHIVIS_TEST_MODELS=~/.archivis/models ONNXRUNTIME_LIB=~/.archivis/lib/libonnxruntime.dylib go test ./internal/ml/
+```
+
+Add `ARCHIVIS_REQUIRE_MODELS=1` to make a missing model or library a failure
+instead of a skip (CI does).
+
+The earlier Python prototype lives in the `legacy/` folder of
+[auteursoft/DoFISaC](https://github.com/auteursoft/DoFISaC) for reference.

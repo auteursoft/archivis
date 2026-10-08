@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"archivis/internal/catalog"
-	"archivis/internal/vindex"
+	"github.com/auteursoft/archivis/internal/catalog"
+	"github.com/auteursoft/archivis/internal/vindex"
 )
 
 var decodeF16 = vindex.DecodeF16

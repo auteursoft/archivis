@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"archivis/internal/indexer"
-	"archivis/internal/ml"
-	"archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/store"
 )
 
 func runAesthetic(g *globals, args []string) error {

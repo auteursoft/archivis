@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"archivis/internal/ml"
-	"archivis/internal/store"
-	"archivis/internal/vindex"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/vindex"
 )
 
 // Sample is one training example for an aesthetic model.

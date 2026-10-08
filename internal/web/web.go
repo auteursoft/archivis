@@ -28,12 +28,12 @@ import (
 	"sync"
 	"time"
 
-	"archivis/internal/catalog"
-	"archivis/internal/imageio"
-	"archivis/internal/indexer"
-	"archivis/internal/ml"
-	"archivis/internal/quality"
-	"archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/catalog"
+	"github.com/auteursoft/archivis/internal/imageio"
+	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/ml"
+	"github.com/auteursoft/archivis/internal/quality"
+	"github.com/auteursoft/archivis/internal/store"
 )
 
 //go:embed templates/*.html
