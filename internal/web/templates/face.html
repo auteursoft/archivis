@@ -1,0 +1,18 @@
+{{define "content"}}
+{{with .Data}}
+<div class="facehead">
+  <img class="bigface" src="/f/{{.Face.Photo.Fingerprint}}/{{.Face.Ordinal}}.jpg" alt="">
+  <div>
+    <h1>{{if .Face.Person}}{{.Face.Person}}{{else}}Who is this?{{end}}</h1>
+    <p>Face {{.Face.ID}} in <a href="/photo/{{.Face.PhotoID}}">{{base .Face.Photo.Path}}</a>. Below are the most similar faces in your archive (cosine similarity; ≥0.5 is very likely the same person, 0.35–0.5 possible).</p>
+    <p class="personcount">{{if .Matches}}This face appears in {{if .AtLeast}}at least {{end}}{{plural .Photos "other photo"}} at similarity ≥ {{f2 .Min}}.{{else}}No other photo has this face at similarity ≥ {{f2 .Min}}.{{end}}</p>
+    <form method="get" class="inline"><label>Show matches with similarity ≥ <input type="number" name="min" step="0.05" min="0.1" max="0.9" value="{{f2 .Min}}"></label> <button class="btn ghost small">Update</button></form>
+    <p class="hint">Tick the faces that are this person, type a name and press Assign. Matching faces elsewhere are then labelled automatically.</p>
+  </div>
+</div>
+<div class="picker-scope" data-include="{{.Face.ID}}">
+{{template "assignbar"}}
+{{template "facepicker" .Matches}}
+</div>
+{{end}}
+{{end}}

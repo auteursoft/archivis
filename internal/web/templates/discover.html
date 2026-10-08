@@ -1,0 +1,24 @@
+{{define "content"}}
+<div class="toolbar">
+  <h1>Discover people</h1>
+  <a class="btn ghost" href="/discover?refresh=1">Recompute</a>
+</div>
+<p class="hint">Unnamed people who appear repeatedly in your archive, largest groups first. Untick any face that doesn't belong, enter a name and press Assign — Archivis then finds the rest of their photos.</p>
+{{range .Data}}
+<section class="cluster picker-scope">
+  <h2>Appears in {{plural .Photos "photo"}}</h2>
+  {{template "assignbar"}}
+  <div class="facegrid picker">
+  {{range .Faces}}
+    <label class="face" data-id="{{.ID}}">
+      <input type="checkbox" class="pick" value="{{.ID}}" checked>
+      <img loading="lazy" src="/f/{{.Photo.Fingerprint}}/{{.Ordinal}}.jpg" alt="face {{.ID}}">
+      <a class="open" href="/photo/{{.PhotoID}}" title="{{.Photo.Path}}">photo<span class="visually-hidden"> {{base .Photo.Path}}</span> ↗</a>
+    </label>
+  {{end}}
+  </div>
+</section>
+{{else}}
+<p class="empty">No recurring unnamed faces found.</p>
+{{end}}
+{{end}}

@@ -1,0 +1,91 @@
+{{define "content"}}
+{{$p := .Params}}
+<form class="filters" method="get" action="/">
+  {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
+  <label>Sort
+    <select name="sort">
+      {{$sort := index $p "sort"}}{{if $.Query}}<option value="relevance" {{if or (eq $sort "") (eq $sort "relevance")}}selected{{end}}>Best match</option>{{end}}
+      <option value="overall" {{if eq $p.sort "overall"}}selected{{end}}>Best overall</option>
+      <option value="technical" {{if eq $p.sort "technical"}}selected{{end}}>Best technical</option>
+      <option value="aesthetic" {{if eq $p.sort "aesthetic"}}selected{{end}}>Most aesthetic</option>
+      <option value="sharpness" {{if eq $p.sort "sharpness"}}selected{{end}}>Sharpest</option>
+      <option value="colorful" {{if eq $p.sort "colorful"}}selected{{end}}>Most colourful</option>
+      <option value="newest" {{if eq $p.sort "newest"}}selected{{end}}>Newest</option>
+      <option value="oldest" {{if eq $p.sort "oldest"}}selected{{end}}>Oldest</option>
+      <option value="faces" {{if eq $p.sort "faces"}}selected{{end}}>Most faces</option>
+      <option value="worst" {{if eq $p.sort "worst"}}selected{{end}}>Worst first (cull)</option>
+    </select>
+  </label>
+  <label>Overall ≥ <input type="number" name="min_overall" min="0" max="100" step="5" value="{{$p.min_overall}}"></label>
+  <label>Focus ≥
+    <select name="min_focus">
+      <option value="">any</option>
+      <option value="0.45" {{if eq $p.min_focus "0.45"}}selected{{end}}>acceptable</option>
+      <option value="0.7" {{if eq $p.min_focus "0.7"}}selected{{end}}>sharp</option>
+      <option value="0.85" {{if eq $p.min_focus "0.85"}}selected{{end}}>critically sharp</option>
+    </select>
+  </label>
+  <label>Exposure ≥
+    <select name="min_exposure">
+      <option value="">any</option>
+      <option value="0.5" {{if eq $p.min_exposure "0.5"}}selected{{end}}>acceptable</option>
+      <option value="0.8" {{if eq $p.min_exposure "0.8"}}selected{{end}}>good</option>
+    </select>
+  </label>
+  <label>Colour cast ≤
+    <select name="max_cast">
+      <option value="">any</option>
+      <option value="6" {{if eq $p.max_cast "6"}}selected{{end}}>slight</option>
+      <option value="3" {{if eq $p.max_cast "3"}}selected{{end}}>neutral</option>
+    </select>
+  </label>
+  <label>Compression
+    <select name="max_jpeg">
+      <option value="">any</option>
+      <option value="1.5" {{if eq $p.max_jpeg "1.5"}}selected{{end}}>no heavy JPEG artefacts</option>
+    </select>
+  </label>
+  <label>Aesthetic ≥ <input type="number" name="min_aesthetic" min="0" max="10" step="0.5" value="{{$p.min_aesthetic}}"></label>
+  <label>Faces
+    <select name="faces">
+      <option value="">any</option>
+      <option value="any" {{if eq $p.faces "any"}}selected{{end}}>with people</option>
+      <option value="1" {{if eq $p.faces "1"}}selected{{end}}>one person</option>
+      <option value="group" {{if eq $p.faces "group"}}selected{{end}}>groups (3+)</option>
+      <option value="none" {{if eq $p.faces "none"}}selected{{end}}>no people</option>
+    </select>
+  </label>
+  <label>Person
+    <select name="person">
+      <option value="">anyone</option>
+      {{range .People}}<option value="{{.ID}}" {{if eq $p.person (printf "%d" .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </label>
+  <label>Category
+    <select name="tag">
+      <option value="">any</option>
+      {{range .Tags}}<option value="{{.Tag}}" {{if eq $p.tag .Tag}}selected{{end}}>{{.Tag}} ({{f0 .Score}})</option>{{end}}
+    </select>
+  </label>
+  <label>B&amp;W
+    <select name="mono">
+      <option value="">any</option>
+      <option value="only" {{if eq $p.mono "only"}}selected{{end}}>only</option>
+      <option value="exclude" {{if eq $p.mono "exclude"}}selected{{end}}>exclude</option>
+    </select>
+  </label>
+  <label>Year <input type="number" name="year" min="1900" max="2100" value="{{$p.year}}" style="width:5em"></label>
+  <label>Camera <input type="text" name="camera" value="{{$p.camera}}" size="8"></label>
+  <label>Path <input type="text" name="path" value="{{$p.path}}" size="10"></label>
+  <button class="btn primary">Apply</button>
+  <a class="btn ghost" href="/{{if .Query}}?q={{q .Query}}{{end}}">Reset</a>
+</form>
+{{with .Data}}
+<h1 class="summary">{{if .Searched}}Best matches for “{{$.Query}}”{{else}}{{.Total}} photos{{end}}{{if .Page}} · page {{add .Page 1}}{{end}}</h1>
+{{template "photogrid" .Photos}}
+<div class="pager">
+  {{if .Page}}<a class="btn ghost" href="/?{{.QS}}&page={{sub .Page 1}}">← Previous</a>{{end}}
+  {{if .HasMore}}<a class="btn ghost" href="/?{{.QS}}&page={{add .Page 1}}">Next →</a>{{end}}
+</div>
+{{end}}
+{{end}}

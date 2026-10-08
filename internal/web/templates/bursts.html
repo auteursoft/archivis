@@ -1,0 +1,13 @@
+{{define "content"}}
+<div class="toolbar">
+  <h1>Bursts &amp; sequences</h1>
+  <form method="get" class="inline"><label>Frames within <input type="number" name="gap" min="1" max="60" value="{{.Params.gap}}" style="width:4em"> s of each other</label> <button class="btn ghost small">Update</button></form>
+</div>
+<p class="hint">Runs of 3+ frames from the same camera. The best frame (highest overall score) is first and outlined.</p>
+{{range .Data}}
+<section class="burst">
+  <h2>{{len .Photos}} frames · {{date (index .Photos 0).TakenAt}} · {{(index .Photos 0).CameraModel}}</h2>
+  {{template "photogrid" .Photos}}
+</section>
+{{else}}<p class="empty">No bursts found (needs EXIF capture times).</p>{{end}}
+{{end}}

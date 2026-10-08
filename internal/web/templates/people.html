@@ -1,0 +1,17 @@
+{{define "content"}}
+<div class="toolbar">
+  <h1>People</h1>
+  <button class="btn ghost" data-action="match" title="Re-run automatic labelling using all confirmed faces">Re-match all faces</button>
+  <span class="status"></span>
+</div>
+{{if not .Data}}<p class="empty">Nobody named yet. Open <a href="/discover">Discover</a> to name people who appear often, or click any face on a photo.</p>{{end}}
+<div class="peoplegrid">
+{{range .Data}}
+  <a class="person" href="/person/{{.ID}}">
+    {{if .Cover}}<img loading="lazy" src="/f/{{.Cover.Photo.Fingerprint}}/{{.Cover.Ordinal}}.jpg" alt="">{{else}}<span class="noface"></span>{{end}}
+    <b>{{.Name}}</b>
+    <small>{{plural .Photos "photo"}} · {{.ManualPhotos}} confirmed</small>
+  </a>
+{{end}}
+</div>
+{{end}}

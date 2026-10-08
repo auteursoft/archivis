@@ -1,0 +1,78 @@
+{{define "content"}}
+<h1 class="visually-hidden">{{.Title}}</h1>
+{{with .Data}}
+<div class="photo-page">
+  <div class="viewer">
+    <div class="frame">
+      <img src="/preview/{{.Photo.ID}}" alt="">
+      {{range .Faces}}
+      <a class="facebox {{if .Person}}named{{end}}" href="/face/{{.ID}}" style="left:{{pos .X1}};top:{{pos .Y1}};width:{{pos (faceW .Face)}};height:{{pos (sub1 .Y2 .Y1)}}">
+        <span>{{if .Person}}{{.Person}}{{else}}?{{end}}</span>
+      </a>
+      {{end}}
+    </div>
+    <p class="path"><a href="/original/{{.Photo.ID}}" target="_blank">{{.Photo.Path}}</a></p>
+  </div>
+  <aside class="info">
+    <h2>Quality</h2>
+    <table class="metrics">
+    {{range .Metrics}}
+      <tr><th>{{.Name}}</th><td>
+        <div class="mval">{{.Value}}</div>
+        {{if ge .Score 0.0}}<div class="bar"><i class="{{unitClass .Score}}" style="width:{{pct .Score}}"></i></div>{{end}}
+        <div class="note">{{.Note}}</div>
+      </td></tr>
+    {{end}}
+    </table>
+    <form class="aesthetic-feedback" data-photo="{{.Photo.ID}}" aria-labelledby="fb-h">
+      <h2 id="fb-h">Your judgement</h2>
+      {{if .Photo.Aesthetic.Valid}}
+      <fieldset class="seg">
+        <legend>Is the aesthetic score of {{f1 .Photo.Aesthetic.Float64}} right?</legend>
+        <button type="button" class="btn small" data-verdict="low">Too low</button>
+        <button type="button" class="btn small" data-verdict="agree">About right</button>
+        <button type="button" class="btn small" data-verdict="high">Too high</button>
+      </fieldset>
+      {{end}}
+      <fieldset class="seg rating">
+        <legend>{{if .Photo.Aesthetic.Valid}}Or rate it yourself{{else}}Rate it{{end}}, 1 (poor) to 10 (outstanding)</legend>
+        {{range $i := seq 1 10}}<button type="button" class="btn small" data-rating="{{$i}}" aria-label="rate {{$i}} of 10">{{$i}}</button>{{end}}
+      </fieldset>
+      <p class="note fb-status" role="status">{{with .Feedback}}You said: {{if .Rating.Valid}}{{f0 .Rating.Float64}} / 10{{else if eq .Verdict "agree"}}about right{{else if eq .Verdict "high"}}too high{{else}}too low{{end}}. {{end}}Your judgements train future aesthetic models (<a href="/guide#aesthetic-feedback">how</a>).</p>
+    </form>
+    {{if .Tags}}<h2>Categories</h2><p class="tags">{{range .Tags}}<a href="/?tag={{.Tag}}">{{.Tag}} <small>{{pct .Score}}</small></a> {{end}}</p>{{end}}
+    {{if .Faces}}
+    <h2>People</h2>
+    <div class="facelist">
+    {{range .Faces}}
+      <div class="facerow">
+        <a href="/face/{{.ID}}" title="find this face elsewhere"><img src="/f/{{.Photo.Fingerprint}}/{{.Ordinal}}.jpg" alt="find face {{.ID}} elsewhere"></a>
+        <div>
+          {{if .Person}}<a href="/person/{{.PersonID.Int64}}"><b>{{.Person}}</b></a>{{if eq .PersonSource.String "auto"}} <small title="automatic match ({{f2 .PersonSim.Float64}}) — confirm by assigning">(auto)</small>{{end}}{{end}}
+          <form class="inline-assign" data-face="{{.ID}}">
+            <input list="people-list" placeholder="{{if .Person}}Rename / confirm{{else}}Who is this?{{end}}" value="">
+            <button class="btn small">Save</button>
+          </form>
+          <small>face {{.ID}} · {{f0 .WidthPx}}px · sharpness {{f0 .Sharpness}} · <a href="/face/{{.ID}}">find similar</a></small>
+        </div>
+      </div>
+    {{end}}
+    </div>
+    {{end}}
+    <h2>Photo</h2>
+    <table class="exif">
+      {{with .Photo}}
+      {{if .TakenAt}}<tr><th>Taken</th><td>{{date .TakenAt}}</td></tr>{{end}}
+      {{if .CameraModel}}<tr><th>Camera</th><td>{{.CameraMake}} {{.CameraModel}}</td></tr>{{end}}
+      {{if .Lens}}<tr><th>Lens</th><td>{{.Lens}}</td></tr>{{end}}
+      {{if .FocalLength}}<tr><th>Exposure</th><td>{{f0 .FocalLength}}mm{{if .Focal35}} ({{f0 .Focal35}}mm eq.){{end}} · ƒ/{{f1 .FNumber}} · {{shutter .ExposureTime}} · ISO {{.ISO}}{{if .Flash}} · flash{{end}}</td></tr>{{end}}
+      <tr><th>Size</th><td>{{pcount .}} · {{.Format}}</td></tr>
+      {{if .GPSLat.Valid}}<tr><th>Location</th><td><a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat={{.GPSLat.Float64}}&mlon={{.GPSLon.Float64}}#map=15/{{.GPSLat.Float64}}/{{.GPSLon.Float64}}">{{printf "%.5f, %.5f" .GPSLat.Float64 .GPSLon.Float64}}</a></td></tr>{{end}}
+      {{if .Artist}}<tr><th>Artist</th><td>{{.Artist}}</td></tr>{{end}}
+      {{end}}
+    </table>
+  </aside>
+</div>
+{{if .Similar}}<h2>Similar photos</h2>{{template "photogrid" .Similar}}{{end}}
+{{end}}
+{{end}}

@@ -1,0 +1,78 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Archivis</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Archivis</a>
+  <nav>
+    <a href="/" class="{{if eq .Nav "browse"}}on{{end}}">Photos</a>
+    <a href="/people" class="{{if eq .Nav "people"}}on{{end}}">People</a>
+    <a href="/discover" class="{{if eq .Nav "discover"}}on{{end}}">Discover</a>
+    <a href="/bursts" class="{{if eq .Nav "bursts"}}on{{end}}">Bursts</a>
+    <a href="/duplicates" class="{{if eq .Nav "duplicates"}}on{{end}}">Duplicates</a>
+    <a href="/guide" class="{{if eq .Nav "guide"}}on{{end}}">Scores</a>
+  </nav>
+  <form class="search" action="/" method="get">
+    <input type="search" name="q" value="{{.Query}}" placeholder="Describe a photo… e.g. “protest at night in the rain”">
+  </form>
+  <form class="upload" action="/query" method="post" enctype="multipart/form-data" title="Search with a photo: finds the people in it and similar scenes">
+    <label class="btn filebtn">Search by photo<input class="visually-hidden" type="file" name="image" accept="image/*,.cr2,.cr3,.nef,.arw,.dng,.raf,.orf,.rw2,.heic" onchange="this.form.submit()"></label>
+  </form>
+  <span class="stats">{{.Stats.Photos}} photos · {{.Stats.Faces}} faces · {{.Stats.People}} people</span>
+</header>
+{{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+<main>{{template "content" .}}</main>
+<datalist id="people-list">{{range .People}}<option value="{{.Name}}">{{end}}</datalist>
+<script src="/static/app.js"></script>
+</body>
+</html>{{end}}
+
+{{define "photogrid"}}
+<div class="grid">
+{{range .}}
+  <a class="card" href="/photo/{{.ID}}" title="{{.Path}}">
+    <img loading="lazy" src="/t/{{.Fingerprint}}.jpg" alt="{{base .Path}}">
+    <span class="badge {{scoreClass .Overall}}">{{f0 .Overall}}</span>
+    {{if .Score}}<span class="sim">{{f3 .Score}}</span>{{end}}
+    <span class="flags">{{if lt .FocusScore 0.3}}<i title="out of focus or blurred">soft</i>{{end}}{{if lt .ExposureScore 0.5}}<i title="badly over- or under-exposed">exposure</i>{{end}}{{if and (lt .ColorScore 0.1) (not .Monochrome)}}<i title="strong colour cast">cast</i>{{end}}{{if gt .Blockiness 1.5}}<i title="heavy JPEG compression">JPEG</i>{{end}}</span>
+    <span class="meta">
+      <b class="{{unitClass .FocusScore}}">focus {{pct .FocusScore}}</b>
+      <b class="{{unitClass .ExposureScore}}">exp {{pct .ExposureScore}}</b>
+      {{if .FaceCount}}<b>{{.FaceCount}} face{{if gt .FaceCount 1}}s{{end}}</b>{{end}}
+      <i>{{date .TakenAt}}</i>
+    </span>
+  </a>
+{{else}}
+  <p class="empty">No photos match.</p>
+{{end}}
+</div>
+{{end}}
+
+{{define "facepicker"}}
+<div class="facegrid picker">
+{{range .}}
+  <label class="face {{if .Person}}named{{end}}" data-id="{{.ID}}">
+    <input type="checkbox" class="pick" value="{{.ID}}" {{if and (ge .Score 0.5) (not .Person)}}checked{{end}}>
+    <img loading="lazy" src="/f/{{.Photo.Fingerprint}}/{{.Ordinal}}.jpg" alt="face {{.ID}}">
+    <span class="fmeta">{{if .Score}}{{f3 .Score}}{{end}} {{if .Person}}<em>{{.Person}}{{if eq .PersonSource.String "auto"}}?{{end}}</em>{{end}}</span>
+    <a class="open" href="/photo/{{.PhotoID}}" title="{{.Photo.Path}}">photo<span class="visually-hidden"> {{base .Photo.Path}}</span> ↗</a>
+  </label>
+{{end}}
+</div>
+{{end}}
+
+{{define "assignbar"}}
+<div class="assignbar">
+  <button type="button" class="btn ghost" data-action="select-all">Select all</button>
+  <button type="button" class="btn ghost" data-action="select-none">None</button>
+  <input list="people-list" class="assign-name" placeholder="Name for selected faces">
+  <button type="button" class="btn primary" data-action="assign">Assign</button>
+  <button type="button" class="btn ghost" data-action="unassign" title="Remove labels from the selected faces">Remove label</button>
+  <span class="status"></span>
+</div>
+{{end}}

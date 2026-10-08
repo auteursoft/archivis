@@ -1,0 +1,13 @@
+{{define "content"}}
+<h1>Duplicates</h1>
+<p class="hint">Groups of photos with identical perceptual hashes: the same image saved or exported more than once.</p>
+{{range .Data}}
+<section class="dupes">
+  <div class="grid">
+  {{range .}}
+    <a class="card" href="/photo/{{.ID}}" title="{{.Path}}"><img loading="lazy" src="/t/{{.Fingerprint}}.jpg" alt=""><span class="meta"><i>{{.Path}}</i></span></a>
+  {{end}}
+  </div>
+</section>
+{{else}}<p class="empty">No duplicates found.</p>{{end}}
+{{end}}

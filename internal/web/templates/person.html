@@ -1,0 +1,24 @@
+{{define "content"}}
+{{with .Data}}
+<div class="toolbar">
+  <h1>{{.Person.Name}}</h1>
+  <p class="personcount">In {{plural .Person.Photos "photo"}} · {{.Person.ManualPhotos}} confirmed by you</p>
+  <a class="btn ghost" href="/?person={{.Person.ID}}">Browse their {{plural .Person.Photos "photo"}}</a>
+  <button class="btn ghost" data-action="rename" data-person="{{.Person.ID}}">Rename / merge</button>
+  <button class="btn ghost danger" data-action="delete-person" data-person="{{.Person.ID}}">Delete</button>
+</div>
+<section class="picker-scope">
+  <h2>Faces labelled {{.Person.Name}} ({{.Person.Faces}}{{if lt (len .Faces) .Person.Faces}}, first {{len .Faces}} shown{{end}}) <small>— “?” marks automatic matches; tick any that aren’t {{.Person.Name}} and press Remove label</small></h2>
+  {{template "assignbar"}}
+  {{template "facepicker" .Faces}}
+</section>
+<section class="picker-scope">
+  <h2>Might also be {{.Person.Name}} ({{len .Suggestions}})</h2>
+  <form method="get" class="inline"><label>Similarity ≥ <input type="number" name="min" step="0.05" min="0.1" max="0.9" value="{{f2 .Min}}"></label> <button class="btn ghost small">Update</button></form>
+  {{if .Suggestions}}
+  <div class="assignbar"><button type="button" class="btn primary" data-action="confirm" data-name="{{.Person.Name}}">Confirm selected as {{.Person.Name}}</button> <button type="button" class="btn ghost" data-action="select-all">Select all</button> <button type="button" class="btn ghost" data-action="select-none">None</button><span class="status"></span></div>
+  {{template "facepicker" .Suggestions}}
+  {{else}}<p class="empty">No further suggestions at this threshold.</p>{{end}}
+</section>
+{{end}}
+{{end}}
