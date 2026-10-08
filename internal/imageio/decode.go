@@ -435,9 +435,53 @@ func loadExternal(path string, m *Meta) (image.Image, error) {
 		}
 		r := bytes.NewReader(data)
 		parseJPEGExif(r, 0, m)
-		// Converters already apply rotation to pixels.
-		m.Orientation = 1
-		return jpeg.Decode(r)
+		// m.Orientation is now the converted file's own tag: libheif-based
+		// converters rotate the pixels and write 1; a converter that leaves
+		// rotation to the viewer keeps the tag, and Load applies it.
+		img, err := jpeg.Decode(r)
+		if err != nil {
+			return nil, err
+		}
+		if m.Orientation <= 1 {
+			m.Orientation = heifOrientation(readHEIFFile(path), img.Bounds().Dx(), img.Bounds().Dy(), c[0])
+		}
+		return img, nil
 	}
 	return nil, lastErr
+}
+
+func readHEIFFile(path string) heifInfo {
+	f, err := os.Open(path)
+	if err != nil {
+		return heifInfo{}
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return heifInfo{}
+	}
+	return readHEIFInfo(f, st.Size())
+}
+
+// heifOrientation is the rotation still to apply to a converter's output of
+// width w and height h. The container's own rotation (irot/imir) has been
+// applied by the converter. A rotation recorded only in EXIF has not, if
+// the output has the stored, unrotated size; for 180° and mirroring, whose
+// size gives no clue, libheif-based converters are known to ignore EXIF and
+// macOS's sips is trusted to have applied it.
+func heifOrientation(info heifInfo, w, h int, converter string) int {
+	o := info.ExifOrient
+	if info.Transform || o < 2 || o > 8 {
+		return 1
+	}
+	if o >= 5 {
+		if info.W > 0 && w == info.W && h == info.H && w != h {
+			return o
+		}
+		return 1
+	}
+	if converter == "sips" {
+		return 1
+	}
+	return o
 }
