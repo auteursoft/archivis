@@ -132,7 +132,7 @@ func TestSameEdgesDifferentMiddleIsNotACopy(t *testing.T) {
 				paths = append(paths, q)
 			}
 			errs, _ := st.Errors(10)
-			t.Fatalf("%s: %v\ncatalogued: %q\nerrors: %q\nstats: seen %d indexed %d copied %d moved %d unchanged %d errors %d",
+			t.Fatalf("%s: %v | catalogued: %q | errors: %q | stats: seen %d indexed %d copied %d moved %d unchanged %d errors %d",
 				p, err, paths, errs, ix.Stats.Seen.Load(), ix.Stats.Indexed.Load(), ix.Stats.Copied.Load(),
 				ix.Stats.Moved.Load(), ix.Stats.Unchanged.Load(), ix.Stats.Errors.Load())
 		}
