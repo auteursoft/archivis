@@ -35,6 +35,12 @@ Note what you find under each heading. Numbers are most useful, but a
 sentence is fine.
 
 **Photos**
+- [ ] Copy 2–3 files from each camera you use (for example the Nikon D810,
+      Sony α7R IV, α7R V and α1 II; include a portrait shot, and
+      lossless-compressed RAW if you shoot it) into one folder and run
+      `./archivis inspect --previews ~/Desktop/archivis-check THAT_FOLDER`.
+      Send the table, and check the saved images in `~/Desktop/archivis-check`
+      are all upright.
 - [ ] Are any photos sideways or upside down? Which camera or phone took them?
 - [ ] Do RAW and HEIC photos show up, with the right camera, lens and date?
 - [ ] Do any thumbnails look wrong (colours, cropping, blank)?
