@@ -44,6 +44,7 @@ Commands:
   prune        drop catalogue entries for files that no longer exist
   stats        catalogue summary
   errors       show files that failed to index
+  inspect      show what Archivis reads from photo files (camera, lens, preview, rotation)
 
 Global flags (all commands):
   --data DIR       data directory (default $ARCHIVIS_DATA or ~/.archivis)
@@ -216,7 +217,7 @@ func main() {
 	cmds := map[string]func(*globals, []string) error{
 		"setup": runSetup, "index": runIndex, "serve": runServe, "search": runSearch,
 		"list": runList, "export": runExport, "people": runPeople, "retag": runRetag,
-		"prune": runPrune, "stats": runStats, "errors": runErrors, "aesthetic": runAesthetic,
+		"prune": runPrune, "stats": runStats, "errors": runErrors, "aesthetic": runAesthetic, "inspect": runInspect,
 	}
 	fn, ok := cmds[cmd]
 	if cmd == "" {

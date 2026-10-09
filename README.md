@@ -98,6 +98,7 @@ archivis aesthetic models  # every aesthetic model used, and the current blend
 archivis retag          # after editing ~/.archivis/categories.txt
 archivis prune /Volumes/Archive1   # forget files deleted from that drive
 archivis stats ; archivis errors
+archivis inspect --previews ~/Desktop/check /Volumes/Card/DCIM   # what Archivis reads from your camera's files
 ```
 
 ## Performance and hardware
