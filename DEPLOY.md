@@ -377,6 +377,60 @@ If you use a different proxy, it must pass the original `Host` header
 through (Caddy does by default). Otherwise Archivis refuses label changes as
 cross-site requests.
 
+**HTTPS with Caddy (macOS), reachable from anywhere.** For a domain that
+already points at your home connection. Caddy obtains and renews a free
+certificate itself.
+
+1. On your router, forward **both** port 80 and port 443 to the Mac. Caddy
+   needs 80 to prove it owns the domain (and to redirect to HTTPS), and 443
+   serves the site.
+2. Install Caddy and point it at Archivis:
+
+   ```sh
+   brew install caddy
+   cat > "$(brew --prefix)/etc/Caddyfile" <<'CADDY'
+   photos.example.com {
+   	reverse_proxy 127.0.0.1:8088
+   }
+   CADDY
+   brew services start caddy
+   ```
+
+   If Caddy cannot bind ports 80 and 443, start it with
+   `sudo brew services start caddy` instead. Allow incoming connections if
+   macOS asks.
+3. Keep Archivis on `127.0.0.1:8088`, so it is reachable only through Caddy,
+   and give it a password. Use a long random one: the login has no lockout
+   after failed attempts.
+
+   ```sh
+   pw=$(openssl rand -base64 24); echo "password: $pw"     # note it down
+   plist=~/Library/LaunchAgents/com.archivis.serve.plist
+   /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$plist" 2>/dev/null
+   /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:ARCHIVIS_AUTH" "$plist" 2>/dev/null
+   /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ARCHIVIS_AUTH string yourname:$pw" "$plist"
+   chmod 600 "$plist"
+   launchctl bootout gui/$(id -u)/com.archivis.serve       # a restart alone keeps the old settings
+   launchctl bootstrap gui/$(id -u) "$plist"
+   ```
+4. From outside your network (a phone off Wi-Fi, say), check that a password
+   is required, then log in with a browser:
+
+   ```sh
+   curl -sI https://photos.example.com | head -1      # expect: HTTP/2 401
+   ```
+
+Things to know:
+
+- **One shared login.** Anyone with the password can view every photo,
+  download the originals, and rename or relabel people. The user name you
+  choose is recorded with each aesthetic rating.
+- **Stay awake.** The web interface is a per-user agent, so it runs only
+  while you are logged in. Turn on automatic login, and stop the Mac
+  sleeping (System Settings → Energy).
+- **Without opening ports.** Tailscale or a Cloudflare Tunnel give encrypted
+  remote access with nothing forwarded on the router.
+
 ## Backups
 
 Your originals are untouched, and the models and thumbnails can be
