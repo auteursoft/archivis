@@ -84,6 +84,19 @@ func TestInspectCommand(t *testing.T) {
 	if !strings.Contains(out.String(), "DSC00001.JPG (2)") {
 		t.Errorf("same name under two arguments not told apart:\n%s", out.String())
 	}
+	// names that flatten to the same file name still get a preview each
+	clash := t.TempDir()
+	os.MkdirAll(filepath.Join(clash, "a"), 0o755)
+	os.WriteFile(filepath.Join(clash, "a", "b.jpg"), jpg, 0o644)
+	os.WriteFile(filepath.Join(clash, "a__b.jpg"), jpg, 0o644)
+	os.WriteFile(filepath.Join(clash, "A__B.JPG"), jpg, 0o644)
+	prev2 := t.TempDir()
+	if err := inspect(&out, []string{clash}, prev2); err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := filepath.Glob(filepath.Join(prev2, "*.jpg")); len(saved) != 3 {
+		t.Fatalf("flattened names collided: %v", saved)
+	}
 	if err := inspect(&out, []string{t.TempDir()}, ""); err == nil {
 		t.Error("empty folder accepted")
 	}

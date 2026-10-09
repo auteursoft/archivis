@@ -69,6 +69,7 @@ func inspect(out io.Writer, paths []string, previews string) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "FILE\tFORMAT\tDECODED\tRECORDED\tORIENT\tCAMERA\tLENS\tTAKEN\tEXPOSURE\tTIME\tWARNINGS")
 	problems := 0
+	usedPreview := map[string]bool{}
 	for _, f := range files {
 		start := time.Now()
 		d, err := imageio.Load(f.path, 800)
@@ -101,7 +102,7 @@ func inspect(out io.Writer, paths []string, previews string) error {
 		if previews != "" {
 			b, err := imageio.EncodeJPEG(d.Img, 85)
 			if err == nil {
-				err = os.WriteFile(filepath.Join(previews, previewName(f.name)), b, 0o644)
+				err = os.WriteFile(filepath.Join(previews, uniquePreviewName(f.name, usedPreview)), b, 0o644)
 			}
 			if err != nil {
 				return err
@@ -114,6 +115,18 @@ func inspect(out io.Writer, paths []string, previews string) error {
 		fmt.Fprintf(out, "decoded images saved in %s: check that each one is upright\n", previews)
 	}
 	return nil
+}
+
+// uniquePreviewName is previewName, numbered when two shown names flatten
+// to the same file name ("a/b.jpg" and "a__b.jpg").
+func uniquePreviewName(name string, used map[string]bool) string {
+	base := strings.TrimSuffix(previewName(name), ".jpg")
+	p := base + ".jpg"
+	for n := 2; used[strings.ToLower(p)]; n++ { // case-insensitive file systems
+		p = fmt.Sprintf("%s-%d.jpg", base, n)
+	}
+	used[strings.ToLower(p)] = true
+	return p
 }
 
 // previewName flattens a shown name into one file name:
