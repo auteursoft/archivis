@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	iofs "io/fs"
 	"os"
 	"path/filepath"
@@ -24,20 +25,38 @@ orientation, camera, lens, date and exposure, with warnings.
 	if len(paths) == 0 {
 		return fmt.Errorf("usage: archivis inspect [--previews DIR] FILE_OR_FOLDER...")
 	}
-	if *previews != "" {
-		if err := os.MkdirAll(*previews, 0o755); err != nil {
+	return inspect(os.Stdout, paths, *previews)
+}
+
+// inspectFile is a file to inspect and the name it is shown and saved
+// under: its path relative to the folder it was found in, so that
+// DSC00001.ARW in two card folders stays two rows and two previews.
+type inspectFile struct{ path, name string }
+
+func inspect(out io.Writer, paths []string, previews string) error {
+	if previews != "" {
+		if err := os.MkdirAll(previews, 0o755); err != nil {
 			return err
 		}
 	}
-	var files []string
-	for _, p := range paths {
-		err := filepath.WalkDir(p, func(path string, d iofs.DirEntry, err error) error {
+	var files []inspectFile
+	seen := map[string]int{}
+	for _, root := range paths {
+		err := filepath.WalkDir(root, func(path string, d iofs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			if !d.IsDir() && imageio.IsImagePath(path) {
-				files = append(files, path)
+			if d.IsDir() || !imageio.IsImagePath(path) {
+				return nil
 			}
+			name := filepath.Base(path)
+			if rel, err := filepath.Rel(root, path); err == nil && rel != "." {
+				name = filepath.ToSlash(rel)
+			}
+			if seen[name]++; seen[name] > 1 { // the same name under two arguments
+				name = fmt.Sprintf("%s (%d)", name, seen[name])
+			}
+			files = append(files, inspectFile{path, name})
 			return nil
 		})
 		if err != nil {
@@ -47,16 +66,16 @@ orientation, camera, lens, date and exposure, with warnings.
 	if len(files) == 0 {
 		return fmt.Errorf("no photo files found")
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "FILE\tFORMAT\tDECODED\tRECORDED\tORIENT\tCAMERA\tLENS\tTAKEN\tEXPOSURE\tTIME\tWARNINGS")
 	problems := 0
-	for _, p := range files {
+	for _, f := range files {
 		start := time.Now()
-		d, err := imageio.Load(p, 800)
+		d, err := imageio.Load(f.path, 800)
 		took := time.Since(start).Round(time.Millisecond)
 		if err != nil {
 			problems++
-			fmt.Fprintf(tw, "%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s\tERROR: %v\n", filepath.Base(p), took, err)
+			fmt.Fprintf(tw, "%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s\tERROR: %v\n", f.name, took, err)
 			continue
 		}
 		m := d.Meta
@@ -77,12 +96,12 @@ orientation, camera, lens, date and exposure, with warnings.
 			exp = fmt.Sprintf("%.0fmm f/%.1f %s ISO %d", m.FocalLength, m.FNumber, shutterText(m.ExposureTime), m.ISO)
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%dx%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			filepath.Base(p), d.Format, d.SrcW, d.SrcH, recorded, m.Orientation,
+			f.name, d.Format, d.SrcW, d.SrcH, recorded, m.Orientation,
 			orDash(strings.TrimSpace(m.Make+" "+m.Model)), orDash(m.Lens), taken, exp, took, strings.Join(warn, "; "))
-		if *previews != "" {
+		if previews != "" {
 			b, err := imageio.EncodeJPEG(d.Img, 85)
 			if err == nil {
-				err = os.WriteFile(filepath.Join(*previews, filepath.Base(p)+".jpg"), b, 0o644)
+				err = os.WriteFile(filepath.Join(previews, previewName(f.name)), b, 0o644)
 			}
 			if err != nil {
 				return err
@@ -90,11 +109,17 @@ orientation, camera, lens, date and exposure, with warnings.
 		}
 	}
 	tw.Flush()
-	fmt.Printf("\n%d files, %d with errors or warnings\n", len(files), problems)
-	if *previews != "" {
-		fmt.Printf("decoded images saved in %s: check that each one is upright\n", *previews)
+	fmt.Fprintf(out, "\n%d files, %d with errors or warnings\n", len(files), problems)
+	if previews != "" {
+		fmt.Fprintf(out, "decoded images saved in %s: check that each one is upright\n", previews)
 	}
 	return nil
+}
+
+// previewName flattens a shown name into one file name:
+// "100MSDCF/DSC00001.ARW" -> "100MSDCF__DSC00001.ARW.jpg".
+func previewName(name string) string {
+	return strings.NewReplacer("/", "__", " ", "_", "(", "", ")", "").Replace(name) + ".jpg"
 }
 
 // inspectWarnings flags what would make a photo catalogue badly.
@@ -107,10 +132,12 @@ func inspectWarnings(d *imageio.Decoded) []string {
 	if m.TakenAt.IsZero() {
 		w = append(w, "no capture time")
 	}
+	// A camera photo should name its lens; scans and screenshots record no
+	// camera either, and already say so.
+	if m.Lens == "" && (m.Make != "" || m.Model != "" || strings.HasPrefix(d.Format, "raw")) {
+		w = append(w, "no lens")
+	}
 	if strings.HasPrefix(d.Format, "raw") {
-		if m.Lens == "" {
-			w = append(w, "no lens")
-		}
 		long := max(d.SrcW, d.SrcH)
 		if long < 1600 {
 			w = append(w, fmt.Sprintf("small preview (%d px long edge)", long))
