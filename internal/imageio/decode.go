@@ -464,24 +464,20 @@ func readHEIFFile(path string) heifInfo {
 }
 
 // heifOrientation is the rotation still to apply to a converter's output of
-// width w and height h. The container's own rotation (irot/imir) has been
-// applied by the converter. A rotation recorded only in EXIF has not, if
-// the output has the stored, unrotated size; for 180° and mirroring, whose
-// size gives no clue, libheif-based converters are known to ignore EXIF and
-// macOS's sips is trusted to have applied it.
+// width w and height h, when the output itself carries no orientation tag.
+// The container's own rotation (irot/imir) has been applied by every
+// converter. A rotation recorded only in EXIF has been applied by macOS's
+// sips but not by the libheif-based ones (heif-convert, ImageMagick, vips),
+// which follow the HEIF rule that EXIF orientation is informational. As a
+// safeguard, output that is already transposed relative to the stored image
+// is taken as rotated.
 func heifOrientation(info heifInfo, w, h int, converter string) int {
 	o := info.ExifOrient
-	if info.Transform || o < 2 || o > 8 {
+	if info.Transform || o < 2 || o > 8 || converter == "sips" {
 		return 1
 	}
-	if o >= 5 {
-		if info.W > 0 && w == info.W && h == info.H && w != h {
-			return o
-		}
-		return 1
-	}
-	if converter == "sips" {
-		return 1
+	if o >= 5 && info.W > 0 && w != h && w == info.H && h == info.W {
+		return 1 // already turned through 90°
 	}
 	return o
 }

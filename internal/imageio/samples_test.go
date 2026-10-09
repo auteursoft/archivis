@@ -12,12 +12,18 @@ import (
 // ARCHIVIS_REQUIRE_SAMPLES=1 (CI) a missing sample fails it.
 func TestRealSamples(t *testing.T) {
 	dir := os.Getenv("ARCHIVIS_SAMPLES")
-	skip := t.Skip
-	if os.Getenv("ARCHIVIS_REQUIRE_SAMPLES") != "" {
-		skip = t.Fatal
+	required := os.Getenv("ARCHIVIS_REQUIRE_SAMPLES") != ""
+	// skipper returns t's own Skip, or Fatal when samples are required. It
+	// must be called on each subtest's t: Skip or Fatal on a parent test
+	// from inside a subtest is itself a failure.
+	skipper := func(t *testing.T) func(...any) {
+		if required {
+			return t.Fatal
+		}
+		return t.Skip
 	}
 	if dir == "" {
-		skip("ARCHIVIS_SAMPLES not set (tools/samples/fetch.sh DIR)")
+		skipper(t)("ARCHIVIS_SAMPLES not set (tools/samples/fetch.sh DIR)")
 	}
 	for _, c := range []struct {
 		file, format string
@@ -41,6 +47,7 @@ func TestRealSamples(t *testing.T) {
 		{"iphone_7.heic", "heif", 3024, 4032, "Apple", "iPhone 7", "Apple iPhone 7 back camera 3.99mm f/1.8", "2018-09-10 12:16:13", 3.99, true},
 	} {
 		t.Run(c.file, func(t *testing.T) {
+			skip := skipper(t)
 			p := filepath.Join(dir, c.file)
 			if _, err := os.Stat(p); err != nil {
 				skip(err)

@@ -15,7 +15,7 @@ type heifInfo struct {
 }
 
 // readHEIFInfo parses the HEIF box structure: the primary item (pitm), its
-// properties (ipco, via ipma) and the EXIF block. Converters built on
+// properties (ipco, via ipma) and the EXIF item that describes it. Converters built on
 // libheif apply irot/imir to the pixels but ignore EXIF orientation, as the
 // HEIF standard says they should; some files (for instance ones re-saved by
 // editing tools) carry their rotation only in EXIF, so it must be checked.
@@ -63,7 +63,7 @@ func readHEIFInfo(r io.ReaderAt, size int64) heifInfo {
 			info.Transform = true
 		}
 	}
-	info.ExifOrient = heifExifOrientation(r, buf)
+	info.ExifOrient = heifExifOrientation(r, size, meta, primary)
 	return info
 }
 
@@ -153,26 +153,224 @@ func primaryProperties(ipma []byte, id uint32) []int {
 	return nil
 }
 
-// heifExifOrientation finds the EXIF block ("Exif\0\0" followed by a TIFF
-// header) in the first part of the file, where encoders put it, and returns
-// its orientation (0 if there is none).
-func heifExifOrientation(r io.ReaderAt, head []byte) int {
-	scan := func(b []byte, base int64) (int, bool) {
-		for i := 0; ; {
-			j := bytes.Index(b[i:], []byte("Exif\x00\x00"))
-			if j < 0 {
-				return 0, false
-			}
-			t := base + int64(i+j+6)
-			if tr, ifd0, err := newTIFFReader(r, t, 0); err == nil {
-				if d, _, err := tr.readIFD(ifd0); err == nil {
-					o, _ := d.uint(tagOrientation)
-					return int(o), true
-				}
-			}
-			i += j + 6
+// heifExifOrientation returns the orientation in the EXIF item that
+// describes the primary image (0 if there is none). The item is found the
+// way the HEIF standard defines: its type in iinf, its "content describes"
+// reference (cdsc) to the primary item in iref, and its bytes through iloc,
+// wherever in the file they are. An EXIF item's payload starts with the
+// 32-bit offset of the TIFF header that follows it.
+func heifExifOrientation(r io.ReaderAt, size int64, meta []byte, primary uint32) int {
+	types := heifItemTypes(findBox(meta, "iinf"))
+	var exif []uint32
+	for id, typ := range types {
+		if typ == "Exif" {
+			exif = append(exif, id)
 		}
 	}
-	o, _ := scan(head, 0)
-	return o
+	if len(exif) == 0 {
+		return 0
+	}
+	refs := heifRefs(findBox(meta, "iref"), "cdsc")
+	pick := uint32(0)
+	for _, id := range exif {
+		for _, to := range refs[id] {
+			if to == primary {
+				pick = id
+			}
+		}
+	}
+	if pick == 0 && len(exif) == 1 && len(refs[exif[0]]) == 0 {
+		pick = exif[0] // a lone EXIF item that describes nothing in particular
+	}
+	if pick == 0 {
+		return 0
+	}
+	data := heifItemData(r, size, meta, pick, 1<<20)
+	if len(data) < 4 {
+		return 0
+	}
+	off := int64(binary.BigEndian.Uint32(data[:4])) + 4
+	if off >= int64(len(data)) {
+		return 0
+	}
+	tr, ifd0, err := newTIFFReader(bytes.NewReader(data), off, int64(len(data)))
+	if err != nil {
+		return 0
+	}
+	d, _, err := tr.readIFD(ifd0)
+	if err != nil {
+		return 0
+	}
+	o, _ := d.uint(tagOrientation)
+	return int(o)
+}
+
+// heifItemTypes maps item IDs to their types (iinf: infe boxes, version 2
+// or later).
+func heifItemTypes(iinf []byte) map[uint32]string {
+	out := map[uint32]string{}
+	if len(iinf) < 6 {
+		return out
+	}
+	body := iinf[6:] // version, flags, 16-bit entry count
+	if iinf[0] != 0 {
+		if len(iinf) < 8 {
+			return out
+		}
+		body = iinf[8:] // 32-bit entry count
+	}
+	for _, e := range childBoxes(body) {
+		b := e.body
+		if e.typ != "infe" || len(b) < 4 {
+			continue
+		}
+		switch v := b[0]; {
+		case v == 2 && len(b) >= 12:
+			out[uint32(binary.BigEndian.Uint16(b[4:6]))] = string(b[8:12])
+		case v >= 3 && len(b) >= 14:
+			out[binary.BigEndian.Uint32(b[4:8])] = string(b[10:14])
+		}
+	}
+	return out
+}
+
+// heifRefs returns the references of one type from iref: from ID -> to IDs.
+func heifRefs(iref []byte, typ string) map[uint32][]uint32 {
+	out := map[uint32][]uint32{}
+	if len(iref) < 4 {
+		return out
+	}
+	wide := iref[0] != 0 // version 1: 32-bit item IDs
+	id := func(p []byte) (uint32, []byte, bool) {
+		if wide {
+			if len(p) < 4 {
+				return 0, nil, false
+			}
+			return binary.BigEndian.Uint32(p[:4]), p[4:], true
+		}
+		if len(p) < 2 {
+			return 0, nil, false
+		}
+		return uint32(binary.BigEndian.Uint16(p[:2])), p[2:], true
+	}
+	for _, ref := range childBoxes(iref[4:]) {
+		if ref.typ != typ {
+			continue
+		}
+		from, p, ok := id(ref.body)
+		if !ok || len(p) < 2 {
+			continue
+		}
+		n := int(binary.BigEndian.Uint16(p[:2]))
+		p = p[2:]
+		for i := 0; i < n; i++ {
+			var to uint32
+			if to, p, ok = id(p); !ok {
+				break
+			}
+			out[from] = append(out[from], to)
+		}
+	}
+	return out
+}
+
+// heifItemData reads an item's bytes (at most limit) as located by iloc:
+// from the file (construction method 0) or from the meta box's idat (1).
+func heifItemData(r io.ReaderAt, size int64, meta []byte, item uint32, limit int) []byte {
+	b := findBox(meta, "iloc")
+	if len(b) < 8 {
+		return nil
+	}
+	version := b[0]
+	offSize, lenSize := int(b[4]>>4), int(b[4]&15)
+	baseSize, idxSize := int(b[5]>>4), 0
+	if version == 1 || version == 2 {
+		idxSize = int(b[5] & 15)
+	}
+	p := b[6:]
+	take := func(n int) (uint64, bool) {
+		if n == 0 {
+			return 0, true
+		}
+		if len(p) < n || (n != 4 && n != 8 && n != 2) {
+			return 0, false
+		}
+		var v uint64
+		for _, c := range p[:n] {
+			v = v<<8 | uint64(c)
+		}
+		p = p[n:]
+		return v, true
+	}
+	countSize := 2
+	if version == 2 {
+		countSize = 4
+	}
+	count, ok := take(countSize)
+	if !ok {
+		return nil
+	}
+	for i := uint64(0); i < count; i++ {
+		idSize := 2
+		if version == 2 {
+			idSize = 4
+		}
+		id, ok1 := take(idSize)
+		method := uint64(0)
+		if version == 1 || version == 2 {
+			m, ok := take(2)
+			if !ok {
+				return nil
+			}
+			method = m & 15
+		}
+		_, ok2 := take(2) // data reference index
+		base, ok3 := take(baseSize)
+		extents, ok4 := take(2)
+		if !(ok1 && ok2 && ok3 && ok4) {
+			return nil
+		}
+		var out []byte
+		for e := uint64(0); e < extents; e++ {
+			if idxSize > 0 {
+				if _, ok := take(idxSize); !ok {
+					return nil
+				}
+			}
+			off, okO := take(offSize)
+			n, okN := take(lenSize)
+			if !okO || !okN {
+				return nil
+			}
+			if uint32(id) != item {
+				continue
+			}
+			start := base + off
+			if n == 0 || n > uint64(limit-len(out)) {
+				n = uint64(limit - len(out))
+			}
+			switch method {
+			case 0:
+				if int64(start) >= size {
+					return nil
+				}
+				n = min(n, uint64(size)-start)
+				chunk := make([]byte, n)
+				got, _ := r.ReadAt(chunk, int64(start))
+				out = append(out, chunk[:got]...)
+			case 1:
+				idat := findBox(meta, "idat")
+				if start >= uint64(len(idat)) {
+					return nil
+				}
+				out = append(out, idat[start:min(uint64(len(idat)), start+n)]...)
+			default:
+				return nil // item-offset construction: not used for EXIF
+			}
+		}
+		if uint32(id) == item {
+			return out
+		}
+	}
+	return nil
 }
