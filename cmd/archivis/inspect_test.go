@@ -94,8 +94,17 @@ func TestInspectCommand(t *testing.T) {
 	if err := inspect(&out, []string{clash}, prev2); err != nil {
 		t.Fatal(err)
 	}
-	if saved, _ := filepath.Glob(filepath.Join(prev2, "*.jpg")); len(saved) != 3 {
-		t.Fatalf("flattened names collided: %v", saved)
+	// On case-insensitive disks (macOS, Windows) A__B.JPG replaced a__b.jpg,
+	// so count the photos that exist: one preview each.
+	photos := 0
+	filepath.WalkDir(clash, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			photos++
+		}
+		return nil
+	})
+	if saved, _ := filepath.Glob(filepath.Join(prev2, "*.jpg")); len(saved) != photos || photos < 2 {
+		t.Fatalf("%d photos but previews %v", photos, saved)
 	}
 	if err := inspect(&out, []string{t.TempDir()}, ""); err == nil {
 		t.Error("empty folder accepted")
