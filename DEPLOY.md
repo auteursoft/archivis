@@ -426,8 +426,9 @@ Things to know:
   download the originals, and rename or relabel people. The user name you
   choose is recorded with each aesthetic rating.
 - **Stay awake.** The web interface is a per-user agent, so it runs only
-  while you are logged in. Turn on automatic login, and stop the Mac
-  sleeping (System Settings → Energy).
+  while you are logged in. Locking the screen keeps it running; after a
+  restart, log in again (automatic login would leave the Mac open to anyone
+  who can reach it). Stop the Mac sleeping (System Settings → Energy).
 - **Without opening ports.** Tailscale or a Cloudflare Tunnel give encrypted
   remote access with nothing forwarded on the router.
 
