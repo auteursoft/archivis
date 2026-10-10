@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Argon2id parameters (RFC 9106's second recommended option, with 64 MiB):
@@ -51,10 +53,17 @@ func CheckPassword(name, pw string) error {
 		return fmt.Errorf("%w: use at least %d characters", ErrWeakPassword, MinPasswordLen)
 	case n > maxPasswordLen || len(pw) > maxPasswordBytes:
 		return fmt.Errorf("%w: use at most %d characters", ErrWeakPassword, maxPasswordLen)
-	case strings.EqualFold(strings.TrimSpace(pw), strings.TrimSpace(name)):
+	case NameKey(pw) == NameKey(name):
 		return fmt.Errorf("%w: it must differ from the user name", ErrWeakPassword)
 	}
 	return nil
+}
+
+// NameKey is the form account names are compared in: Unicode-normalised
+// and case-folded, so "Älice" and "älice", or "straße" and "STRASSE", are
+// one name.
+func NameKey(name string) string {
+	return cases.Fold().String(norm.NFKC.String(strings.TrimSpace(name)))
 }
 
 // HashPassword returns an encoded Argon2id hash with a fresh random salt:

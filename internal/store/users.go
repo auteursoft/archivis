@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
+	"github.com/auteursoft/archivis/internal/auth"
 )
 
 // Roles, from least to most able.
@@ -58,18 +58,15 @@ func scanUser(sc interface{ Scan(...any) error }) (*User, error) {
 // cleanName validates an account name.
 func cleanName(name string) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || len(name) > 64 || strings.ContainsAny(name, ":\x00\r\n\t") {
+	if n := utf8.RuneCountInString(name); n == 0 || n > 64 || len(name) > 256 || strings.ContainsAny(name, ":\x00\r\n\t") {
 		return "", fmt.Errorf("names must be 1-64 characters, without ':' or control characters")
 	}
 	return name, nil
 }
 
-// NameKey is the form names are compared in: Unicode-normalised and
-// case-folded, so "Älice" and "älice" are one account (SQLite's NOCASE
-// folds ASCII only).
-func NameKey(name string) string {
-	return cases.Fold().String(norm.NFKC.String(strings.TrimSpace(name)))
-}
+// NameKey is the form names are compared in (auth.NameKey): unique in any
+// letter case, where SQLite's NOCASE folds ASCII only.
+func NameKey(name string) string { return auth.NameKey(name) }
 
 // HasUsers reports whether any account exists. Until one does, the web
 // interface uses the older single shared password (or none).

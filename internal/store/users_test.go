@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,7 +49,7 @@ func TestUsersAndLastAdmin(t *testing.T) {
 	if _, err := st.CreateUser("alice", RoleViewer, "h"); !errors.Is(err, ErrNameTaken) {
 		t.Fatalf("duplicate name (other case): %v", err)
 	}
-	for _, bad := range []string{"", "  ", "a:b", "a\nb"} {
+	for _, bad := range []string{"", "  ", "a:b", "a\nb", strings.Repeat("é", 65)} {
 		if _, err := st.CreateUser(bad, RoleViewer, "h"); err == nil {
 			t.Errorf("name %q accepted", bad)
 		}
@@ -260,5 +261,12 @@ func TestNamesUniqueInAnyCase(t *testing.T) {
 	}
 	if _, err := st.AcceptInvite("s2", "h"); !errors.Is(err, ErrNameTaken) {
 		t.Fatalf("full case folding: %v", err)
+	}
+}
+
+func TestNameLengthInCharacters(t *testing.T) {
+	st := openUsers(t)
+	if _, err := st.CreateUser(strings.Repeat("é", 64), RoleViewer, "h"); err != nil {
+		t.Errorf("64-character non-ASCII name refused: %v", err)
 	}
 }

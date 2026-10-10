@@ -63,6 +63,10 @@ func TestCheckPassword(t *testing.T) {
 	if h, err := HashPassword(long); err != nil || !VerifyPassword(h, long) {
 		t.Fatalf("a 256-character multibyte password cannot be used: %v", err)
 	}
+	// the same comparison as account names, beyond ASCII
+	if CheckPassword("straßestraße", "STRASSESTRASSE") == nil {
+		t.Error("password equal to the user name in another case accepted")
+	}
 	if CheckPassword("JaneSmithLong", "janesmithlong") == nil {
 		t.Error("password equal to the user name accepted")
 	}
