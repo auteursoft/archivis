@@ -77,6 +77,13 @@ func publicPath(p string) bool {
 // without, by the shared password if one is set.
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Everything but the stylesheet and script depends on who asks: no
+		// shared cache (a proxy) may keep it, or it could hand it to someone
+		// else without this check. Handlers may set something stricter, or
+		// a longer browser-only lifetime (serveCached).
+		if !strings.HasPrefix(r.URL.Path, "/static/") {
+			w.Header().Set("Cache-Control", "private, no-cache")
+		}
 		on, err := s.accountsOn()
 		if err != nil {
 			http.Error(w, "accounts unavailable: "+err.Error(), http.StatusInternalServerError)
@@ -247,7 +254,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Name = strings.TrimSpace(r.PostFormValue("name"))
 	pw := r.PostFormValue("password")
-	ip, nameKey := "ip:"+clientIP(r), "name:"+strings.ToLower(d.Name)
+	ip, nameKey := "ip:"+clientIP(r), "name:"+store.NameKey(d.Name) // the account's own key: equivalent spellings share a limit
 	for _, k := range []string{ip, nameKey} {
 		lim := s.ipLimit
 		if k == nameKey {

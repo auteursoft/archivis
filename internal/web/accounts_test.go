@@ -449,3 +449,37 @@ func TestRaterUsesAccount(t *testing.T) {
 		t.Fatalf("rater = %q", got)
 	}
 }
+
+func TestProtectedResponsesPrivate(t *testing.T) {
+	s, _, _ := accountsServer(t)
+	b := &browser{t: t, h: s.Handler()}
+	b.login("root", testPassword)
+	// pages, originals, query images, admin pages, and refusals alike
+	for _, p := range []string{"/people", "/admin/users", "/original/1", "/query/nope/img", "/login"} {
+		if cc := b.do("GET", p, nil).Header().Get("Cache-Control"); !strings.HasPrefix(cc, "private") && cc != "no-store" {
+			t.Errorf("%s: Cache-Control %q", p, cc)
+		}
+	}
+	anon := &browser{t: t, h: s.Handler()}
+	if cc := anon.do("GET", "/people", nil).Header().Get("Cache-Control"); !strings.HasPrefix(cc, "private") {
+		t.Errorf("redirect to sign-in: Cache-Control %q", cc)
+	}
+	if cc := anon.do("GET", "/static/app.css", nil).Header().Get("Cache-Control"); strings.HasPrefix(cc, "private") {
+		t.Errorf("static marked private: %q", cc)
+	}
+}
+
+func TestNameLimitSharedByEquivalentSpellings(t *testing.T) {
+	s, cat, _ := accountsServer(t)
+	newUser(t, cat, "straße", store.RoleViewer)
+	s.nameLimit = auth.NewLimiter(3, time.Hour)
+	h := s.Handler()
+	for i, name := range []string{"straße", "STRASSE", "Strasse"} {
+		b := &browser{t: t, h: h, remote: "198.51.100." + strconv.Itoa(i+1) + ":1"}
+		b.login(name, "wrong password!")
+	}
+	b := &browser{t: t, h: h, remote: "198.51.100.9:1"}
+	if rec := b.login("STRASSE", testPassword); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("equivalent spellings escaped the per-name limit: %d", rec.Code)
+	}
+}

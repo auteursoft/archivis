@@ -64,10 +64,10 @@ func cleanName(name string) (string, error) {
 	return name, nil
 }
 
-// nameKey is the form names are compared in: Unicode-normalised and
+// NameKey is the form names are compared in: Unicode-normalised and
 // case-folded, so "Älice" and "älice" are one account (SQLite's NOCASE
 // folds ASCII only).
-func nameKey(name string) string {
+func NameKey(name string) string {
 	return cases.Fold().String(norm.NFKC.String(strings.TrimSpace(name)))
 }
 
@@ -89,7 +89,7 @@ func (s *Store) CreateUser(name, role, pwHash string) (*User, error) {
 	if !ValidRole(role) {
 		return nil, fmt.Errorf("unknown role %q", role)
 	}
-	res, err := s.DB.Exec(`INSERT INTO users (name, name_key, role, pw_hash, created_at) VALUES (?,?,?,?,?)`, name, nameKey(name), role, pwHash, time.Now().Unix())
+	res, err := s.DB.Exec(`INSERT INTO users (name, name_key, role, pw_hash, created_at) VALUES (?,?,?,?,?)`, name, NameKey(name), role, pwHash, time.Now().Unix())
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, ErrNameTaken
@@ -114,7 +114,7 @@ func (s *Store) UserByID(id int64) (*User, error) {
 func (s *Store) UserForLogin(name string) (*User, string, error) {
 	var hash sql.NullString
 	var u User
-	err := s.DB.QueryRow(`SELECT `+userCols+`, u.pw_hash FROM users u WHERE u.name_key = ?`, nameKey(name)).
+	err := s.DB.QueryRow(`SELECT `+userCols+`, u.pw_hash FROM users u WHERE u.name_key = ?`, NameKey(name)).
 		Scan(&u.ID, &u.Name, &u.Role, &u.CreatedAt, &u.Disabled, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", ErrNoUser
@@ -337,7 +337,7 @@ func (s *Store) AcceptInvite(tokenHash, pwHash string) (*User, error) {
 			id = uid.Int64
 			return nil
 		}
-		res, err = tx.Exec(`INSERT INTO users (name, name_key, role, pw_hash, created_at) VALUES (?,?,?,?,?)`, name, nameKey(name), role, pwHash, now)
+		res, err = tx.Exec(`INSERT INTO users (name, name_key, role, pw_hash, created_at) VALUES (?,?,?,?,?)`, name, NameKey(name), role, pwHash, now)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE") {
 				return ErrNameTaken
