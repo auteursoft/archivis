@@ -341,8 +341,10 @@ ssh -N -L 8088:127.0.0.1:8088 you@photo-server
 
 then open <http://127.0.0.1:8088> on the laptop.
 
-**Your home network, with a password.** Store the password where only root
-can read it (it then never appears in the process list or the service file):
+**Your home network, with a password.** (Once you create
+[accounts](#accounts), they replace this shared password.) Store the
+password where only root can read it (it then never appears in the process
+list or the service file):
 
 ```sh
 echo 'ARCHIVIS_AUTH=yourname:a-long-password' | sudo tee /etc/archivis.env >/dev/null
@@ -403,6 +405,56 @@ as below; copied without the backslashes, the job silently never runs.
 Point `archivis-backups` at another disk if you can. Time Machine and most
 backup tools also work, but a `.backup` copy is guaranteed to be consistent.
 
+## Accounts
+
+A shared password suits one person. For several people, give each their own
+account; the shared `ARCHIVIS_AUTH` password then stops working, and
+everyone signs in with their own name and password. On the server:
+
+```sh
+archivis users add-admin yourname        # asks for a password (at least 12 characters)
+```
+
+That takes effect at once, even with the web interface running. Then invite
+people from the **Users** page (top right, for admins): enter a name and
+role, and send the link it shows. Each link works once, for 7 days; the
+person chooses their own password with it. Or from the server:
+
+```sh
+archivis users invite ann --role editor --url https://photos.example.com
+```
+
+Roles:
+
+| role   | can |
+|--------|-----|
+| viewer | browse, search, search by photo |
+| editor | also name people, fix face labels, rate photos, download originals |
+| admin  | also invite people and manage accounts |
+
+On the Users page an admin can change a role, make a password-reset link,
+sign someone out of every device, or disable an account (which signs it out
+at once). There is always at least one active admin. Locked out? On the
+server, `archivis users password yourname` sets a new password, and
+`archivis users list` shows everyone and any pending invitations.
+
+How it is protected:
+
+- Passwords are stored as Argon2id hashes, never in the clear.
+- Sign-ins last 30 days, in a cookie that scripts on a page cannot read. The
+  cookie is sent only over HTTPS when the site is served that way (directly
+  or through Caddy on the same machine).
+- The database holds only hashes of sign-in and invitation tokens, so a copy
+  of a backup cannot be used to sign in.
+- After 10 failed sign-ins for a name, or 20 from one address, within 15
+  minutes, further attempts wait. A name that does not exist takes as long
+  to refuse as a wrong password.
+- Forms and changes from other websites are refused, and pages cannot be
+  embedded in other sites.
+
+Use accounts over HTTPS (see above). Over plain HTTP, passwords and
+sign-in cookies cross the network unencrypted.
+
 ## Teaching it your taste
 
 Rate photos on their pages in the web interface (or say the aesthetic score
@@ -415,8 +467,8 @@ archivis aesthetic models    # every model used, its blend weight and how it was
 
 This takes seconds, plus about 30 s per million photos to score them with
 the new model. The web interface shows the new scores straight away; there
-is no need to restart it. With a password on the web interface, each
-user's judgements are recorded under their user name; `--rater NAME`
+is no need to restart it. With accounts (or a password) on the web
+interface, each person's judgements are recorded under their name; `--rater NAME`
 trains on one person's judgements only. `train` and `use` wait for a running index to finish (they say so;
 `train --dry-run` works meanwhile), since the indexer would keep scoring
 new photos with the previous models. To go back to an earlier model:

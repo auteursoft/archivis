@@ -77,7 +77,13 @@ archivis index /Volumes/Archive1 /Volumes/Archive2 --exclude "Lightroom Backups"
 
 # Browse, search and name people in the web UI
 archivis serve          # → http://127.0.0.1:8088
+
+# Sharing it: an account for you, then invite others from the Users page
+archivis users add-admin yourname
 ```
+
+Accounts have three roles (viewer, editor, admin), single-use invitation
+links and Argon2id password hashes; see [DEPLOY.md](DEPLOY.md#accounts).
 
 From the terminal:
 

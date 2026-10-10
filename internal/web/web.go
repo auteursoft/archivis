@@ -4,7 +4,6 @@ package web
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/subtle"
 	"database/sql"
 	"embed"
 	"encoding/hex"
@@ -26,8 +25,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/auteursoft/archivis/internal/auth"
 	"github.com/auteursoft/archivis/internal/catalog"
 	"github.com/auteursoft/archivis/internal/imageio"
 	"github.com/auteursoft/archivis/internal/indexer"
@@ -45,7 +46,10 @@ var staticFS embed.FS
 // Server is the HTTP UI.
 type Server struct {
 	cat  *catalog.Catalog
-	Auth string // "user:password" for basic auth; empty = none
+	Auth string // "user:password" for basic auth until the first account exists; empty = none
+
+	hasUsers           atomic.Bool
+	ipLimit, nameLimit *auth.Limiter
 
 	tmpl map[string]*template.Template
 
@@ -63,7 +67,9 @@ type queryEntry struct {
 }
 
 func New(c *catalog.Catalog) *Server {
-	s := &Server{cat: c, queries: map[string]*queryEntry{}, tmpl: map[string]*template.Template{}}
+	s := &Server{cat: c, queries: map[string]*queryEntry{}, tmpl: map[string]*template.Template{},
+		// failed sign-ins allowed per 15 minutes, per address and per name
+		ipLimit: auth.NewLimiter(20, 15*time.Minute), nameLimit: auth.NewLimiter(10, 15*time.Minute)}
 	base := template.Must(template.New("base").Funcs(funcs).ParseFS(templateFS, "templates/layout.html"))
 	pages, _ := fs.Glob(templateFS, "templates/*.html")
 	for _, p := range pages {
@@ -105,12 +111,32 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/match", s.apiMatch)
 	mux.HandleFunc("POST /api/refresh", s.apiRefresh)
 	mux.HandleFunc("POST /api/photo/{id}/aesthetic", s.apiAestheticFeedback)
+	mux.HandleFunc("GET /login", s.handleLogin)
+	mux.HandleFunc("POST /login", s.handleLogin)
+	mux.HandleFunc("POST /logout", s.handleLogout)
+	mux.HandleFunc("GET /invite/{tok}", s.handleInvite)
+	mux.HandleFunc("POST /invite/{tok}", s.handleInvite)
+	mux.HandleFunc("GET /admin/users", s.handleUsers)
+	mux.HandleFunc("POST /admin/invite", s.adminInvite)
+	mux.HandleFunc("POST /admin/invite/revoke", s.adminRevokeInvite)
+	mux.HandleFunc("POST /admin/users/{id}", s.adminUser)
 	var h http.Handler = mux
+	h = s.authenticate(h)
 	h = sameOrigin(h)
-	if s.Auth != "" {
-		h = s.basicAuth(h)
-	}
-	return logRequests(h)
+	return logRequests(securityHeaders(h))
+}
+
+// securityHeaders forbids framing (clickjacking the admin page) and MIME
+// sniffing, and keeps full URLs out of Referer headers sent elsewhere.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // sameOrigin blocks cross-site request forgery: a state-changing request
@@ -165,19 +191,6 @@ func (s *Server) ListenAndServe(addr string) error {
 	}()
 	srv := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	return srv.ListenAndServe()
-}
-
-func (s *Server) basicAuth(next http.Handler) http.Handler {
-	user, pass, _ := strings.Cut(s.Auth, ":")
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, p, ok := r.BasicAuth()
-		if !ok || subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 || subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
-			w.Header().Set("WWW-Authenticate", `Basic realm="Archivis"`)
-			http.Error(w, "unauthorised", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func logRequests(h http.Handler) http.Handler {
@@ -277,10 +290,29 @@ type page struct {
 	People []store.Person
 	Tags   []store.Tag
 	Params map[string]string
+
+	User    *store.User // signed in; nil without accounts
+	CanEdit bool        // may change labels, rate and download originals
+	Admin   bool        // may manage accounts
+	Bare    bool        // sign-in pages: no navigation or catalogue figures
 }
 
-func (s *Server) render(w http.ResponseWriter, name string, p *page) {
-	p.Stats, _ = s.cat.Store.Stats()
+// who fills in the signed-in account and what it may do.
+func (p *page) who(r *http.Request) {
+	p.User = userFrom(r)
+	p.CanEdit = p.User == nil || store.RoleAtLeast(p.User.Role, store.RoleEditor)
+	p.Admin = p.User != nil && p.User.Role == store.RoleAdmin
+}
+
+func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p *page) {
+	s.renderStatus(w, r, name, p, http.StatusOK)
+}
+
+func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, name string, p *page, status int) {
+	p.who(r)
+	if !p.Bare {
+		p.Stats, _ = s.cat.Store.Stats()
+	}
 	t, ok := s.tmpl[name]
 	if !ok {
 		http.Error(w, "no template "+name, 500)
@@ -294,18 +326,13 @@ func (s *Server) render(w http.ResponseWriter, name string, p *page) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	buf.WriteTo(w)
 }
 
 // notFound renders a friendly 404 page.
-func (s *Server) notFound(w http.ResponseWriter, msg string) {
-	p := &page{Title: "Not found", Data: msg}
-	p.Stats, _ = s.cat.Store.Stats()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusNotFound)
-	if err := s.tmpl["notfound"].ExecuteTemplate(w, "layout", p); err != nil {
-		log.Printf("template notfound: %v", err)
-	}
+func (s *Server) notFound(w http.ResponseWriter, r *http.Request, msg string) {
+	s.renderStatus(w, r, "notfound", &page{Title: "Not found", Data: msg}, http.StatusNotFound)
 }
 
 func idParam(r *http.Request, name string) (int64, bool) {
@@ -425,7 +452,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		d.HasMore = f.Offset+len(ps) < total
 	}
 	p.Data = d
-	s.render(w, "browse", p)
+	s.render(w, r, "browse", p)
 }
 
 type faceView struct {
@@ -454,12 +481,12 @@ type metricRow struct {
 func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(r, "id")
 	if !ok {
-		s.notFound(w, "That photo is not in the catalogue (it may have been removed or re-indexed).")
+		s.notFound(w, r, "That photo is not in the catalogue (it may have been removed or re-indexed).")
 		return
 	}
 	ph, err := s.cat.Store.Photo(id)
 	if err != nil || ph == nil {
-		s.notFound(w, "That photo is not in the catalogue (it may have been removed or re-indexed).")
+		s.notFound(w, r, "That photo is not in the catalogue (it may have been removed or re-indexed).")
 		return
 	}
 	d := &photoData{Photo: *ph}
@@ -493,7 +520,7 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	errs.note("your rating", err)
 	p := &page{Title: filepath.Base(ph.Path), Nav: "browse", Data: d, Error: errs.String()}
 	p.People, _ = s.cat.Store.People()
-	s.render(w, "photo", p)
+	s.render(w, r, "photo", p)
 }
 
 // blendNote describes a photo's aesthetic score when several models
@@ -515,8 +542,12 @@ func (s *Server) blendNote(scores map[string]float64) string {
 	return "blend of " + strings.Join(parts, ", ")
 }
 
-// rater identifies who gave feedback: the basic-auth user, or "local".
+// rater identifies who gave feedback: the account, the basic-auth user,
+// or "local".
 func rater(r *http.Request) string {
+	if u := userFrom(r); u != nil {
+		return u.Name
+	}
 	if u, _, ok := r.BasicAuth(); ok && u != "" {
 		return u
 	}
@@ -645,12 +676,12 @@ func matchPhotos(fs []faceView, limit int, except int64) (int, bool) {
 func (s *Server) handleFace(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(r, "id")
 	if !ok {
-		s.notFound(w, "That face is not in the catalogue. Faces are re-detected when a photo is re-indexed, so old links can go stale.")
+		s.notFound(w, r, "That face is not in the catalogue. Faces are re-detected when a photo is re-indexed, so old links can go stale.")
 		return
 	}
 	fs, err := s.cat.Store.FacesByID([]int64{id})
 	if err != nil || len(fs) == 0 {
-		s.notFound(w, "That face is not in the catalogue. Faces are re-detected when a photo is re-indexed, so old links can go stale.")
+		s.notFound(w, r, "That face is not in the catalogue. Faces are re-detected when a photo is re-indexed, so old links can go stale.")
 		return
 	}
 	ph, err := s.cat.Store.Photo(fs[0].PhotoID)
@@ -659,7 +690,7 @@ func (s *Server) handleFace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ph == nil {
-		s.notFound(w, "That face's photo is no longer in the catalogue.")
+		s.notFound(w, r, "That face's photo is no longer in the catalogue.")
 		return
 	}
 	names := s.personNames()
@@ -679,7 +710,7 @@ func (s *Server) handleFace(w http.ResponseWriter, r *http.Request) {
 	d.Photos, d.AtLeast = matchPhotos(d.Matches, faceLimit, d.Face.PhotoID)
 	p := &page{Title: "Similar faces", Nav: "people", Data: d}
 	p.People, _ = s.cat.Store.People()
-	s.render(w, "face", p)
+	s.render(w, r, "face", p)
 }
 
 // ---- query by uploaded photo ------------------------------------------
@@ -736,7 +767,7 @@ func (s *Server) handleQueryUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	q, err := s.cat.AnalyzeQueryFile(tmpPath)
 	if err != nil {
-		s.render(w, "browse", &page{Title: "Search", Nav: "browse", Error: err.Error(), Data: &browseData{}})
+		s.render(w, r, "browse", &page{Title: "Search", Nav: "browse", Error: err.Error(), Data: &browseData{}})
 		return
 	}
 	b := make([]byte, 8)
@@ -832,7 +863,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	ph := a.Result.Photo
 	d.Metrics = metricsFor(&ph, quality.CastLabel(ph.CastA, ph.CastB, ph.CastStrength))
-	s.render(w, "query", &page{Title: "Search by photo", Nav: "browse", Data: d, Error: errs.String()})
+	s.render(w, r, "query", &page{Title: "Search by photo", Nav: "browse", Data: d, Error: errs.String()})
 }
 
 func (s *Server) handleQueryImage(w http.ResponseWriter, r *http.Request) {
@@ -888,7 +919,7 @@ func (s *Server) handlePeople(w http.ResponseWriter, r *http.Request) {
 		cards = append(cards, c)
 	}
 	p.Data = cards
-	s.render(w, "people", p)
+	s.render(w, r, "people", p)
 }
 
 func (s *Server) facesWithPhotos(fs []store.Face, names map[int64]string) []faceView {
@@ -911,12 +942,12 @@ func (s *Server) facesWithPhotos(fs []store.Face, names map[int64]string) []face
 func (s *Server) handlePerson(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(r, "id")
 	if !ok {
-		s.notFound(w, "That person does not exist (they may have been merged or deleted).")
+		s.notFound(w, r, "That person does not exist (they may have been merged or deleted).")
 		return
 	}
 	per, err := s.cat.Store.Person(id)
 	if err != nil || per == nil {
-		s.notFound(w, "That person does not exist (they may have been merged or deleted).")
+		s.notFound(w, r, "That person does not exist (they may have been merged or deleted).")
 		return
 	}
 	names := s.personNames()
@@ -967,7 +998,7 @@ func (s *Server) handlePerson(w http.ResponseWriter, r *http.Request) {
 	}
 	p := &page{Title: per.Name, Nav: "people", Data: d, Error: errs.String()}
 	p.People, _ = s.cat.Store.People()
-	s.render(w, "person", p)
+	s.render(w, r, "person", p)
 }
 
 func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
@@ -994,7 +1025,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	p := &page{Title: "Discover people", Nav: "discover", Data: out}
 	p.People, _ = s.cat.Store.People()
-	s.render(w, "discover", p)
+	s.render(w, r, "discover", p)
 }
 
 func (s *Server) handleBursts(w http.ResponseWriter, r *http.Request) {
@@ -1009,7 +1040,7 @@ func (s *Server) handleBursts(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		p.Error = err.Error()
 	}
-	s.render(w, "bursts", p)
+	s.render(w, r, "bursts", p)
 }
 
 func (s *Server) handleDuplicates(w http.ResponseWriter, r *http.Request) {
@@ -1018,11 +1049,11 @@ func (s *Server) handleDuplicates(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		p.Error = err.Error()
 	}
-	s.render(w, "duplicates", p)
+	s.render(w, r, "duplicates", p)
 }
 
 func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "guide", &page{Title: "How scores work", Nav: "guide"})
+	s.render(w, r, "guide", &page{Title: "How scores work", Nav: "guide"})
 }
 
 // ---- images -------------------------------------------------------------

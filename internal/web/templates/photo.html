@@ -11,7 +11,7 @@
       </a>
       {{end}}
     </div>
-    <p class="path"><a href="/original/{{.Photo.ID}}" target="_blank">{{.Photo.Path}}</a></p>
+    <p class="path">{{if $.CanEdit}}<a href="/original/{{.Photo.ID}}" target="_blank">{{.Photo.Path}}</a>{{else}}{{.Photo.Path}}{{end}}</p>
   </div>
   <aside class="info">
     <h2>Quality</h2>

@@ -156,6 +156,36 @@ CREATE TABLE IF NOT EXISTS aesthetic_feedback (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS aesthetic_feedback_photo ON aesthetic_feedback(photo_id);
+
+CREATE TABLE IF NOT EXISTS users (
+	id          INTEGER PRIMARY KEY,
+	name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+	role        TEXT NOT NULL,
+	pw_hash     TEXT,
+	created_at  INTEGER NOT NULL,
+	disabled_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS invites (
+	token_hash TEXT PRIMARY KEY,
+	name       TEXT NOT NULL,
+	role       TEXT NOT NULL,
+	user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+	created_by TEXT,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	used_at    INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+	token_hash TEXT PRIMARY KEY,
+	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	last_seen  INTEGER NOT NULL,
+	client     TEXT
+);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
 `
 
 // Store is the catalogue database.
