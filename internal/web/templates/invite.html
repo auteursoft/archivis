@@ -1,0 +1,18 @@
+{{define "content"}}
+{{with .Data}}
+<form class="authform" method="post">
+  {{if .Reset}}<h1>New password</h1>
+  <p>Choose a new password for <b>{{.Invite.Name}}</b>. This signs you out on every other device.</p>
+  {{else}}<h1>Welcome to Archivis</h1>
+  <p>{{if .Invite.CreatedBy}}{{.Invite.CreatedBy}} has invited you{{else}}You have been invited{{end}} as <b>{{.Invite.Name}}</b> ({{.Invite.Role}}). Choose a password to finish.</p>
+  {{end}}
+  <input type="text" name="name" value="{{.Invite.Name}}" autocomplete="username" hidden>
+  <label>Password <input type="password" name="password" autocomplete="new-password" minlength="12" required autofocus></label>
+  <label>Again <input type="password" name="password2" autocomplete="new-password" minlength="12" required></label>
+  <p class="note">At least 12 characters. A few unrelated words make a good one.</p>
+  <button class="btn primary">{{if .Reset}}Set password{{else}}Create account{{end}}</button>
+</form>
+{{else}}
+<div class="notfound"><h1>Invitation</h1><p>Ask whoever sent the link for a new one.</p></div>
+{{end}}
+{{end}}

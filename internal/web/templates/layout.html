@@ -6,10 +6,10 @@
 <title>{{.Title}} · Archivis</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body>
+<body{{if not .CanEdit}} class="readonly"{{end}}>
 <header class="top">
   <a class="brand" href="/">Archivis</a>
-  <nav>
+  {{if not .Bare}}<nav>
     <a href="/" class="{{if eq .Nav "browse"}}on{{end}}">Photos</a>
     <a href="/people" class="{{if eq .Nav "people"}}on{{end}}">People</a>
     <a href="/discover" class="{{if eq .Nav "discover"}}on{{end}}">Discover</a>
@@ -24,6 +24,9 @@
     <label class="btn filebtn">Search by photo<input class="visually-hidden" type="file" name="image" accept="image/*,.cr2,.cr3,.nef,.arw,.dng,.raf,.orf,.rw2,.heic" onchange="this.form.submit()"></label>
   </form>
   <span class="stats">{{.Stats.Photos}} photos · {{.Stats.Faces}} faces · {{.Stats.People}} people</span>
+  {{with .User}}<span class="account">{{if $.Admin}}<a href="/admin/users" class="{{if eq $.Nav "users"}}on{{end}}">Users</a> · {{end}}<span title="{{.Role}}">{{.Name}}</span>
+    <form action="/logout" method="post"><button class="btn small ghost">Sign out</button></form></span>{{end}}
+  {{end}}
 </header>
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
 <main>{{template "content" .}}</main>

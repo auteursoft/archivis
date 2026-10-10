@@ -45,6 +45,7 @@ Commands:
   stats        catalogue summary
   errors       show files that failed to index
   inspect      show what Archivis reads from photo files (camera, lens, preview, rotation)
+  users        web accounts: list | add-admin | invite | reset | password | role | disable | enable | signout
 
 Global flags (all commands):
   --data DIR       data directory (default $ARCHIVIS_DATA or ~/.archivis)
@@ -218,6 +219,7 @@ func main() {
 		"setup": runSetup, "index": runIndex, "serve": runServe, "search": runSearch,
 		"list": runList, "export": runExport, "people": runPeople, "retag": runRetag,
 		"prune": runPrune, "stats": runStats, "errors": runErrors, "aesthetic": runAesthetic, "inspect": runInspect,
+		"users": runUsers,
 	}
 	fn, ok := cmds[cmd]
 	if cmd == "" {
@@ -359,12 +361,9 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 func runServe(g *globals, args []string) error {
 	fs := newFlagSet("serve", "Run the web interface.")
 	addr := fs.String("addr", "127.0.0.1:8088", "listen address (use 0.0.0.0:8088 to expose on your network)")
-	auth := fs.String("auth", cmp.Or(os.Getenv("ARCHIVIS_AUTH"), os.Getenv("PHOTODEX_AUTH")), "require HTTP basic auth, as user:password (default $ARCHIVIS_AUTH, which keeps it out of the process list)")
+	auth := fs.String("auth", cmp.Or(os.Getenv("ARCHIVIS_AUTH"), os.Getenv("PHOTODEX_AUTH")), "require HTTP basic auth, as user:password, until the first account exists (see archivis users; default $ARCHIVIS_AUTH, which keeps it out of the process list)")
 	g.register(fs)
 	parseFlags(fs, args)
-	if u, p, ok := strings.Cut(*auth, ":"); *auth != "" && (!ok || u == "" || p == "") {
-		return fmt.Errorf("--auth / ARCHIVIS_AUTH must be user:password")
-	}
 	eng, err := g.engines(need{faces: true, clip: true}, 1)
 	if err != nil {
 		return err
@@ -376,7 +375,16 @@ func runServe(g *globals, args []string) error {
 	defer cat.Close()
 	srv := web.New(cat)
 	srv.Auth = *auth
-	if !loopbackOnly(*addr) && *auth == "" {
+	accounts, err := cat.Store.HasUsers()
+	if err != nil {
+		return err
+	}
+	if accounts && *auth != "" {
+		fmt.Fprintln(os.Stderr, "note: accounts exist, so --auth / ARCHIVIS_AUTH is ignored; everyone signs in with their own account")
+	} else if u, p, ok := strings.Cut(*auth, ":"); *auth != "" && (!ok || u == "" || p == "") {
+		return fmt.Errorf("--auth / ARCHIVIS_AUTH must be user:password")
+	}
+	if !loopbackOnly(*addr) && *auth == "" && !accounts {
 		fmt.Fprintf(os.Stderr, "warning: %s is reachable from other machines and --auth is not set; anyone on your network can browse your photos\n", *addr)
 	}
 	fmt.Fprintf(os.Stderr, "archivis: %d photos, %d faces loaded — open http://%s\n", cat.PhotoIndex().Len(), cat.FaceIndex().Len(), browseURL(*addr))

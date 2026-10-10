@@ -108,3 +108,26 @@ details { margin-top: 8px; }
 .aesthetic-feedback .rating .btn { flex: 1 0 22px; max-width: 34px; padding: 3px 0; text-align: center; }
 .aesthetic-feedback .btn[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .empty a, .note a, .hint a { text-decoration: underline; }
+
+/* accounts */
+.account { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; margin-left: auto; }
+.account a.on { color: var(--ink); }
+.account form { margin: 0; }
+.authform { max-width: 360px; margin: 48px auto; padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 14px; }
+.authform h1 { margin: 0; font-size: 22px; }
+.authform label, .inviteform label { display: flex; flex-direction: column; gap: 4px; }
+.authform input, .inviteform input, .inviteform select { padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+.users-page { max-width: 960px; margin: 0 auto; padding: 16px; }
+.inviteform { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 16px 0 24px; }
+.inviteform h2, .inviteform .note { flex-basis: 100%; margin: 0; }
+.newlink { background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 12px 16px; }
+.newlink p { margin: 0 0 8px; }
+.linkbox { width: 100%; padding: 8px; font-family: ui-monospace, monospace; font-size: 13px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+table.users { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+table.users th, table.users td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+table.users tr.disabled td { color: var(--muted); }
+table.users .actions { display: flex; flex-wrap: wrap; gap: 4px; }
+table.users form { margin: 0; display: inline; }
+@media (max-width: 640px) { table.users th:nth-child(3), table.users td:nth-child(3), table.users th:nth-child(4), table.users td:nth-child(4) { display: none; } }
+/* viewers: the server refuses edits; hide the controls for them */
+.readonly .assignbar, .readonly [data-action], .readonly .aesthetic-feedback, .readonly input.pick, .readonly .inline-assign { display: none; }

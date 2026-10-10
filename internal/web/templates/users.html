@@ -1,0 +1,56 @@
+{{define "content"}}
+{{with .Data}}
+<div class="users-page">
+<h1>Users</h1>
+{{if .Link}}
+<div class="newlink" role="status">
+  <p>Send this link to <b>{{.LinkFor}}</b>. It works once, for 7 days, and is not shown again:</p>
+  <input class="linkbox" type="text" readonly value="{{.Link}}" onfocus="this.select()" aria-label="Link for {{.LinkFor}}">
+</div>
+{{end}}
+
+<form class="inviteform" method="post" action="/admin/invite">
+  <h2>Invite someone</h2>
+  <label>Name <input name="name" required maxlength="64" autocomplete="off"></label>
+  <label>Role <select name="role">{{range .Roles}}<option{{if eq . "viewer"}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+  <button class="btn primary">Create invitation link</button>
+  <p class="note"><b>viewer</b> browses and searches · <b>editor</b> also names people, rates photos and downloads originals · <b>admin</b> also manages accounts</p>
+</form>
+
+<table class="users">
+<thead><tr><th>Name</th><th>Role</th><th>Signed in on</th><th>Since</th><th></th></tr></thead>
+<tbody>
+{{range .Users}}
+<tr{{if .Disabled}} class="disabled"{{end}}>
+  <td>{{.Name}}{{if eq .ID $.Data.Me.ID}} (you){{end}}{{if .Disabled}} · disabled{{end}}</td>
+  <td><form method="post" action="/admin/users/{{.ID}}"><input type="hidden" name="action" value="role">
+    <select name="role" aria-label="Role for {{.Name}}" onchange="this.form.submit()">{{$r := .Role}}{{range $.Data.Roles}}<option{{if eq . $r}} selected{{end}}>{{.}}</option>{{end}}</select>
+    <noscript><button class="btn small">Set</button></noscript></form></td>
+  <td>{{plural .Sessions "device"}}</td>
+  <td>{{date .CreatedAt}}</td>
+  <td class="actions">
+    {{if .Disabled}}<form method="post" action="/admin/users/{{.ID}}"><button class="btn small" name="action" value="enable">Enable</button></form>
+    {{else}}<form method="post" action="/admin/users/{{.ID}}"><button class="btn small ghost" name="action" value="reset" title="Make a link to set a new password">Reset password</button></form>
+    <form method="post" action="/admin/users/{{.ID}}"><button class="btn small ghost" name="action" value="signout" title="End all of this account's sessions">Sign out everywhere</button></form>
+    <form method="post" action="/admin/users/{{.ID}}"><button class="btn small ghost danger" name="action" value="disable" title="Block sign-in and end all sessions">Disable</button></form>{{end}}
+  </td>
+</tr>
+{{end}}
+</tbody>
+</table>
+
+{{if .Invites}}
+<h2>Pending invitations</h2>
+<table class="users">
+<thead><tr><th>Name</th><th>Role</th><th>By</th><th>Expires</th><th></th></tr></thead>
+<tbody>
+{{range .Invites}}
+<tr><td>{{.Name}}{{if .UserID}} (password reset){{end}}</td><td>{{.Role}}</td><td>{{.CreatedBy}}</td><td>{{date .ExpiresAt}}</td>
+<td><form method="post" action="/admin/invite/revoke"><input type="hidden" name="invite" value="{{.TokenHash}}"><button class="btn small ghost danger">Revoke</button></form></td></tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+</div>
+{{end}}
+{{end}}
