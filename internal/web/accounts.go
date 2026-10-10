@@ -307,9 +307,11 @@ type inviteData struct {
 // handleInvite lets an invited person choose a password (or someone sent a
 // reset link choose a new one), then signs them in.
 func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
-	// The site-wide Referrer-Policy (same-origin) keeps the token from
-	// leaking to other sites. Not no-referrer: with it, browsers send
-	// "Origin: null" on the form, which sameOrigin refuses.
+	// "origin": the page's own stylesheet and script requests carry only
+	// the site in Referer, not this URL with its token (a proxy's access log
+	// could keep it). Not no-referrer: with it, browsers send "Origin: null"
+	// on the form, which sameOrigin refuses.
+	w.Header().Set("Referrer-Policy", "origin")
 	w.Header().Set("Cache-Control", "no-store")
 	ip := "ip:" + clientIP(r)
 	p := &page{Title: "Welcome", Bare: true}

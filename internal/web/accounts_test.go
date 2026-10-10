@@ -313,7 +313,7 @@ func TestInviteFlow(t *testing.T) {
 
 	guest := &browser{t: t, h: h}
 	rec = guest.do("GET", path, nil)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Grace") || rec.Header().Get("Referrer-Policy") != "same-origin" {
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Grace") || rec.Header().Get("Referrer-Policy") != "origin" {
 		t.Fatalf("invite page: %d %q", rec.Code, rec.Header().Get("Referrer-Policy"))
 	}
 	if rec := guest.do("POST", path, url.Values{"password": {"short"}, "password2": {"short"}}); rec.Code != 400 {
