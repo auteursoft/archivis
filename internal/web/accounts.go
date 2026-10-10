@@ -199,12 +199,13 @@ func clientIP(r *http.Request) string {
 }
 
 // startSession signs u in on this browser.
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.User) error {
+// pwHash is the password hash the sign-in was checked against.
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.User, pwHash string) error {
 	tok, hash, err := auth.NewToken()
 	if err != nil {
 		return err
 	}
-	if err := s.cat.Store.CreateSession(hash, u.ID, sessionTTL, r.UserAgent()); err != nil {
+	if err := s.cat.Store.CreateSession(hash, u.ID, pwHash, sessionTTL, r.UserAgent()); err != nil {
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: tok, Path: "/", MaxAge: int(sessionTTL / time.Second),
@@ -282,7 +283,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.nameLimit.Reset(nameKey)
-	if err := s.startSession(w, r, u); err != nil {
+	if err := s.startSession(w, r, u, hash); err != nil {
 		p.Error = "Could not sign in: " + err.Error()
 		s.renderStatus(w, r, "login", p, http.StatusInternalServerError)
 		return
@@ -339,7 +340,7 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := auth.CheckPassword(inv.Name, pw); err != nil {
-		p.Error = "Choose a longer password: " + strings.TrimPrefix(err.Error(), auth.ErrWeakPassword.Error()+": ") + "."
+		p.Error = "Choose another password: " + strings.TrimPrefix(err.Error(), auth.ErrWeakPassword.Error()+": ") + "."
 		s.renderStatus(w, r, "invite", p, http.StatusBadRequest)
 		return
 	}
@@ -348,7 +349,7 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 		var u *store.User
 		if u, err = s.cat.Store.AcceptInvite(hash, pwHash); err == nil {
 			s.hasUsers.Store(true)
-			if err = s.startSession(w, r, u); err == nil {
+			if err = s.startSession(w, r, u, pwHash); err == nil {
 				log.Printf("%s accepted an invitation (%s)", u.Name, u.Role)
 				http.Redirect(w, r, "/", http.StatusSeeOther)
 				return

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +105,21 @@ func TestLimiter(t *testing.T) {
 	l.Reset("ip")
 	if b, _ := l.Blocked("ip"); b {
 		t.Fatal("blocked after reset")
+	}
+}
+
+func TestLimiterMemoryBounded(t *testing.T) {
+	defer func(n int) { maxLimiterKeys = n }(maxLimiterKeys)
+	maxLimiterKeys = 50
+	l := NewLimiter(3, time.Hour)
+	for i := 0; i < 500; i++ { // all still inside the window
+		l.Fail(fmt.Sprint("k", i))
+	}
+	if n := len(l.fails); n > maxLimiterKeys {
+		t.Fatalf("%d keys kept, limit %d", n, maxLimiterKeys)
+	}
+	l.Fail("last") // the key just failed is never the one forgotten
+	if len(l.fails["last"]) != 1 {
+		t.Fatal("newest key evicted")
 	}
 }

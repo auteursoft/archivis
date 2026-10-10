@@ -157,7 +157,7 @@ func TestInvites(t *testing.T) {
 	}
 
 	// password reset: replaces the hash and signs out everywhere
-	if err := st.CreateSession("s1", admin.ID, time.Hour, "test"); err != nil {
+	if err := st.CreateSession("s1", admin.ID, "h", time.Hour, "test"); err != nil {
 		t.Fatal(err)
 	}
 	reset, err := st.CreateInvite("reset", "", "", admin.ID, "cli", time.Hour)
@@ -185,10 +185,10 @@ func TestSessions(t *testing.T) {
 	st := openUsers(t)
 	u, _ := st.CreateUser("gina", RoleViewer, "h")
 	other, _ := st.CreateUser("admin", RoleAdmin, "h")
-	st.CreateSession("a", u.ID, time.Hour, "phone")
-	st.CreateSession("b", u.ID, time.Hour, "laptop")
-	st.CreateSession("c", other.ID, time.Hour, "")
-	st.CreateSession("gone", u.ID, -time.Second, "")
+	st.CreateSession("a", u.ID, "h", time.Hour, "phone")
+	st.CreateSession("b", u.ID, "h", time.Hour, "laptop")
+	st.CreateSession("c", other.ID, "h", time.Hour, "")
+	st.CreateSession("gone", u.ID, "h", -time.Second, "")
 
 	if got, err := st.SessionUser("a"); err != nil || got.ID != u.ID {
 		t.Fatal(got, err)
@@ -204,6 +204,11 @@ func TestSessions(t *testing.T) {
 		if x.ID == u.ID && x.Sessions != 2 {
 			t.Fatalf("gina sessions = %d", x.Sessions)
 		}
+	}
+	// a sign-in checked against an old password, or by a disabled account,
+	// does not start a session
+	if err := st.CreateSession("stale", u.ID, "old-hash", time.Hour, ""); !errors.Is(err, ErrStaleSignIn) {
+		t.Fatalf("session for a stale password: %v", err)
 	}
 	st.DeleteSession("a")
 	if _, err := st.SessionUser("a"); err == nil {

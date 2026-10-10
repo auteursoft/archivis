@@ -353,8 +353,15 @@ func (s *Store) AcceptInvite(tokenHash, pwHash string) (*User, error) {
 	return s.UserByID(id)
 }
 
-// CreateSession records a signed-in device under the hash of its token.
-func (s *Store) CreateSession(tokenHash string, userID int64, ttl time.Duration, client string) error {
+// ErrStaleSignIn means the password changed, or the account was disabled,
+// while a sign-in was being checked.
+var ErrStaleSignIn = errors.New("the password changed during sign-in; sign in again")
+
+// CreateSession records a signed-in device under the hash of its token, if
+// the account is still enabled and its password hash is still pwHash: a
+// sign-in checked against the old password while a reset or disable
+// committed does not survive it.
+func (s *Store) CreateSession(tokenHash string, userID int64, pwHash string, ttl time.Duration, client string) error {
 	now := time.Now()
 	if len(client) > 200 {
 		client = client[:200]
@@ -363,9 +370,16 @@ func (s *Store) CreateSession(tokenHash string, userID int64, ttl time.Duration,
 	if _, err := s.DB.Exec(`DELETE FROM sessions WHERE expires_at <= ?`, now.Unix()); err != nil {
 		return err
 	}
-	_, err := s.DB.Exec(`INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen, client) VALUES (?,?,?,?,?,?)`,
-		tokenHash, userID, now.Unix(), now.Add(ttl).Unix(), now.Unix(), client)
-	return err
+	res, err := s.DB.Exec(`INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen, client)
+		SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND pw_hash = ? AND disabled_at IS NULL)`,
+		tokenHash, userID, now.Unix(), now.Add(ttl).Unix(), now.Unix(), client, userID, pwHash)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrStaleSignIn
+	}
+	return nil
 }
 
 // SessionUser returns the account signed in with a session, if the session

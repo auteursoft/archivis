@@ -364,9 +364,6 @@ func runServe(g *globals, args []string) error {
 	auth := fs.String("auth", cmp.Or(os.Getenv("ARCHIVIS_AUTH"), os.Getenv("PHOTODEX_AUTH")), "require HTTP basic auth, as user:password, until the first account exists (see archivis users; default $ARCHIVIS_AUTH, which keeps it out of the process list)")
 	g.register(fs)
 	parseFlags(fs, args)
-	if u, p, ok := strings.Cut(*auth, ":"); *auth != "" && (!ok || u == "" || p == "") {
-		return fmt.Errorf("--auth / ARCHIVIS_AUTH must be user:password")
-	}
 	eng, err := g.engines(need{faces: true, clip: true}, 1)
 	if err != nil {
 		return err
@@ -384,6 +381,8 @@ func runServe(g *globals, args []string) error {
 	}
 	if accounts && *auth != "" {
 		fmt.Fprintln(os.Stderr, "note: accounts exist, so --auth / ARCHIVIS_AUTH is ignored; everyone signs in with their own account")
+	} else if u, p, ok := strings.Cut(*auth, ":"); *auth != "" && (!ok || u == "" || p == "") {
+		return fmt.Errorf("--auth / ARCHIVIS_AUTH must be user:password")
 	}
 	if !loopbackOnly(*addr) && *auth == "" && !accounts {
 		fmt.Fprintf(os.Stderr, "warning: %s is reachable from other machines and --auth is not set; anyone on your network can browse your photos\n", *addr)

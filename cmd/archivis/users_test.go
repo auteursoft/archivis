@@ -87,7 +87,7 @@ func TestUsersCommand(t *testing.T) {
 	if _, err := run(nil, "", "disable", "root"); !errors.Is(err, store.ErrLastAdmin) {
 		t.Fatalf("disable last admin: %v", err)
 	}
-	st.CreateSession("s", u.ID, time.Hour, "")
+	st.CreateSession("s", u.ID, hash, time.Hour, "")
 	if out, err := run(nil, "", "signout", "root"); err != nil || !strings.Contains(out, "1 session") {
 		t.Fatalf("signout: %q %v", out, err)
 	}
@@ -117,7 +117,7 @@ func TestUsersCommand(t *testing.T) {
 	}
 
 	// password: a locked-out admin, from the server's terminal
-	st.CreateSession("s2", u.ID, time.Hour, "")
+	st.CreateSession("s2", u.ID, hash, time.Hour, "")
 	const pw2 = "a different long password"
 	if _, err := run(answers(pw2, pw2), "", "password", "root"); err != nil {
 		t.Fatal(err)

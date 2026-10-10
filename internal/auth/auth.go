@@ -143,6 +143,9 @@ type Limiter struct {
 	fails map[string][]time.Time
 }
 
+// maxLimiterKeys bounds a Limiter's memory (about 100 bytes a key).
+var maxLimiterKeys = 100_000
+
 // NewLimiter allows max failures per key per window.
 func NewLimiter(max int, window time.Duration) *Limiter {
 	return &Limiter{Max: max, Window: window, now: time.Now, fails: map[string][]time.Time{}}
@@ -164,9 +167,20 @@ func (l *Limiter) Fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.fails[key] = append(l.prune(key), l.now())
-	if len(l.fails) > 100_000 { // bound memory under a flood of distinct keys
+	if len(l.fails) > maxLimiterKeys { // bound memory under a flood of distinct keys
 		for k := range l.fails {
 			if len(l.prune(k)) == 0 {
+				delete(l.fails, k)
+			}
+		}
+		// Still full of active keys: forget arbitrary others (map order is
+		// random) rather than grow. Only a flood from thousands of addresses
+		// gets here, and it then loses some of its own counts.
+		for k := range l.fails {
+			if len(l.fails) <= maxLimiterKeys {
+				break
+			}
+			if k != key {
 				delete(l.fails, k)
 			}
 		}

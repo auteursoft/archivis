@@ -130,4 +130,4 @@ table.users .actions { display: flex; flex-wrap: wrap; gap: 4px; }
 table.users form { margin: 0; display: inline; }
 @media (max-width: 640px) { table.users th:nth-child(3), table.users td:nth-child(3), table.users th:nth-child(4), table.users td:nth-child(4) { display: none; } }
 /* viewers: the server refuses edits; hide the controls for them */
-.readonly .assignbar, .readonly [data-action], .readonly .aesthetic-feedback, .readonly input.pick { display: none; }
+.readonly .assignbar, .readonly [data-action], .readonly .aesthetic-feedback, .readonly input.pick, .readonly .inline-assign { display: none; }
