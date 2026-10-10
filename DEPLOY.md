@@ -398,7 +398,13 @@ certificate itself.
    chmod 600 "$plist"
    launchctl bootout gui/$(id -u)/com.archivis.serve       # a restart alone keeps the old settings
    launchctl bootstrap gui/$(id -u) "$plist"
+   sleep 2; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088   # must print 401
    ```
+
+   Go on only if that prints `401`. Anything else (`000`, `200`) means
+   Archivis is not running with the password yet: check the commands above
+   and `launchctl print gui/$(id -u)/com.archivis.serve` before starting
+   Caddy, or the site would be published without a password.
 3. Then install Caddy and point it at Archivis:
 
    ```sh
