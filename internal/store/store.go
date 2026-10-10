@@ -159,7 +159,8 @@ CREATE INDEX IF NOT EXISTS aesthetic_feedback_photo ON aesthetic_feedback(photo_
 
 CREATE TABLE IF NOT EXISTS users (
 	id          INTEGER PRIMARY KEY,
-	name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+	name        TEXT NOT NULL,
+	name_key    TEXT NOT NULL UNIQUE,
 	role        TEXT NOT NULL,
 	pw_hash     TEXT,
 	created_at  INTEGER NOT NULL,

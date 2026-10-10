@@ -230,3 +230,30 @@ func TestSessions(t *testing.T) {
 		t.Fatal("expired session not cleared")
 	}
 }
+
+func TestNamesUniqueInAnyCase(t *testing.T) {
+	st := openUsers(t)
+	if _, err := st.CreateUser("Älice", RoleAdmin, "h"); err != nil {
+		t.Fatal(err)
+	}
+	// SQLite's NOCASE would let these through: it folds ASCII only
+	for _, dup := range []string{"älice", "ÄLICE", " Älice ", "Älice"} {
+		if _, err := st.CreateUser(dup, RoleViewer, "h"); !errors.Is(err, ErrNameTaken) {
+			t.Errorf("%q: %v, want ErrNameTaken", dup, err)
+		}
+		if _, err := st.CreateInvite("t-"+dup, dup, RoleViewer, 0, "x", time.Hour); !errors.Is(err, ErrNameTaken) {
+			t.Errorf("invite %q: %v, want ErrNameTaken", dup, err)
+		}
+	}
+	if u, _, err := st.UserForLogin("äLICE"); err != nil || u.Name != "Älice" {
+		t.Fatalf("login in another case: %v %v", u, err)
+	}
+	st.CreateInvite("s1", "straße", RoleViewer, 0, "x", time.Hour)
+	st.CreateInvite("s2", "STRASSE", RoleViewer, 0, "x", time.Hour)
+	if _, err := st.AcceptInvite("s1", "h"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AcceptInvite("s2", "h"); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("full case folding: %v", err)
+	}
+}

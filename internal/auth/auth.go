@@ -33,8 +33,12 @@ const (
 // MinPasswordLen is the shortest password accepted.
 const MinPasswordLen = 12
 
-// maxPasswordLen bounds the work an attacker can make the server do.
-const maxPasswordLen = 256
+// maxPasswordLen is the longest password accepted, in characters;
+// maxPasswordBytes bounds the hashing work an attacker can ask for.
+const (
+	maxPasswordLen   = 256
+	maxPasswordBytes = 4 * maxPasswordLen
+)
 
 // ErrWeakPassword describes why a new password was refused.
 var ErrWeakPassword = errors.New("password too weak")
@@ -45,8 +49,8 @@ func CheckPassword(name, pw string) error {
 	switch {
 	case n < MinPasswordLen:
 		return fmt.Errorf("%w: use at least %d characters", ErrWeakPassword, MinPasswordLen)
-	case len(pw) > maxPasswordLen:
-		return fmt.Errorf("%w: use at most %d bytes", ErrWeakPassword, maxPasswordLen)
+	case n > maxPasswordLen || len(pw) > maxPasswordBytes:
+		return fmt.Errorf("%w: use at most %d characters", ErrWeakPassword, maxPasswordLen)
 	case strings.EqualFold(strings.TrimSpace(pw), strings.TrimSpace(name)):
 		return fmt.Errorf("%w: it must differ from the user name", ErrWeakPassword)
 	}
@@ -69,7 +73,7 @@ func HashPassword(pw string) (string, error) {
 // VerifyPassword reports whether pw matches an encoded hash. The comparison
 // takes constant time, and a malformed hash never matches.
 func VerifyPassword(encoded, pw string) bool {
-	if len(pw) > maxPasswordLen {
+	if len(pw) > maxPasswordBytes {
 		return false
 	}
 	parts := strings.Split(encoded, "$")

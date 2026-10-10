@@ -1,9 +1,13 @@
 package web
 
 import (
+	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -112,8 +116,42 @@ func TestNoAccountsKeepsOldBehaviour(t *testing.T) {
 	}
 	s.Auth = "ann:pw"
 	b.h = s.Handler()
-	if rec := b.do("GET", "/people", nil); rec.Code != 401 {
-		t.Fatalf("shared password not required: %d", rec.Code)
+	for _, p := range []string{"/people", "/static/app.css"} {
+		if rec := b.do("GET", p, nil); rec.Code != 401 {
+			t.Fatalf("%s: shared password not required: %d", p, rec.Code)
+		}
+	}
+}
+
+func TestInviteTokenNotLogged(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	s, _, _ := accountsServer(t)
+	b := &browser{t: t, h: s.Handler()}
+	b.do("GET", "/invite/SECRETTOKENabcdefghijklmnopqrstuvwxyz0123456", nil)
+	if strings.Contains(logged.String(), "SECRETTOKEN") || !strings.Contains(logged.String(), "/invite/…") {
+		t.Fatalf("log: %q", logged.String())
+	}
+}
+
+func TestLoginBodyLimit(t *testing.T) {
+	s, _, _ := accountsServer(t)
+	b := &browser{t: t, h: s.Handler()}
+	// credentials after 1 MB of padding are never read
+	form := url.Values{"pad": {strings.Repeat("x", 1<<20)}, "name": {"root"}, "password": {testPassword}}
+	if rec := b.do("POST", "/login", form); rec.Code == http.StatusSeeOther || b.cookie != nil {
+		t.Fatalf("oversized sign-in accepted: %d", rec.Code)
+	}
+}
+
+func TestImagesNotSharedByProxies(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "x.jpg")
+	os.WriteFile(f, []byte("jpeg"), 0o644)
+	rec := httptest.NewRecorder()
+	serveCached(rec, httptest.NewRequest("GET", "/t/x.jpg", nil), f)
+	if cc := rec.Header().Get("Cache-Control"); !strings.HasPrefix(cc, "private") {
+		t.Fatalf("Cache-Control = %q", cc)
 	}
 }
 

@@ -82,7 +82,9 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			http.Error(w, "accounts unavailable: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if publicPath(r.URL.Path) {
+		// Without accounts the shared password covers everything except the
+		// sign-in pages (which then only redirect or refuse).
+		if publicPath(r.URL.Path) && (on || !strings.HasPrefix(r.URL.Path, "/static/")) {
 			if u := s.sessionUser(r); u != nil {
 				r = r.WithContext(withUser(r, u))
 			}
@@ -232,6 +234,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	d := &loginData{Next: safeNext(r.FormValue("next"))}
 	p := &page{Title: "Sign in", Bare: true, Data: d}
 	if r.Method == http.MethodGet {
@@ -242,7 +245,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, "login", p)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	d.Name = strings.TrimSpace(r.PostFormValue("name"))
 	pw := r.PostFormValue("password")
 	ip, nameKey := "ip:"+clientIP(r), "name:"+strings.ToLower(d.Name)

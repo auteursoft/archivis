@@ -51,10 +51,16 @@ func TestCheckPassword(t *testing.T) {
 		"Jane Smith-Long":        true,
 		strings.Repeat("a", 257): false,
 		"ångström-ünicode":       true,
+		strings.Repeat("ö", 256): true, // 512 bytes: the limit is in characters
+		strings.Repeat("ö", 257): false,
 	} {
 		if err := CheckPassword("someone", pw); (err == nil) != ok {
 			t.Errorf("%q: %v", pw, err)
 		}
+	}
+	long := strings.Repeat("密", 256) // 768 bytes
+	if h, err := HashPassword(long); err != nil || !VerifyPassword(h, long) {
+		t.Fatalf("a 256-character multibyte password cannot be used: %v", err)
 	}
 	if CheckPassword("JaneSmithLong", "janesmithlong") == nil {
 		t.Error("password equal to the user name accepted")

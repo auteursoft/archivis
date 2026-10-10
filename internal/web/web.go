@@ -198,7 +198,11 @@ func logRequests(h http.Handler) http.Handler {
 		start := time.Now()
 		h.ServeHTTP(w, r)
 		if !strings.HasPrefix(r.URL.Path, "/t/") && !strings.HasPrefix(r.URL.Path, "/f/") && !strings.HasPrefix(r.URL.Path, "/static/") {
-			log.Printf("%s %s %s", r.Method, r.URL.RequestURI(), time.Since(start).Round(time.Millisecond))
+			uri := r.URL.RequestURI()
+			if strings.HasPrefix(r.URL.Path, "/invite/") {
+				uri = "/invite/…" // the token signs someone up or resets a password
+			}
+			log.Printf("%s %s %s", r.Method, uri, time.Since(start).Round(time.Millisecond))
 		}
 	})
 }
@@ -1062,8 +1066,11 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 // indexer.Fingerprint) or 24 for photos catalogued before that.
 var fpRe = regexp.MustCompile(`^(?:[0-9a-f]{32}|[0-9a-f]{24})$`)
 
+// serveCached serves an image the browser may keep. "private": a shared
+// cache (a proxy) must not hand one person's photos to another request,
+// which would skip the sign-in check.
 func serveCached(w http.ResponseWriter, r *http.Request, path string) {
-	w.Header().Set("Cache-Control", "public, max-age=604800")
+	w.Header().Set("Cache-Control", "private, max-age=604800")
 	http.ServeFile(w, r, path)
 }
 
