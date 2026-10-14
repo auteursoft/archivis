@@ -433,7 +433,10 @@ Things to know:
 
 - **One shared login.** Anyone with the password can view every photo,
   download the originals, and rename or relabel people. The user name you
-  choose is recorded with each aesthetic rating.
+  choose is recorded with each aesthetic rating. For several people, use
+  [accounts](#accounts) instead: each person signs in with their own
+  password and role, failed sign-ins are limited, and the shared password
+  stops working.
 - **Stay awake.** The web interface is a per-user agent, so it runs only
   while you are logged in. Locking the screen keeps it running; after a
   restart, log in again (automatic login would leave the Mac open to anyone
