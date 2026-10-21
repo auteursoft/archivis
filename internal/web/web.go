@@ -416,10 +416,12 @@ type browseData struct {
 	Prev, Next template.URL
 }
 
-func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	f := parseFilter(r)
-	text := strings.TrimSpace(r.URL.Query().Get("q"))
-	p := &page{Title: "Photos", Nav: "browse", Filter: f, Query: text, Params: map[string]string{}}
+// filterForm fills in what the shared filter form shows: the request's
+// values and the people and categories to choose from.
+func (s *Server) filterForm(r *http.Request, p *page) {
+	if p.Params == nil {
+		p.Params = map[string]string{}
+	}
 	for k, v := range r.URL.Query() {
 		if len(v) > 0 {
 			p.Params[k] = v[0]
@@ -427,12 +429,24 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 	p.People, _ = s.cat.Store.People()
 	p.Tags, _ = s.cat.Store.TagCounts()
+}
+
+// pageLink is a pager link to page n of path with every other query value
+// kept. Built here: a query string put into a template as text would be
+// escaped into a single parameter, and the filters lost.
+func pageLink(r *http.Request, path string, n int) template.URL {
+	qs := r.URL.Query()
+	qs.Set("page", strconv.Itoa(n))
+	return template.URL(path + "?" + qs.Encode()) // Encode escapes every key and value
+}
+
+func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	f := parseFilter(r)
+	text := strings.TrimSpace(r.URL.Query().Get("q"))
+	p := &page{Title: "Photos", Nav: "browse", Filter: f, Query: text}
+	s.filterForm(r, p)
 	d := &browseData{Page: f.Offset / f.Limit}
-	pageURL := func(n int) template.URL {
-		qs := r.URL.Query()
-		qs.Set("page", strconv.Itoa(n))
-		return template.URL("/?" + qs.Encode()) // Encode escapes every key and value
-	}
+	pageURL := func(n int) template.URL { return pageLink(r, "/", n) }
 	if text != "" {
 		d.Searched = true
 		hits, err := s.cat.SearchText(text, f, f.Offset+f.Limit)
@@ -1043,23 +1057,52 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "discover", p)
 }
 
+const (
+	burstsPerPage = 30
+	maxBurstPage  = 100 // bounds the scan: page n reads n+1 pages of bursts
+)
+
+type burstView struct{ Photos []catalog.PhotoHit }
+
+type burstsData struct {
+	Bursts     []burstView
+	Page       int
+	Prev, Next template.URL
+}
+
 func (s *Server) handleBursts(w http.ResponseWriter, r *http.Request) {
+	// The same filters as the Photos page choose which frames count.
 	f := parseFilter(r)
-	f.Limit = 60
 	gap, _ := strconv.ParseInt(r.URL.Query().Get("gap"), 10, 64)
-	if gap <= 0 {
+	if gap <= 0 || gap > 3600 {
 		gap = 3
 	}
+	pg, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pg = min(max(pg, 0), maxBurstPage)
+	// Bursts scans newest-first and stops at the limit, so page n needs the
+	// first (n+1) pages' bursts, plus one to know whether there is a next.
+	f.Limit = (pg+1)*burstsPerPage + 1
+	f.Offset = 0
 	bs, err := s.cat.Store.Bursts(f, gap, 3)
-	// the shared photo grid shows catalog.PhotoHit (it has a match score)
-	type burstView struct{ Photos []catalog.PhotoHit }
-	views := make([]burstView, len(bs))
-	for i, b := range bs {
-		for _, ph := range b.Photos {
-			views[i].Photos = append(views[i].Photos, catalog.PhotoHit{Photo: ph})
-		}
+	d := &burstsData{Page: pg}
+	if len(bs) > (pg+1)*burstsPerPage {
+		bs = bs[:(pg+1)*burstsPerPage]
+		d.Next = pageLink(r, "/bursts", pg+1)
 	}
-	p := &page{Title: "Bursts", Nav: "bursts", Data: views, Params: map[string]string{"gap": fmt.Sprint(gap)}}
+	if pg > 0 {
+		d.Prev = pageLink(r, "/bursts", pg-1)
+	}
+	// the shared photo grid shows catalog.PhotoHit (it has a match score)
+	for _, b := range bs[min(pg*burstsPerPage, len(bs)):] {
+		var v burstView
+		for _, ph := range b.Photos {
+			v.Photos = append(v.Photos, catalog.PhotoHit{Photo: ph})
+		}
+		d.Bursts = append(d.Bursts, v)
+	}
+	p := &page{Title: "Bursts", Nav: "bursts", Filter: f, Data: d, Params: map[string]string{"gap": fmt.Sprint(gap)}}
+	s.filterForm(r, p)
+	p.Params["gap"] = fmt.Sprint(gap)
 	if err != nil {
 		p.Error = err.Error()
 	}

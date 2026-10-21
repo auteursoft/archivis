@@ -666,3 +666,60 @@ func TestBurstsPageRenders(t *testing.T) {
 		t.Fatalf("bursts page: %d %.300s", rec.Code, rec.Body.String())
 	}
 }
+
+// Bursts takes the same filters as the Photos page, and pages through
+// bursts with the filters kept.
+func TestBurstsFiltersAndPaging(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	var rs []*store.Result
+	n := 0
+	add := func(cam string, at int64) {
+		n++
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: fmt.Sprintf("/b/%d.jpg", n), Size: 1, MTime: 1,
+			Fingerprint: fmt.Sprintf("%032x", n), CameraModel: cam, TakenAt: at, Overall: 50, Version: store.SchemaVersion}})
+	}
+	// 31 D810 bursts (one more than a page) and one Sony burst, an hour apart
+	for b := 0; b < 31; b++ {
+		for i := 0; i < 3; i++ {
+			add("NIKON D810", 1_700_000_000+int64(b)*3600+int64(i))
+		}
+	}
+	for i := 0; i < 3; i++ {
+		add("ILCE-7RM4", 1_600_000_000+int64(i))
+	}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	get := func(u string) string {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", u, nil))
+		if rec.Code != 200 {
+			t.Fatalf("%s: %d %.300s", u, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	body := get("/bursts?camera=ILCE")
+	if c := strings.Count(body, `<section class="burst">`); c != 1 || strings.Contains(body, "NIKON") {
+		t.Fatalf("camera filter: %d bursts", c)
+	}
+	if !strings.Contains(body, `action="/bursts"`) || !strings.Contains(body, `name="min_focus"`) || !strings.Contains(body, `name="gap"`) {
+		t.Fatal("bursts page lacks the Photos filters")
+	}
+	body = get("/bursts?camera=D810&gap=5")
+	if c := strings.Count(body, `<section class="burst">`); c != burstsPerPage {
+		t.Fatalf("first page: %d bursts", c)
+	}
+	i := strings.Index(body, "Next →")
+	if i < 0 {
+		t.Fatal("no Next link")
+	}
+	j := strings.LastIndex(body[:i], `href="`)
+	next, _ := url.Parse(html.UnescapeString(body[j+6 : strings.Index(body[j+6:], `"`)+j+6]))
+	if q := next.Query(); next.Path != "/bursts" || q.Get("camera") != "D810" || q.Get("gap") != "5" || q.Get("page") != "1" {
+		t.Fatalf("Next link %v", next)
+	}
+	body = get(next.String())
+	if c := strings.Count(body, `<section class="burst">`); c != 1 || strings.Contains(body, "Next →") || !strings.Contains(body, "← Previous") {
+		t.Fatalf("second page: %d bursts", c)
+	}
+}
