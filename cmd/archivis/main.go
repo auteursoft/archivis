@@ -235,7 +235,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
 		os.Exit(2)
 	}
-	if usesDefaultData(args) {
+	if cmd != "version" && usesDefaultData(args) { // a version check changes nothing
 		home, _ := os.UserHomeDir()
 		dir := filepath.Join(home, ".archivis")
 		if got := adoptOldDataDir(filepath.Join(home, ".photodex"), dir); got != dir {

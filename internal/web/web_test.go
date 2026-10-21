@@ -762,10 +762,24 @@ func TestRequestLogShowsStatusAndError(t *testing.T) {
 	post(h, "/api/assign", `{"name":"Ada","faces":[999999]}`, "application/json", map[string]string{"Sec-Fetch-Site": "same-origin"})
 	post(h, "/api/refresh", `{}`, "application/json", map[string]string{"Sec-Fetch-Site": "same-origin"})
 	out := logged.String()
-	if !strings.Contains(out, "POST /api/assign 404") || !strings.Contains(out, `"error"`) {
+	if !strings.Contains(out, "POST /api/assign 404") || !strings.Contains(out, `error`) {
 		t.Fatalf("failed call not logged with its status and error:\n%s", out)
 	}
-	if !strings.Contains(out, "POST /api/refresh 200") || strings.Contains(out[strings.Index(out, "/api/refresh"):], `"error"`) {
+	if !strings.Contains(out, "POST /api/refresh 200") || strings.Contains(out[strings.Index(out, "/api/refresh"):], `error`) {
 		t.Fatalf("successful call:\n%s", out)
+	}
+}
+
+// An error message cannot add lines to the log.
+func TestRequestLogOneLinePerRequest(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	h := logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad\n2026/01/01 00:00:00 POST /api/forged 200 1ms", 400)
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/x", nil))
+	if n := strings.Count(strings.TrimSpace(logged.String()), "\n"); n != 0 {
+		t.Fatalf("one request logged as %d lines:\n%s", n+1, logged.String())
 	}
 }

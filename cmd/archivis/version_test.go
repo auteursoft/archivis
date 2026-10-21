@@ -13,7 +13,7 @@ func TestVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := b.String()
-	if !strings.HasPrefix(out, "archivis ") || !strings.Contains(out, runtime.Version()) || !strings.Contains(out, "binary ") {
+	if !strings.HasPrefix(out, "archivis ") || !strings.Contains(out, runtime.Version()) || !strings.Contains(out, "file dated ") {
 		t.Fatalf("version output:\n%s", out)
 	}
 }

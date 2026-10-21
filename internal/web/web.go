@@ -208,7 +208,7 @@ func logRequests(h http.Handler) http.Handler {
 			}
 			msg := ""
 			if rec.status >= 400 && rec.body.Len() > 0 {
-				msg = ": " + strings.TrimSpace(rec.body.String())
+				msg = fmt.Sprintf(": %q", strings.TrimSpace(rec.body.String())) // quoted: one log line, whatever it says
 			}
 			log.Printf("%s %s %d %s%s", r.Method, uri, rec.status, time.Since(start).Round(time.Millisecond), msg)
 		}
@@ -227,6 +227,19 @@ type statusRecorder struct {
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the real writer (flushing,
+// deadlines).
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// ReadFrom keeps the real writer's fast path (sendfile) for files, such as
+// originals, when the body is not being kept for the log.
+func (s *statusRecorder) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := s.ResponseWriter.(io.ReaderFrom); ok && !s.keep {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(struct{ io.Writer }{s}, r)
 }
 
 func (s *statusRecorder) Write(b []byte) (int, error) {

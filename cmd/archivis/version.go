@@ -49,7 +49,9 @@ func printVersion(w io.Writer) error {
 	fmt.Fprintln(w, versionInfo())
 	if exe, err := os.Executable(); err == nil {
 		if st, err := os.Stat(exe); err == nil {
-			fmt.Fprintf(w, "binary %s, built %s\n", exe, st.ModTime().Format("2006-01-02 15:04:05 MST"))
+			// the file's date, set when it was built or installed (install
+			// sets it); the commit above is what identifies the build
+			fmt.Fprintf(w, "binary %s, file dated %s\n", exe, st.ModTime().Format("2006-01-02 15:04:05 MST"))
 		}
 	}
 	fmt.Fprintf(w, "%s %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
