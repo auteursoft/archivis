@@ -211,7 +211,7 @@ func TestBursts(t *testing.T) {
 	if err := st.Save(rs); err != nil {
 		t.Fatal(err)
 	}
-	bs, err := st.Bursts(Filter{Limit: 10}, 3, 3)
+	bs, _, err := st.Bursts(Filter{Limit: 10}, 3, 3)
 	if err != nil {
 		t.Fatal(err)
 	}

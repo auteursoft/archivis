@@ -1057,10 +1057,11 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "discover", p)
 }
 
-const (
-	burstsPerPage = 30
-	maxBurstPage  = 100 // bounds the scan: page n reads n+1 pages of bursts
-)
+const burstsPerPage = 30
+
+// maxBurstPage bounds the scan: page n ranks the newest (n+1) pages of
+// bursts. (A variable so tests can reach the last page cheaply.)
+var maxBurstPage = 100
 
 type burstView struct{ Photos []catalog.PhotoHit }
 
@@ -1079,21 +1080,17 @@ func (s *Server) handleBursts(w http.ResponseWriter, r *http.Request) {
 	}
 	pg, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	pg = min(max(pg, 0), maxBurstPage)
-	// Bursts scans newest-first and stops at the limit, so page n needs the
-	// first (n+1) pages' bursts, plus one to know whether there is a next.
-	f.Limit = (pg+1)*burstsPerPage + 1
-	f.Offset = 0
-	bs, err := s.cat.Store.Bursts(f, gap, 3)
+	f.Offset, f.Limit = pg*burstsPerPage, burstsPerPage
+	bs, more, err := s.cat.Store.Bursts(f, gap, 3)
 	d := &burstsData{Page: pg}
-	if len(bs) > (pg+1)*burstsPerPage {
-		bs = bs[:(pg+1)*burstsPerPage]
+	if more && pg < maxBurstPage { // past the last page there is nowhere to go
 		d.Next = pageLink(r, "/bursts", pg+1)
 	}
 	if pg > 0 {
 		d.Prev = pageLink(r, "/bursts", pg-1)
 	}
 	// the shared photo grid shows catalog.PhotoHit (it has a match score)
-	for _, b := range bs[min(pg*burstsPerPage, len(bs)):] {
+	for _, b := range bs {
 		var v burstView
 		for _, ph := range b.Photos {
 			v.Photos = append(v.Photos, catalog.PhotoHit{Photo: ph})

@@ -723,3 +723,29 @@ func TestBurstsFiltersAndPaging(t *testing.T) {
 		t.Fatalf("second page: %d bursts", c)
 	}
 }
+
+// The last reachable page offers no Next link (it would only reload itself).
+func TestBurstsLastPageHasNoNext(t *testing.T) {
+	defer func(n int) { maxBurstPage = n }(maxBurstPage)
+	maxBurstPage = 1
+	s, cat, _ := newTestServer(t)
+	var rs []*store.Result
+	for i := 0; i < 3*(2*burstsPerPage+5); i++ { // more than two pages of bursts
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: fmt.Sprintf("/l/%d.jpg", i), Size: 1, MTime: 1,
+			Fingerprint: fmt.Sprintf("%032x", i+1), CameraModel: "NIKON D810", TakenAt: 1_700_000_000 + int64(i/3)*3600 + int64(i%3),
+			Overall: 50, Version: store.SchemaVersion}})
+	}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		u    string
+		next bool
+	}{{"/bursts", true}, {"/bursts?page=1", false}, {"/bursts?page=5", false}} {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", tc.u, nil))
+		if has := strings.Contains(rec.Body.String(), "Next →"); has != tc.next {
+			t.Errorf("%s: Next link %v, want %v", tc.u, has, tc.next)
+		}
+	}
+}

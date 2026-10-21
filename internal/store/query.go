@@ -249,73 +249,115 @@ type Burst struct {
 
 // Bursts groups photos taken on the same camera within gap seconds of each
 // other (only groups of at least minSize), newest first, best frame first.
-// Useful for picking the keeper out of a sequence. It scans newest-first and
-// stops once f.Limit bursts are found, so it stays fast on large archives.
-func (s *Store) Bursts(f Filter, gap int64, minSize int) ([]Burst, error) {
+// Useful for picking the keeper out of a sequence. It pages exactly: it
+// returns the bursts ranked f.Offset to f.Offset+f.Limit by start time
+// (newest first; ties by photo ID), complete, and whether more follow. Only
+// that page's photos are loaded, and the newest-first scan stops as soon as
+// no older photo could still change the page, so it stays fast on large
+// archives.
+func (s *Store) Bursts(f Filter, gap int64, minSize int) ([]Burst, bool, error) {
 	where, args := f.where()
 	if where == "" {
 		where = " WHERE taken_at > 0"
 	} else {
 		where += " AND taken_at > 0"
 	}
-	limit := max(1, f.Limit)
-	rows, err := s.DB.Query(`SELECT id, camera_make || camera_model, taken_at FROM photos`+where+` ORDER BY taken_at DESC`, args...)
+	// the top need bursts decide this page and whether another follows
+	need := max(0, f.Offset) + max(1, f.Limit) + 1
+	rows, err := s.DB.Query(`SELECT id, camera_make || camera_model, taken_at FROM photos`+where+` ORDER BY taken_at DESC, id DESC`, args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	defer rows.Close()
+
 	type run struct {
-		ids  []int64
-		last int64
+		ids         []int64
+		start, last int64 // newest and oldest capture times
 	}
+	// newer reports whether a ranks before b: newer start, then higher
+	// first photo ID (the scan's own order), so the ranking is total.
+	newer := func(a, b *run) bool {
+		if a.start != b.start {
+			return a.start > b.start
+		}
+		return a.ids[0] > b.ids[0]
+	}
+	var done []*run // complete bursts; the newest need of them are kept
 	open := map[string]*run{}
-	var groups [][]int64
-	emit := func(r *run) {
-		if len(r.ids) >= minSize {
-			groups = append(groups, r.ids)
+	finish := func(cam string, r *run) {
+		delete(open, cam)
+		if len(r.ids) < minSize {
+			return
+		}
+		i := sort.Search(len(done), func(i int) bool { return newer(r, done[i]) })
+		done = append(done, nil)
+		copy(done[i+1:], done[i:])
+		done[i] = r
+		if len(done) > need {
+			done = done[:need]
 		}
 	}
-	for rows.Next() && len(groups) < limit {
+	// full reports whether the page is decided up to runs started at or
+	// after the cutoff: a run that starts later than that cannot rank.
+	full := func() (*run, bool) {
+		if len(done) < need {
+			return nil, false
+		}
+		return done[need-1], true
+	}
+	for rows.Next() {
 		var id, t int64
 		var cam string
-		rows.Scan(&id, &cam, &t)
-		r := open[cam]
-		if r != nil && r.last-t > gap {
-			emit(r)
-			r = nil
+		if err := rows.Scan(&id, &cam, &t); err != nil {
+			return nil, false, err
 		}
+		// close every run this frame is too late to join (frames come
+		// newest first, so nothing older can join them either)
+		for c, r := range open {
+			if r.last-t > gap {
+				finish(c, r)
+			}
+		}
+		cut, isFull := full()
+		if isFull && len(open) == 0 && t < cut.start {
+			break // any burst from here on starts too late to rank
+		}
+		r := open[cam]
 		if r == nil {
-			r = &run{}
+			if isFull && newer(cut, &run{ids: []int64{id}, start: t}) {
+				continue // a burst starting here cannot rank
+			}
+			r = &run{start: t}
 			open[cam] = r
 		}
 		r.ids = append(r.ids, id)
 		r.last = t
 	}
-	rows.Close()
-	for _, r := range open {
-		if len(groups) >= limit {
-			break
-		}
-		emit(r)
+	if err := rows.Err(); err != nil {
+		return nil, false, err
 	}
+	cams := make([]string, 0, len(open))
+	for c := range open {
+		cams = append(cams, c)
+	}
+	sort.Strings(cams) // deterministic, though finish orders them anyway
+	for _, c := range cams {
+		finish(c, open[c])
+	}
+
+	from := min(max(0, f.Offset), len(done))
+	to := min(from+max(1, f.Limit), len(done))
+	more := len(done) > to
 	var out []Burst
-	for _, ids := range groups {
-		ps, err := s.Photos(ids)
+	for _, r := range done[from:to] {
+		ps, err := s.Photos(r.ids)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		sortPhotos(ps)
 		out = append(out, Burst{ps})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].newest() > out[j].newest() })
-	return out, nil
-}
-
-func (b Burst) newest() int64 {
-	var t int64
-	for _, p := range b.Photos {
-		t = max(t, p.TakenAt)
-	}
-	return t
+	return out, more, nil
 }
 
 func sortPhotos(ps []Photo) {
