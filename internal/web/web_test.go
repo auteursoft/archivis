@@ -645,3 +645,24 @@ func TestPagerKeepsFilters(t *testing.T) {
 		t.Fatalf("Previous link %q lost the filters: %v", href, q)
 	}
 }
+
+// Pages that show photos must render with photos in them: an empty
+// catalogue hides template errors (the bursts page once failed on any
+// real burst).
+func TestBurstsPageRenders(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	var rs []*store.Result
+	for i := 0; i < 3; i++ {
+		p := fmt.Sprintf("/burst/%d.jpg", i)
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: fmt.Sprintf("%032x", i+1),
+			CameraModel: "NIKON D810", TakenAt: 1_700_000_000 + int64(i), Overall: float64(50 + i), Version: store.SchemaVersion}})
+	}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/bursts", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "3 frames") || !strings.Contains(rec.Body.String(), `href="/photo/`) {
+		t.Fatalf("bursts page: %d %.300s", rec.Code, rec.Body.String())
+	}
+}
