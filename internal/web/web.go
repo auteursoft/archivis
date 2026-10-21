@@ -1051,7 +1051,15 @@ func (s *Server) handleBursts(w http.ResponseWriter, r *http.Request) {
 		gap = 3
 	}
 	bs, err := s.cat.Store.Bursts(f, gap, 3)
-	p := &page{Title: "Bursts", Nav: "bursts", Data: bs, Params: map[string]string{"gap": fmt.Sprint(gap)}}
+	// the shared photo grid shows catalog.PhotoHit (it has a match score)
+	type burstView struct{ Photos []catalog.PhotoHit }
+	views := make([]burstView, len(bs))
+	for i, b := range bs {
+		for _, ph := range b.Photos {
+			views[i].Photos = append(views[i].Photos, catalog.PhotoHit{Photo: ph})
+		}
+	}
+	p := &page{Title: "Bursts", Nav: "bursts", Data: views, Params: map[string]string{"gap": fmt.Sprint(gap)}}
 	if err != nil {
 		p.Error = err.Error()
 	}
