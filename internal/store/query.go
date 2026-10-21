@@ -336,6 +336,10 @@ func (s *Store) Bursts(f Filter, gap int64, minSize int) ([]Burst, bool, error) 
 	if err := rows.Err(); err != nil {
 		return nil, false, err
 	}
+	// Release the scan's connection before loading photos, which needs one
+	// of its own: holding both could exhaust the pool under concurrent
+	// requests and deadlock.
+	rows.Close()
 	cams := make([]string, 0, len(open))
 	for c := range open {
 		cams = append(cams, c)
