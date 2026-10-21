@@ -214,12 +214,12 @@ func main() {
 		fmt.Print(usage)
 		return
 	}
-	if os.Args[1] == "--version" || os.Args[1] == "-v" {
+	g := &globals{}
+	cmd, args := splitCommand(os.Args[1:])
+	if cmd == "" && wantsVersion(args) { // --version, also after global flags
 		printVersion(os.Stdout)
 		return
 	}
-	g := &globals{}
-	cmd, args := splitCommand(os.Args[1:])
 	cmds := map[string]func(*globals, []string) error{
 		"setup": runSetup, "index": runIndex, "serve": runServe, "search": runSearch,
 		"list": runList, "export": runExport, "people": runPeople, "retag": runRetag,

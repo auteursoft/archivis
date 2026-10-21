@@ -17,3 +17,11 @@ func TestVersion(t *testing.T) {
 		t.Fatalf("version output:\n%s", out)
 	}
 }
+
+func TestWantsVersion(t *testing.T) {
+	for args, want := range map[string]bool{"--version": true, "-v": true, "--data /x --version": true, "--data /x": false, "": false} {
+		if got := wantsVersion(strings.Fields(args)); got != want {
+			t.Errorf("%q: %v", args, got)
+		}
+	}
+}

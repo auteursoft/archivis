@@ -57,3 +57,14 @@ func printVersion(w io.Writer) error {
 	fmt.Fprintf(w, "%s %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	return nil
 }
+
+// wantsVersion reports whether the arguments (with no command among them)
+// ask for the version: --version or -v.
+func wantsVersion(args []string) bool {
+	for _, a := range args {
+		if a == "--version" || a == "-version" || a == "-v" {
+			return true
+		}
+	}
+	return false
+}

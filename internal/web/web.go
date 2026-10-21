@@ -220,12 +220,17 @@ func logRequests(h http.Handler) http.Handler {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+	wrote  bool // the status is sent; later WriteHeader calls change nothing
 	keep   bool
 	body   bytes.Buffer
 }
 
 func (s *statusRecorder) WriteHeader(code int) {
-	s.status = code
+	// Record what the client gets: the first final status. Informational
+	// 1xx responses do not commit one.
+	if !s.wrote && code >= 200 {
+		s.status, s.wrote = code, true
+	}
 	s.ResponseWriter.WriteHeader(code)
 }
 
@@ -243,6 +248,7 @@ func (s *statusRecorder) ReadFrom(r io.Reader) (int64, error) {
 }
 
 func (s *statusRecorder) Write(b []byte) (int, error) {
+	s.wrote = true // writing a body sends the status (200 unless set)
 	if s.keep && s.body.Len() < 300 {
 		s.body.Write(b[:min(len(b), 300-s.body.Len())])
 	}

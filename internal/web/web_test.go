@@ -783,3 +783,34 @@ func TestRequestLogOneLinePerRequest(t *testing.T) {
 		t.Fatalf("one request logged as %d lines:\n%s", n+1, logged.String())
 	}
 }
+
+// The log shows the status the client got: the first one sent.
+func TestRequestLogFirstStatus(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	for _, tc := range []struct {
+		name string
+		h    http.HandlerFunc
+		want string
+	}{
+		{"status then error", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			http.Error(w, "late", 500)
+		}, " 200 "},
+		{"body then error", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("ok"))
+			http.Error(w, "late", 500)
+		}, " 200 "},
+		{"error", func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", 403) }, " 403 "},
+	} {
+		logged.Reset()
+		rec := httptest.NewRecorder()
+		logRequests(tc.h).ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
+		if !strings.Contains(logged.String(), tc.want) || rec.Code != atoiStatus(tc.want) {
+			t.Errorf("%s: client got %d, log says %q", tc.name, rec.Code, logged.String())
+		}
+	}
+}
+
+func atoiStatus(s string) int { n, _ := strconv.Atoi(strings.TrimSpace(s)); return n }
