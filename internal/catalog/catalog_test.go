@@ -505,3 +505,47 @@ func TestSaveTrainedActivates(t *testing.T) {
 		t.Fatal("deactivated every model")
 	}
 }
+
+// Photos an indexer saves while the server refreshes are for the next
+// refresh, not a sign of deletions: they must not trigger a full rebuild
+// (which, during an index run, happened every minute).
+func TestRefreshDuringIndexingDoesNotRebuild(t *testing.T) {
+	c := open(t)
+	for i := 0; i < 5; i++ {
+		c.Store.Save([]*store.Result{photo(fmt.Sprintf("/a%d.jpg", i), i, 10+i)})
+	}
+	if err := c.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	c.afterLoad = func() { // the indexer commits a batch mid-refresh
+		n++
+		c.Store.Save([]*store.Result{photo(fmt.Sprintf("/b%d.jpg", n), 20+n, 40+n), photo(fmt.Sprintf("/c%d.jpg", n), 30+n, 50+n)})
+	}
+	for i := 0; i < 3; i++ {
+		if err := c.Refresh(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c.rebuilds != 0 {
+		t.Fatalf("%d full rebuilds while photos were being added", c.rebuilds)
+	}
+	c.afterLoad = nil
+	if err := c.Refresh(); err != nil { // the next refresh picks them all up
+		t.Fatal(err)
+	}
+	if got := c.PhotoIndex().Len(); got != 5+2*3 {
+		t.Fatalf("photo index has %d, want %d", got, 11)
+	}
+	if got := c.FaceIndex().Len(); got != 5+2*3 {
+		t.Fatalf("face index has %d, want %d", got, 11)
+	}
+	// deletions are still noticed
+	if _, err := c.Store.DB.Exec(`DELETE FROM photos WHERE path = '/a0.jpg'`); err != nil {
+		t.Fatal(err)
+	}
+	c.Refresh()
+	if got := c.PhotoIndex().Len(); got != 10 {
+		t.Fatalf("after a deletion the photo index has %d, want 10", got)
+	}
+}
