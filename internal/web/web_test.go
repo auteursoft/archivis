@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"html"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -617,5 +619,29 @@ func TestThumbnailsHaveNames(t *testing.T) {
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if !strings.Contains(rec.Body.String(), `alt="harbour at dusk.jpg"`) {
 		t.Fatal("thumbnail has no name")
+	}
+}
+
+// The pager keeps every filter: the query string must reach the link as
+// separate parameters, not escaped into one ("min_focus%3d0.7%26…").
+func TestPagerKeepsFilters(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	req := httptest.NewRequest("GET", "/?min_focus=0.7&sort=newest&camera=Nikon+D810&page=1", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	i := strings.Index(body, "← Previous")
+	if rec.Code != 200 || i < 0 {
+		t.Fatalf("status %d, no Previous link", rec.Code)
+	}
+	j := strings.LastIndex(body[:i], `href="`)
+	href := html.UnescapeString(body[j+6 : strings.Index(body[j+6:], `"`)+j+6])
+	u, err := url.Parse(href)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if q.Get("min_focus") != "0.7" || q.Get("sort") != "newest" || q.Get("camera") != "Nikon D810" || q.Get("page") != "0" {
+		t.Fatalf("Previous link %q lost the filters: %v", href, q)
 	}
 }
