@@ -196,7 +196,12 @@ type Store struct {
 
 // Open opens (creating if needed) the database at path.
 func Open(path string) (*Store, error) {
-	dsn := "file:" + path + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=30000&_foreign_keys=on&_cache_size=-131072"
+	// _txlock=immediate: every transaction here writes, so take the write
+	// lock when it begins. A deferred transaction that reads first fails at
+	// once with "database is locked" if another writer (the indexer, in
+	// another process) commits before its first write, and the busy timeout
+	// cannot help; an immediate one waits its turn (up to 30 s) instead.
+	dsn := "file:" + path + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=30000&_foreign_keys=on&_cache_size=-131072&_txlock=immediate"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
