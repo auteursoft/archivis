@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -749,3 +750,76 @@ func TestBurstsLastPageHasNoNext(t *testing.T) {
 		}
 	}
 }
+
+// The request log shows each request's status, and a failed API call's
+// error, so a failure is visible in the server log.
+func TestRequestLogShowsStatusAndError(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	s, _, _ := newTestServer(t)
+	h := s.Handler()
+	post(h, "/api/assign", `{"name":"Ada","faces":[999999]}`, "application/json", map[string]string{"Sec-Fetch-Site": "same-origin"})
+	post(h, "/api/refresh", `{}`, "application/json", map[string]string{"Sec-Fetch-Site": "same-origin"})
+	out := logged.String()
+	if !strings.Contains(out, "POST /api/assign 404") || !strings.Contains(out, `error`) {
+		t.Fatalf("failed call not logged with its status and error:\n%s", out)
+	}
+	if !strings.Contains(out, "POST /api/refresh 200") || strings.Contains(out[strings.Index(out, "/api/refresh"):], `error`) {
+		t.Fatalf("successful call:\n%s", out)
+	}
+}
+
+// An error message cannot add lines to the log.
+func TestRequestLogOneLinePerRequest(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	h := logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad\n2026/01/01 00:00:00 POST /api/forged 200 1ms", 400)
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/x", nil))
+	if n := strings.Count(strings.TrimSpace(logged.String()), "\n"); n != 0 {
+		t.Fatalf("one request logged as %d lines:\n%s", n+1, logged.String())
+	}
+}
+
+// The log shows the status the client got: the first one sent.
+func TestRequestLogFirstStatus(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	for _, tc := range []struct {
+		name string
+		h    http.HandlerFunc
+		want string
+	}{
+		{"status then error", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			http.Error(w, "late", 500)
+		}, " 200 "},
+		{"body then error", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("ok"))
+			http.Error(w, "late", 500)
+		}, " 200 "},
+		{"error", func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", 403) }, " 403 "},
+		{"informational, then final", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusEarlyHints)
+			w.WriteHeader(404)
+		}, " 404 "},
+		{"switching protocols", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusSwitchingProtocols)
+		}, " 101 "},
+	} {
+		logged.Reset()
+		rec := httptest.NewRecorder()
+		logRequests(tc.h).ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
+		// (httptest's recorder keeps a 1xx code; a real connection sends it,
+		// then the final status, so only the log is checked for those)
+		if !strings.Contains(logged.String(), tc.want) || (rec.Code >= 200 && rec.Code != atoiStatus(tc.want)) {
+			t.Errorf("%s: client got %d, log says %q", tc.name, rec.Code, logged.String())
+		}
+	}
+}
+
+func atoiStatus(s string) int { n, _ := strconv.Atoi(strings.TrimSpace(s)); return n }

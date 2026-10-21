@@ -46,6 +46,7 @@ Commands:
   errors       show files that failed to index
   inspect      show what Archivis reads from photo files (camera, lens, preview, rotation)
   users        web accounts: list | add-admin | invite | reset | password | role | disable | enable | signout
+  version      which build this is (git commit), to check an upgrade took
 
 Global flags (all commands):
   --data DIR       data directory (default $ARCHIVIS_DATA or ~/.archivis)
@@ -215,11 +216,15 @@ func main() {
 	}
 	g := &globals{}
 	cmd, args := splitCommand(os.Args[1:])
+	if cmd == "" && wantsVersion(args) { // --version, also after global flags
+		printVersion(os.Stdout)
+		return
+	}
 	cmds := map[string]func(*globals, []string) error{
 		"setup": runSetup, "index": runIndex, "serve": runServe, "search": runSearch,
 		"list": runList, "export": runExport, "people": runPeople, "retag": runRetag,
 		"prune": runPrune, "stats": runStats, "errors": runErrors, "aesthetic": runAesthetic, "inspect": runInspect,
-		"users": runUsers,
+		"users": runUsers, "version": runVersion,
 	}
 	fn, ok := cmds[cmd]
 	if cmd == "" {
@@ -230,7 +235,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
 		os.Exit(2)
 	}
-	if usesDefaultData(args) {
+	if cmd != "version" && usesDefaultData(args) { // a version check changes nothing
 		home, _ := os.UserHomeDir()
 		dir := filepath.Join(home, ".archivis")
 		if got := adoptOldDataDir(filepath.Join(home, ".photodex"), dir); got != dir {
@@ -292,6 +297,7 @@ func runIndex(g *globals, args []string) error {
 	if len(roots) == 0 {
 		return fmt.Errorf("give at least one folder to index")
 	}
+	fmt.Fprintf(os.Stderr, "%s %s: indexing %s\n", time.Now().Format("2006-01-02 15:04:05"), versionInfo(), strings.Join(roots, ", "))
 	// A drive that isn't mounted shouldn't stop the others from being
 	// indexed (e.g. a nightly job over several archive drives).
 	var avail []string
@@ -387,7 +393,7 @@ func runServe(g *globals, args []string) error {
 	if !loopbackOnly(*addr) && *auth == "" && !accounts {
 		fmt.Fprintf(os.Stderr, "warning: %s is reachable from other machines and --auth is not set; anyone on your network can browse your photos\n", *addr)
 	}
-	fmt.Fprintf(os.Stderr, "archivis: %d photos, %d faces loaded — open http://%s\n", cat.PhotoIndex().Len(), cat.FaceIndex().Len(), browseURL(*addr))
+	fmt.Fprintf(os.Stderr, "%s: %d photos, %d faces loaded — open http://%s\n", versionInfo(), cat.PhotoIndex().Len(), cat.FaceIndex().Len(), browseURL(*addr))
 	return srv.ListenAndServe(*addr)
 }
 

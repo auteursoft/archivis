@@ -193,18 +193,67 @@ func (s *Server) ListenAndServe(addr string) error {
 	return srv.ListenAndServe()
 }
 
+// logRequests logs each request (but not thumbnails and static files) with
+// its status and time, and for a failed API call its error message, so the
+// log shows whether, say, naming a face worked.
 func logRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		h.ServeHTTP(w, r)
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, keep: strings.HasPrefix(r.URL.Path, "/api/")}
+		h.ServeHTTP(rec, r)
 		if !strings.HasPrefix(r.URL.Path, "/t/") && !strings.HasPrefix(r.URL.Path, "/f/") && !strings.HasPrefix(r.URL.Path, "/static/") {
 			uri := r.URL.RequestURI()
 			if strings.HasPrefix(r.URL.Path, "/invite/") {
 				uri = "/invite/…" // the token signs someone up or resets a password
 			}
-			log.Printf("%s %s %s", r.Method, uri, time.Since(start).Round(time.Millisecond))
+			msg := ""
+			if rec.status >= 400 && rec.body.Len() > 0 {
+				msg = fmt.Sprintf(": %q", strings.TrimSpace(rec.body.String())) // quoted: one log line, whatever it says
+			}
+			log.Printf("%s %s %d %s%s", r.Method, uri, rec.status, time.Since(start).Round(time.Millisecond), msg)
 		}
 	})
+}
+
+// statusRecorder notes a response's status, and keeps the start of an API
+// response's body for the log.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	wrote  bool // the status is sent; later WriteHeader calls change nothing
+	keep   bool
+	body   bytes.Buffer
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	// Record what the client gets: the first final status. Informational
+	// 1xx responses do not commit one, except 101 (the connection switches
+	// protocol, so it is the last status sent).
+	if !s.wrote && (code >= 200 || code == http.StatusSwitchingProtocols) {
+		s.status, s.wrote = code, true
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the real writer (flushing,
+// deadlines).
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// ReadFrom keeps the real writer's fast path (sendfile) for files, such as
+// originals, when the body is not being kept for the log.
+func (s *statusRecorder) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := s.ResponseWriter.(io.ReaderFrom); ok && !s.keep {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(struct{ io.Writer }{s}, r)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	s.wrote = true // writing a body sends the status (200 unless set)
+	if s.keep && s.body.Len() < 300 {
+		s.body.Write(b[:min(len(b), 300-s.body.Len())])
+	}
+	return s.ResponseWriter.Write(b)
 }
 
 // ---- template helpers ---------------------------------------------------

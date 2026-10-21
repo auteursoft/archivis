@@ -32,8 +32,10 @@ type Catalog struct {
 	refreshMu   sync.Mutex
 	lastPhotoID int64
 	lastFaceID  int64
-	lastSeq     int64 // store change number covered by the previous refresh
-	loaded      bool  // the first (full) load has happened
+	lastSeq     int64  // store change number covered by the previous refresh
+	rebuilds    int    // full reloads (counted for tests)
+	afterLoad   func() // test hook: runs between loading and checking counts
+	loaded      bool   // the first (full) load has happened
 }
 
 // Open opens the catalogue in dataDir and loads the vector indexes.
@@ -113,8 +115,15 @@ func (c *Catalog) Refresh() error {
 	c.addFacePhotos(newFaces)
 	c.mu.Unlock()
 	c.lastPhotoID, c.lastFaceID = lastP, lastF
+	if c.afterLoad != nil {
+		c.afterLoad()
+	}
+	// Compare only the rows this refresh has loaded (ids up to the last one
+	// read): rows an indexer saves meanwhile are for the next refresh, not a
+	// sign of deletions. Counting every row made each refresh during an
+	// index run look inconsistent and rebuild all the indexes, every minute.
 	consistent := func() bool {
-		return int64(photos.Len()) == c.countWithClip() && int64(faces.Len()) == c.Store.Count(true)
+		return int64(photos.Len()) == c.countWithClip(c.lastPhotoID) && int64(faces.Len()) == c.countFaces(c.lastFaceID)
 	}
 	if !consistent() {
 		// rows were deleted (prune, person-less re-index): drop them in place
@@ -134,6 +143,7 @@ func (c *Catalog) Refresh() error {
 		c.addFacePhotos(nm)
 		c.mu.Unlock()
 		c.lastPhotoID, c.lastFaceID = lastP, lastF
+		c.rebuilds++
 	}
 	c.lastSeq, c.loaded = top, true
 	return nil
@@ -268,9 +278,17 @@ func (c *Catalog) reloadChangedFaces(since int64, faces *vindex.Index) error {
 	return nil
 }
 
-func (c *Catalog) countWithClip() int64 {
+// countWithClip counts photos with a CLIP embedding, up to photo id upTo.
+func (c *Catalog) countWithClip(upTo int64) int64 {
 	var n int64
-	c.Store.DB.QueryRow(`SELECT COUNT(*) FROM photo_clip`).Scan(&n)
+	c.Store.DB.QueryRow(`SELECT COUNT(*) FROM photo_clip WHERE photo_id <= ?`, upTo).Scan(&n)
+	return n
+}
+
+// countFaces counts faces up to face id upTo.
+func (c *Catalog) countFaces(upTo int64) int64 {
+	var n int64
+	c.Store.DB.QueryRow(`SELECT COUNT(*) FROM faces WHERE id <= ?`, upTo).Scan(&n)
 	return n
 }
 
