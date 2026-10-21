@@ -227,8 +227,9 @@ type statusRecorder struct {
 
 func (s *statusRecorder) WriteHeader(code int) {
 	// Record what the client gets: the first final status. Informational
-	// 1xx responses do not commit one.
-	if !s.wrote && code >= 200 {
+	// 1xx responses do not commit one, except 101 (the connection switches
+	// protocol, so it is the last status sent).
+	if !s.wrote && (code >= 200 || code == http.StatusSwitchingProtocols) {
 		s.status, s.wrote = code, true
 	}
 	s.ResponseWriter.WriteHeader(code)

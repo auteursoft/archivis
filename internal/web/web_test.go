@@ -803,11 +803,20 @@ func TestRequestLogFirstStatus(t *testing.T) {
 			http.Error(w, "late", 500)
 		}, " 200 "},
 		{"error", func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", 403) }, " 403 "},
+		{"informational, then final", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusEarlyHints)
+			w.WriteHeader(404)
+		}, " 404 "},
+		{"switching protocols", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusSwitchingProtocols)
+		}, " 101 "},
 	} {
 		logged.Reset()
 		rec := httptest.NewRecorder()
 		logRequests(tc.h).ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
-		if !strings.Contains(logged.String(), tc.want) || rec.Code != atoiStatus(tc.want) {
+		// (httptest's recorder keeps a 1xx code; a real connection sends it,
+		// then the final status, so only the log is checked for those)
+		if !strings.Contains(logged.String(), tc.want) || (rec.Code >= 200 && rec.Code != atoiStatus(tc.want)) {
 			t.Errorf("%s: client got %d, log says %q", tc.name, rec.Code, logged.String())
 		}
 	}
