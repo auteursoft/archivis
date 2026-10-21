@@ -410,7 +410,10 @@ type browseData struct {
 	Page     int
 	HasMore  bool
 	Searched bool
-	QS       string // query string without page
+	// Prev and Next are the pager links, with every filter kept. They are
+	// built here: a query string put into the template as text would be
+	// escaped into a single parameter, and the filters lost.
+	Prev, Next template.URL
 }
 
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
@@ -425,9 +428,11 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	p.People, _ = s.cat.Store.People()
 	p.Tags, _ = s.cat.Store.TagCounts()
 	d := &browseData{Page: f.Offset / f.Limit}
-	qs := r.URL.Query()
-	qs.Del("page")
-	d.QS = qs.Encode()
+	pageURL := func(n int) template.URL {
+		qs := r.URL.Query()
+		qs.Set("page", strconv.Itoa(n))
+		return template.URL("/?" + qs.Encode()) // Encode escapes every key and value
+	}
 	if text != "" {
 		d.Searched = true
 		hits, err := s.cat.SearchText(text, f, f.Offset+f.Limit)
@@ -454,6 +459,12 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		}
 		d.Total = total
 		d.HasMore = f.Offset+len(ps) < total
+	}
+	if d.Page > 0 {
+		d.Prev = pageURL(d.Page - 1)
+	}
+	if d.HasMore {
+		d.Next = pageURL(d.Page + 1)
 	}
 	p.Data = d
 	s.render(w, r, "browse", p)
