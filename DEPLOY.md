@@ -444,6 +444,103 @@ Things to know:
 - **Without opening ports.** Tailscale or a Cloudflare Tunnel give encrypted
   remote access with nothing forwarded on the router.
 
+**HTTPS with nginx (macOS or Ubuntu).** If you already run nginx, or
+prefer it to Caddy. Archivis stays on `127.0.0.1:8088`, and nginx, on the
+same machine, serves HTTPS and passes requests to it. Forward ports 80 and
+443 on your router to the machine. As with Caddy, give Archivis a password
+or [accounts](#accounts) before nginx makes it reachable, and check that
+`curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088` prints
+`401` (shared password) or `303` (accounts).
+
+1. Install nginx and certbot:
+
+   ```sh
+   brew install nginx certbot                                  # macOS
+   sudo apt install nginx certbot                              # Ubuntu
+   ```
+
+   The configuration folder is `$(brew --prefix)/etc/nginx/servers/` on
+   macOS and `/etc/nginx/sites-enabled/` on Ubuntu; below it is written
+   `CONF`. Certificate challenges are served from a folder written `WEBROOT`:
+   use `$(brew --prefix)/var/www` on macOS and `/var/www/html` on Ubuntu.
+
+2. Serve port 80 first, so certbot can prove you own the name. Save as
+   `CONF/archivis.conf` (replace `photos.example.com` and `WEBROOT`):
+
+   ```nginx
+   server {
+       listen 80;
+       server_name photos.example.com;
+       location /.well-known/acme-challenge/ { root WEBROOT; }
+       location / { return 301 https://$host$request_uri; }
+   }
+   ```
+
+   Then start or reload nginx and get the certificate:
+
+   ```sh
+   sudo nginx -t && sudo brew services restart nginx           # macOS
+   sudo nginx -t && sudo systemctl reload nginx                # Ubuntu
+   sudo certbot certonly --webroot -w WEBROOT -d photos.example.com
+   ```
+
+3. Add the HTTPS server to the same file:
+
+   ```nginx
+   server {
+       listen 443 ssl http2;
+       server_name photos.example.com;
+       ssl_certificate     /etc/letsencrypt/live/photos.example.com/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/photos.example.com/privkey.pem;
+
+       client_max_body_size 200m;   # search by photo accepts uploads up to 200 MB (RAW files)
+
+       location / {
+           proxy_pass http://127.0.0.1:8088;
+           proxy_set_header Host              $host;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+           proxy_read_timeout 300s;
+       }
+   }
+   ```
+
+   and reload nginx as in step 2. (nginx 1.25 and later warn that
+   `listen … http2` is deprecated; it still works, or write `listen 443 ssl;`
+   with `http2 on;` on the next line.)
+
+   The three headers matter:
+   - **`Host`**: nginx otherwise sends `127.0.0.1:8088`. Archivis then
+     refuses every change (naming people, rating, signing in) as a
+     cross-site request.
+   - **`X-Forwarded-Proto`**: sign-in cookies are marked Secure only when
+     Archivis knows the browser used HTTPS.
+   - **`X-Forwarded-For`**: failed sign-ins are limited per address, so
+     Archivis needs the browser's address, not nginx's. It believes these
+     headers only from a proxy on the same machine.
+
+4. Renew the certificate automatically. On Ubuntu the certbot package
+   already does this; add a hook so nginx picks up the new certificate:
+
+   ```sh
+   echo 'systemctl reload nginx' | sudo tee /etc/letsencrypt/renewal-hooks/deploy/nginx >/dev/null
+   sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx
+   ```
+
+   On macOS, run `sudo crontab -e` and add:
+
+   ```
+   17 3 * * * /opt/homebrew/bin/certbot renew -q --deploy-hook "/opt/homebrew/bin/nginx -s reload"
+   ```
+
+   (On an Intel Mac, `/opt/homebrew` is `/usr/local`.)
+
+5. From outside your network, check that a password is required:
+
+   ```sh
+   curl -s -o /dev/null -w '%{http_code}\n' https://photos.example.com   # expect 401 or 303
+   ```
+
 ## Backups
 
 Your originals are untouched, and the models and thumbnails can be
