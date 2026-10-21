@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -747,5 +748,24 @@ func TestBurstsLastPageHasNoNext(t *testing.T) {
 		if has := strings.Contains(rec.Body.String(), "Next →"); has != tc.next {
 			t.Errorf("%s: Next link %v, want %v", tc.u, has, tc.next)
 		}
+	}
+}
+
+// The request log shows each request's status, and a failed API call's
+// error, so a failure is visible in the server log.
+func TestRequestLogShowsStatusAndError(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	s, _, _ := newTestServer(t)
+	h := s.Handler()
+	post(h, "/api/assign", `{"name":"Ada","faces":[999999]}`, "application/json", map[string]string{"Sec-Fetch-Site": "same-origin"})
+	post(h, "/api/refresh", `{}`, "application/json", map[string]string{"Sec-Fetch-Site": "same-origin"})
+	out := logged.String()
+	if !strings.Contains(out, "POST /api/assign 404") || !strings.Contains(out, `"error"`) {
+		t.Fatalf("failed call not logged with its status and error:\n%s", out)
+	}
+	if !strings.Contains(out, "POST /api/refresh 200") || strings.Contains(out[strings.Index(out, "/api/refresh"):], `"error"`) {
+		t.Fatalf("successful call:\n%s", out)
 	}
 }

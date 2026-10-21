@@ -193,18 +193,47 @@ func (s *Server) ListenAndServe(addr string) error {
 	return srv.ListenAndServe()
 }
 
+// logRequests logs each request (but not thumbnails and static files) with
+// its status and time, and for a failed API call its error message, so the
+// log shows whether, say, naming a face worked.
 func logRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		h.ServeHTTP(w, r)
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, keep: strings.HasPrefix(r.URL.Path, "/api/")}
+		h.ServeHTTP(rec, r)
 		if !strings.HasPrefix(r.URL.Path, "/t/") && !strings.HasPrefix(r.URL.Path, "/f/") && !strings.HasPrefix(r.URL.Path, "/static/") {
 			uri := r.URL.RequestURI()
 			if strings.HasPrefix(r.URL.Path, "/invite/") {
 				uri = "/invite/…" // the token signs someone up or resets a password
 			}
-			log.Printf("%s %s %s", r.Method, uri, time.Since(start).Round(time.Millisecond))
+			msg := ""
+			if rec.status >= 400 && rec.body.Len() > 0 {
+				msg = ": " + strings.TrimSpace(rec.body.String())
+			}
+			log.Printf("%s %s %d %s%s", r.Method, uri, rec.status, time.Since(start).Round(time.Millisecond), msg)
 		}
 	})
+}
+
+// statusRecorder notes a response's status, and keeps the start of an API
+// response's body for the log.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	keep   bool
+	body   bytes.Buffer
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.keep && s.body.Len() < 300 {
+		s.body.Write(b[:min(len(b), 300-s.body.Len())])
+	}
+	return s.ResponseWriter.Write(b)
 }
 
 // ---- template helpers ---------------------------------------------------
