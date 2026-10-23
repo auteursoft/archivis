@@ -499,6 +499,11 @@ func (s *Store) SetScores(scores map[int64][2]float64) error {
 			return err
 		}
 	}
+	if len(scores) > 0 {
+		if err := markGroupsDirty(tx); err != nil { // groups rank by these scores
+			return err
+		}
+	}
 	return tx.Commit()
 }
 

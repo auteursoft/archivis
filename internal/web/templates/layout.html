@@ -70,7 +70,7 @@
 
 {{define "groupstate"}}{{if .Regrouping}}<p class="note">Bursts and identical images are being worked out now; this page fills in as they are.</p>{{else if .Stale}}<p class="note">Bursts and identical images are being worked out (for the first time, or by changed settings); this page shows the previous grouping until then.</p>{{end}}{{end}}
 
-{{define "grouppager"}}<div class="pager">
+{{define "grouppager"}}{{if .Partial}}<p class="note">These filters were checked against the first 200,000 groups in this order only; more may match further on. Narrow them (a year range, camera or person) to look further.</p>{{end}}<div class="pager">
   {{with .Prev}}<a class="btn ghost" href="{{.}}">← Previous</a>{{end}}
   {{with .Next}}<a class="btn ghost" href="{{.}}">Next →</a>{{end}}
 </div>{{end}}

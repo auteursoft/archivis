@@ -371,7 +371,7 @@ func TestGroupPage(t *testing.T) {
 								t.Fatalf("%s: group %d members %v, want %v", name, g.ID, ids, wantMembers[g.ID])
 							}
 						}
-						if !more {
+						if !more.More {
 							break
 						}
 					}
@@ -388,3 +388,49 @@ func TestGroupPage(t *testing.T) {
 }
 
 func head(ids []int64) []int64 { return ids[:min(len(ids), 10)] }
+
+// A page whose filter is checked group by group says when it stopped at the
+// limit without finding a full page, rather than looking complete.
+func TestGroupPagePartial(t *testing.T) {
+	st, _ := groupFixture(t)
+	if _, err := st.RebuildGroups(context.Background(), GroupOptions{Gap: 3, Hamming: 6}); err != nil {
+		t.Fatal(err)
+	}
+	defer func(n int) { maxGroupWalk = n }(maxGroupWalk)
+	maxGroupWalk = 5
+	_, info, err := st.GroupPage(GroupBurst, Filter{Limit: 10, MinOverall: 1000}, 2) // matches nothing
+	if err != nil || !info.Partial || info.More {
+		t.Fatalf("stopped at the limit: %+v %v", info, err)
+	}
+	maxGroupWalk = 1 << 30
+	if _, info, _ = st.GroupPage(GroupBurst, Filter{Limit: 10, MinOverall: 1000}, 2); info.Partial {
+		t.Fatal("partial though every group was checked")
+	}
+}
+
+// Rewriting scores in place (a new aesthetic blend) leaves seq alone, but
+// the groups rank by those scores, so they must count as stale.
+func TestScoreChangesMakeGroupsStale(t *testing.T) {
+	st, ps := groupFixture(t)
+	o := GroupOptions{Gap: 3, Hamming: 6}
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetScores(map[int64][2]float64{ps[0].ID: {5, 99}}); err != nil {
+		t.Fatal(err)
+	}
+	if !st.GroupsStale(o) {
+		t.Fatal("SetScores left the groups looking current")
+	}
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	var seq int64
+	st.DB.QueryRow(`SELECT seq FROM photos WHERE id = ?`, ps[1].ID).Scan(&seq)
+	if err := st.SetBlendedScores([]BlendUpdate{{ID: ps[1].ID, Seq: seq, Aesthetic: sql.NullFloat64{Float64: 5, Valid: true}, Overall: 98}}); err != nil {
+		t.Fatal(err)
+	}
+	if !st.GroupsStale(o) {
+		t.Fatal("SetBlendedScores left the groups looking current")
+	}
+}

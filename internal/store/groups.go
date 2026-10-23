@@ -65,6 +65,15 @@ func (s *Store) GroupsStale(o GroupOptions) bool {
 	return err != nil || s.MaxSeq() > seq
 }
 
+// markGroupsDirty notes, in tx, that groups need working out again though
+// no photo's seq changed (scores rewritten in place). The photos_ungroup
+// trigger does the same for deletes.
+func markGroupsDirty(tx *sql.Tx) error {
+	_, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value)
+		VALUES ('groups_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'groups_dirty'), 0) + 1)`)
+	return err
+}
+
 // GroupRulesChanged reports whether the groups were worked out by other
 // rules (or never), so they should be worked out again at once.
 func (s *Store) GroupRulesChanged(o GroupOptions) bool {
@@ -748,6 +757,12 @@ func (w *batchWriter) rollback() {
 
 // ---- reading groups ---------------------------------------------------
 
+// GroupPageInfo says what lies beyond a page of groups.
+type GroupPageInfo struct {
+	More    bool // further groups follow
+	Partial bool // the page stopped at maxGroupWalk groups checked; more may match
+}
+
 // Group is a burst or a set of identical images, as a page shows it.
 type Group struct {
 	Kind    int
@@ -790,15 +805,17 @@ func (f Filter) photoFirst() bool {
 	return f.PersonID > 0 || f.Tag != ""
 }
 
-// maxGroupWalk bounds how many groups a filtered page checks.
-const maxGroupWalk = 200000
+// maxGroupWalk bounds how many groups a page with a quality-style filter
+// checks; past it the page says it is partial.
+var maxGroupWalk = 200000 // a variable so tests can reach it
 
 // GroupPage returns a page of groups of a kind with at least minSize
 // members (f.Offset and f.Limit count groups), ordered by f.Sort over each
 // group's best (or, for "worst", worst) member, and whether more follow.
 // With a filter, a group is listed if any member matches, with only its
 // matching members.
-func (s *Store) GroupPage(kind int, f Filter, minSize int) ([]Group, bool, error) {
+func (s *Store) GroupPage(kind int, f Filter, minSize int) ([]Group, GroupPageInfo, error) {
+	var info GroupPageInfo
 	limit := max(1, f.Limit)
 	offset := max(0, f.Offset)
 	order := groupSort(f.Sort) + ", id DESC"
@@ -817,17 +834,17 @@ func (s *Store) GroupPage(kind int, f Filter, minSize int) ([]Group, bool, error
 			ids = nil
 		}
 	default:
-		ids, err = s.walkGroups(kind, minSize, f, order, where, args, offset, limit+1)
+		ids, info.Partial, err = s.walkGroups(kind, minSize, f, order, where, args, offset, limit+1)
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, info, err
 	}
-	more := len(ids) > limit
-	if more {
+	info.More = len(ids) > limit
+	if info.More {
 		ids = ids[:limit]
 	}
 	groups, err := s.loadGroups(kind, ids, where, args)
-	return groups, more, err
+	return groups, info, err
 }
 
 func (s *Store) groupIDs(q string, args ...any) ([]int64, error) {
@@ -854,7 +871,7 @@ func (s *Store) groupsFromPhotos(kind, minSize int, order, where string, args []
 	if kind == GroupDuplicate {
 		col = "dup_id"
 	}
-	gids, err := s.groupIDs(`SELECT DISTINCT `+col+` FROM photos`+where+` AND `+col+` != 0 LIMIT ?`, append(args, maxGroupWalk)...)
+	gids, err := s.groupIDs(`SELECT DISTINCT `+col+` FROM photos`+where+` AND `+col+` != 0`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -912,9 +929,10 @@ func qualify(order, prefix string) string {
 
 // walkGroups goes through groups in page order, checking members against
 // the filter in chunks, until it has skipped offset and found n matching
-// groups (or checked maxGroupWalk groups). A date range first rules out
+// groups, or checked maxGroupWalk groups (partial: more may match beyond).
+// A date range first rules out
 // groups whose span misses it.
-func (s *Store) walkGroups(kind, minSize int, f Filter, order, where string, args []any, offset, n int) ([]int64, error) {
+func (s *Store) walkGroups(kind, minSize int, f Filter, order, where string, args []any, offset, n int) (out []int64, partial bool, err error) {
 	q := `SELECT id, members FROM photo_groups WHERE kind = ? AND size >= ?`
 	qa := []any{kind, minSize}
 	from, to := f.From, f.To
@@ -943,12 +961,11 @@ func (s *Store) walkGroups(kind, minSize int, f Filter, order, where string, arg
 	// and enough pages at once would wait on each other for ever). Batches
 	// grow, so a page found early costs little and a long walk re-skips
 	// little.
-	var out []int64
 	skipped := 0
-	for at, size := 0, 1000; at < maxGroupWalk; at, size = at+size, min(size*4, maxGroupWalk-at-size) {
+	for at, size := 0, min(1000, maxGroupWalk); at < maxGroupWalk; at, size = at+size, min(size*4, maxGroupWalk-at-size) {
 		rows, err := s.DB.Query(q+` ORDER BY `+order+` LIMIT ? OFFSET ?`, append(qa, size, at)...)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		var batch []gm
 		for rows.Next() {
@@ -956,14 +973,14 @@ func (s *Store) walkGroups(kind, minSize int, f Filter, order, where string, arg
 			var members string
 			if err := rows.Scan(&g.id, &members); err != nil {
 				rows.Close()
-				return nil, err
+				return nil, false, err
 			}
 			json.Unmarshal([]byte(members), &g.members)
 			batch = append(batch, g)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		for start := 0; start < len(batch); start += 1000 {
 			chunk := batch[start:min(len(batch), start+1000)]
@@ -973,7 +990,7 @@ func (s *Store) walkGroups(kind, minSize int, f Filter, order, where string, arg
 			}
 			match, err := s.matching(all, where, args)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			for _, g := range chunk {
 				for _, id := range g.members {
@@ -987,15 +1004,15 @@ func (s *Store) walkGroups(kind, minSize int, f Filter, order, where string, arg
 					}
 				}
 				if len(out) >= n {
-					return out, nil
+					return out, false, nil
 				}
 			}
 		}
 		if len(batch) < size {
-			break
+			return out, false, nil // every group checked
 		}
 	}
-	return out, nil
+	return out, true, nil
 }
 
 // matching returns which of ids pass the filter (where/args from where()).

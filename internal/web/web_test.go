@@ -740,6 +740,11 @@ func TestBurstsFiltersAndPaging(t *testing.T) {
 	if c := strings.Count(body, `<section class="burst">`); c != 1 || strings.Contains(body, "Next →") || !strings.Contains(body, "← Previous") {
 		t.Fatalf("second page: %d bursts", c)
 	}
+	// an absurd page number is bounded: an empty page, not page one again
+	if body = get(t, h, "/bursts?page=9223372036854775807"); strings.Contains(body, `<section class="burst">`) || strings.Contains(body, "Next →") {
+		t.Fatal("huge page number wrapped around to real bursts")
+	}
+	body = get(t, h, next.String())
 	// oldest first: the last D810 burst comes last
 	if !strings.Contains(body, fmt.Sprintf(`/photo/%d"`, rs[92].Photo.ID)) {
 		t.Fatal("oldest-first order: the newest burst is not on the last page")

@@ -82,6 +82,7 @@ type groupsData struct {
 	Filtered   bool // filters are set: groups show only matching members
 	Regrouping bool // groups are being worked out now
 	Stale      bool // groups were worked out by other rules, or never
+	Partial    bool // the search for matching groups stopped early; more may match
 }
 
 // handleGroups serves a page of bursts or sets of identical images, with the
@@ -92,18 +93,18 @@ func (s *Server) handleGroups(gp groupPage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		f := parseFilter(r)
 		pg, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		pg = max(pg, 0)
+		pg = min(max(pg, 0), maxPage) // bounded, as on the Photos page: no overflow, no huge offsets
 		f.Offset, f.Limit = pg*gp.perPage, gp.perPage
 		st := s.cat.Store
-		gs, more, err := st.GroupPage(gp.kind, f, gp.minSize)
-		d := &groupsData{Page: pg, Filtered: f.Restricts(), Regrouping: st.GroupsRebuilding()}
+		gs, info, err := st.GroupPage(gp.kind, f, gp.minSize)
+		d := &groupsData{Page: pg, Filtered: f.Restricts(), Regrouping: st.GroupsRebuilding(), Partial: info.Partial}
 		if !d.Regrouping {
 			// never grouped, or the rules changed: say so, and group at once
 			// (new photos only wait for the next regroup)
 			d.Stale = st.GroupRulesChanged(st.GroupOptions())
 			s.regroupInBackground(false)
 		}
-		if more {
+		if info.More && pg < maxPage {
 			d.Next = pageLink(r, gp.path, pg+1)
 		}
 		if pg > 0 {
