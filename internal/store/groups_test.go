@@ -548,3 +548,57 @@ func TestGroupSortsUseIndexes(t *testing.T) {
 		}
 	}
 }
+
+// Deleting any photo marks the groups stale, even one in no group yet: a
+// rebuild under way may already have read it.
+func TestDeleteUngroupedPhotoMakesGroupsStale(t *testing.T) {
+	st, _ := groupFixture(t)
+	o := GroupOptions{Gap: 3, Hamming: 6}
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	var lone int64
+	if err := st.DB.QueryRow(`SELECT id FROM photos WHERE burst_id = 0 AND dup_id = 0 LIMIT 1`).Scan(&lone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`DELETE FROM photos WHERE id = ?`, lone); err != nil {
+		t.Fatal(err)
+	}
+	if !st.GroupsStale(o) {
+		t.Fatal("deleting an ungrouped photo left the groups looking current")
+	}
+}
+
+// Oldest first goes by a group's earliest dated member: an undated copy
+// does not send its set to the end.
+func TestOldestIgnoresUndatedMembers(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "o.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*Result
+	add := func(h uint64, at int64) {
+		p := fmt.Sprintf("/o/%d", len(rs))
+		rs = append(rs, &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, PHash: h, TakenAt: at, Version: SchemaVersion}})
+	}
+	add(1, YearStart(2025)) // dated 2025, 2025
+	add(1, YearStart(2025)+100)
+	add(2, 0) // undated export of a 2020 photo
+	add(2, YearStart(2020))
+	add(3, 0) // never dated: last
+	add(3, 0)
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RebuildGroups(context.Background(), GroupOptions{Gap: 3, Hamming: 6}); err != nil {
+		t.Fatal(err)
+	}
+	gs, _, err := st.GroupPage(GroupDuplicate, Filter{Sort: "oldest", Limit: 10}, 2)
+	if err != nil || len(gs) != 3 {
+		t.Fatalf("%d groups, %v", len(gs), err)
+	}
+	if got := []int64{gs[0].ID, gs[1].ID, gs[2].ID}; got[0] != rs[2].Photo.ID || got[1] != rs[0].Photo.ID || got[2] != rs[4].Photo.ID {
+		t.Fatalf("oldest first: %v, want the 2020 set, then 2025, then undated", got)
+	}
+}

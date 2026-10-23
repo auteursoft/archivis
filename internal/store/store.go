@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS photo_groups (
 	size          INTEGER NOT NULL,
 	start_at      INTEGER NOT NULL,
 	end_at        INTEGER NOT NULL,
+	oldest_at     INTEGER NOT NULL DEFAULT 0,
 	camera        TEXT NOT NULL DEFAULT '',
 	best_id       INTEGER NOT NULL,
 	best_overall  REAL NOT NULL,
@@ -116,7 +117,7 @@ CREATE TABLE IF NOT EXISTS photo_groups (
 CREATE INDEX IF NOT EXISTS photo_groups_overall   ON photo_groups(kind, best_overall);
 CREATE INDEX IF NOT EXISTS photo_groups_worst2    ON photo_groups(kind, min_overall, id DESC);
 CREATE INDEX IF NOT EXISTS photo_groups_end       ON photo_groups(kind, end_at);
-CREATE INDEX IF NOT EXISTS photo_groups_start2    ON photo_groups(kind, start_at = 0, start_at, id DESC);
+CREATE INDEX IF NOT EXISTS photo_groups_oldest    ON photo_groups(kind, oldest_at = 0, oldest_at, id DESC);
 CREATE INDEX IF NOT EXISTS photo_groups_technical ON photo_groups(kind, max_technical);
 CREATE INDEX IF NOT EXISTS photo_groups_aesthetic ON photo_groups(kind, max_aesthetic);
 CREATE INDEX IF NOT EXISTS photo_groups_focus     ON photo_groups(kind, max_focus, focus_sharp);
@@ -128,10 +129,10 @@ CREATE INDEX IF NOT EXISTS photo_groups_faces2    ON photo_groups(kind, max_face
 CREATE INDEX IF NOT EXISTS photos_in_burst ON photos(burst_id) WHERE burst_id != 0;
 CREATE INDEX IF NOT EXISTS photos_in_dup   ON photos(dup_id) WHERE dup_id != 0;
 
--- Deleting a stack's top shows its other frames again; any delete of a
--- grouped photo marks the groups for rebuilding (prune, cleanups).
-CREATE TRIGGER IF NOT EXISTS photos_ungroup AFTER DELETE ON photos
-WHEN OLD.burst_id != 0 OR OLD.dup_id != 0 OR OLD.stack_top != 0
+-- Deleting a stack's top shows its other frames again; any delete marks
+-- the groups for rebuilding (prune, cleanups), even of a photo not yet
+-- grouped: a rebuild under way may have read it already.
+CREATE TRIGGER IF NOT EXISTS photos_ungroup2 AFTER DELETE ON photos
 BEGIN
 	UPDATE photos SET stacked = 0, stack_top = 0, stack_size = 0 WHERE stacked = 1 AND stack_top = OLD.id;
 	INSERT OR REPLACE INTO meta (key, value)
@@ -279,9 +280,10 @@ func Open(path string) (*Store, error) {
 	// an earlier release created photos_burst with a different column order
 	db.Exec(`DROP INDEX IF EXISTS photos_burst_v1`)
 	// group sort indexes replaced by ones matching their ORDER BY exactly
-	for _, old := range []string{"photo_groups_worst", "photo_groups_start", "photo_groups_faces"} {
+	for _, old := range []string{"photo_groups_worst", "photo_groups_start", "photo_groups_start2", "photo_groups_faces"} {
 		db.Exec(`DROP INDEX IF EXISTS ` + old)
 	}
+	db.Exec(`DROP TRIGGER IF EXISTS photos_ungroup`) // replaced by photos_ungroup2
 	var oldDef string
 	db.QueryRow(`SELECT sql FROM sqlite_master WHERE name = 'photos_burst'`).Scan(&oldDef)
 	if strings.Contains(oldDef, "camera_make, camera_model, taken_at") {

@@ -26,7 +26,7 @@ const (
 )
 
 // groupsVersion changes when the grouping rules do, forcing a rebuild.
-const groupsVersion = "3"
+const groupsVersion = "4"
 
 // GroupOptions are the rules RebuildGroups groups by.
 type GroupOptions struct {
@@ -104,6 +104,7 @@ type gphoto struct {
 type groupRow struct {
 	kind, size                                        int
 	id, start, end, best                              int64
+	oldest                                            int64 // earliest dated member (0: none dated), for oldest first
 	camera                                            string
 	bestOverall, minOverall                           float64
 	maxTechnical, maxAesthetic, maxFocus, maxColorful float64
@@ -543,7 +544,10 @@ func (r *rebuild) addGroup(kind int, ps []*gphoto) {
 		if p.faces > g.maxFaces || (p.faces == g.maxFaces && p.overall > g.facesOverall) {
 			g.maxFaces, g.facesOverall = p.faces, p.overall
 		}
-		g.start, g.end = min(g.start, p.at), max(g.end, p.at)
+		g.start, g.end = min(g.start, p.at), max(g.end, p.at) // the whole span, undated (0) too: date filters rule groups out by it
+		if p.at != 0 && (g.oldest == 0 || p.at < g.oldest) {
+			g.oldest = p.at
+		}
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	g.id, g.best, g.bestOverall, g.camera = ids[0], best.id, best.overall, best.camera
@@ -553,7 +557,7 @@ func (r *rebuild) addGroup(kind int, ps []*gphoto) {
 	r.ids[kind] = append(r.ids[kind], g.id)
 }
 
-const groupCols = `kind, id, size, start_at, end_at, camera, best_id, best_overall, min_overall,
+const groupCols = `kind, id, size, start_at, end_at, oldest_at, camera, best_id, best_overall, min_overall,
 	max_technical, max_aesthetic, max_focus, focus_sharp, max_colorful, max_faces, faces_overall, members`
 
 // writePending writes the queued groups that are new or changed, noting the
@@ -576,7 +580,7 @@ func (r *rebuild) writePending() error {
 			}
 			for rows.Next() {
 				var g groupRow
-				if err := rows.Scan(&g.kind, &g.id, &g.size, &g.start, &g.end, &g.camera, &g.best, &g.bestOverall, &g.minOverall,
+				if err := rows.Scan(&g.kind, &g.id, &g.size, &g.start, &g.end, &g.oldest, &g.camera, &g.best, &g.bestOverall, &g.minOverall,
 					&g.maxTechnical, &g.maxAesthetic, &g.maxFocus, &g.focusSharp, &g.maxColorful, &g.maxFaces, &g.facesOverall, &g.members); err != nil {
 					rows.Close()
 					return err
@@ -596,8 +600,8 @@ func (r *rebuild) writePending() error {
 			if ok && o == g {
 				continue
 			}
-			if err := r.w.exec(`INSERT OR REPLACE INTO photo_groups (`+groupCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-				g.kind, g.id, g.size, g.start, g.end, g.camera, g.best, g.bestOverall, g.minOverall,
+			if err := r.w.exec(`INSERT OR REPLACE INTO photo_groups (`+groupCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				g.kind, g.id, g.size, g.start, g.end, g.oldest, g.camera, g.best, g.bestOverall, g.minOverall,
 				g.maxTechnical, g.maxAesthetic, g.maxFocus, g.focusSharp, g.maxColorful, g.maxFaces, g.facesOverall, g.members); err != nil {
 				return err
 			}
@@ -694,22 +698,30 @@ func (r *rebuild) resetOld() error {
 	if err != nil {
 		return err
 	}
-	// frames still in a group were brought up to date when it was found
-	for _, id := range dedupe(inBurst) {
-		if !contains(newBurst, id) {
-			if err := r.w.exec(`UPDATE photos SET burst_id = 0, stack_top = 0, stack_size = 0, stacked = 0 WHERE id = ?`, id); err != nil {
-				return err
+	// Work out both lists before the first write, so no write transaction
+	// is open through the checks. Frames still in a group were brought up
+	// to date when it was found.
+	gone := func(have, keep []int64) []int64 {
+		var out []int64
+		for _, id := range dedupe(have) {
+			if !contains(keep, id) {
+				out = append(out, id)
 			}
-			r.st.PhotoWrites++
 		}
+		return out
 	}
-	for _, id := range dedupe(inDup) {
-		if !contains(newDup, id) {
-			if err := r.w.exec(`UPDATE photos SET dup_id = 0 WHERE id = ?`, id); err != nil {
-				return err
-			}
-			r.st.PhotoWrites++
+	leftBurst, leftDup := gone(inBurst, newBurst), gone(inDup, newDup)
+	for _, id := range leftBurst {
+		if err := r.w.exec(`UPDATE photos SET burst_id = 0, stack_top = 0, stack_size = 0, stacked = 0 WHERE id = ?`, id); err != nil {
+			return err
 		}
+		r.st.PhotoWrites++
+	}
+	for _, id := range leftDup {
+		if err := r.w.exec(`UPDATE photos SET dup_id = 0 WHERE id = ?`, id); err != nil {
+			return err
+		}
+		r.st.PhotoWrites++
 	}
 	return nil
 }
@@ -817,7 +829,7 @@ func groupSort(name string) string {
 	case "newest":
 		return "end_at DESC"
 	case "oldest":
-		return "start_at = 0, start_at ASC"
+		return "oldest_at = 0, oldest_at ASC" // by the earliest dated member; all-undated groups last
 	case "technical":
 		return "max_technical DESC"
 	case "aesthetic":
@@ -1100,6 +1112,10 @@ func (s *Store) loadGroups(kind int, ids []int64, where string, args []any) ([]G
 	if where != "" {
 		if keep, err = s.matching(all, where, args); err != nil {
 			return nil, err
+		}
+		all = all[:0] // load only the members shown: a big set may match in one photo
+		for id := range keep {
+			all = append(all, id)
 		}
 	}
 	ps, err := s.Photos(all)
