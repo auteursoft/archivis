@@ -109,18 +109,24 @@ CREATE TABLE IF NOT EXISTS photo_groups (
 	focus_sharp   REAL NOT NULL DEFAULT 0,
 	max_colorful  REAL NOT NULL DEFAULT 0,
 	max_faces     INTEGER NOT NULL DEFAULT 0,
+	faces_overall REAL NOT NULL DEFAULT 0,
 	members       TEXT NOT NULL,
 	PRIMARY KEY (kind, id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS photo_groups_overall   ON photo_groups(kind, best_overall);
-CREATE INDEX IF NOT EXISTS photo_groups_worst     ON photo_groups(kind, min_overall);
+CREATE INDEX IF NOT EXISTS photo_groups_worst2    ON photo_groups(kind, min_overall, id DESC);
 CREATE INDEX IF NOT EXISTS photo_groups_end       ON photo_groups(kind, end_at);
-CREATE INDEX IF NOT EXISTS photo_groups_start     ON photo_groups(kind, start_at);
+CREATE INDEX IF NOT EXISTS photo_groups_start2    ON photo_groups(kind, start_at = 0, start_at, id DESC);
 CREATE INDEX IF NOT EXISTS photo_groups_technical ON photo_groups(kind, max_technical);
 CREATE INDEX IF NOT EXISTS photo_groups_aesthetic ON photo_groups(kind, max_aesthetic);
 CREATE INDEX IF NOT EXISTS photo_groups_focus     ON photo_groups(kind, max_focus, focus_sharp);
 CREATE INDEX IF NOT EXISTS photo_groups_colorful  ON photo_groups(kind, max_colorful);
-CREATE INDEX IF NOT EXISTS photo_groups_faces     ON photo_groups(kind, max_faces, best_overall);
+CREATE INDEX IF NOT EXISTS photo_groups_faces2    ON photo_groups(kind, max_faces, faces_overall);
+
+-- Grouped photos, for the rebuild to find any left over from an earlier,
+-- interrupted one (small: only photos in a group).
+CREATE INDEX IF NOT EXISTS photos_in_burst ON photos(burst_id) WHERE burst_id != 0;
+CREATE INDEX IF NOT EXISTS photos_in_dup   ON photos(dup_id) WHERE dup_id != 0;
 
 -- Deleting a stack's top shows its other frames again; any delete of a
 -- grouped photo marks the groups for rebuilding (prune, cleanups).
@@ -272,6 +278,10 @@ func Open(path string) (*Store, error) {
 	}
 	// an earlier release created photos_burst with a different column order
 	db.Exec(`DROP INDEX IF EXISTS photos_burst_v1`)
+	// group sort indexes replaced by ones matching their ORDER BY exactly
+	for _, old := range []string{"photo_groups_worst", "photo_groups_start", "photo_groups_faces"} {
+		db.Exec(`DROP INDEX IF EXISTS ` + old)
+	}
 	var oldDef string
 	db.QueryRow(`SELECT sql FROM sqlite_master WHERE name = 'photos_burst'`).Scan(&oldDef)
 	if strings.Contains(oldDef, "camera_make, camera_model, taken_at") {

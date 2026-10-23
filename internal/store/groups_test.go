@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -453,9 +454,10 @@ func TestGroupSortTieBreaks(t *testing.T) {
 	// .9 at sharpness 20, 2 faces at overall 60
 	add(1, .9, 20, 60, 2)
 	add(1, .4, 1, 10, 0)
-	// set B: focus .9 at sharpness 10, 2 faces at overall 40
+	// set B: focus .9 at sharpness 10, 2 faces at overall 40; its best
+	// overall (90) is on a member without faces, which must not count
 	add(2, .9, 10, 40, 2)
-	add(2, .5, 99, 30, 0)
+	add(2, .5, 99, 90, 0)
 	if err := st.Save(rs); err != nil {
 		t.Fatal(err)
 	}
@@ -469,6 +471,80 @@ func TestGroupSortTieBreaks(t *testing.T) {
 		}
 		if gs[0].ID != rs[0].Photo.ID {
 			t.Errorf("%s: set %d first, want the set whose tie-break is higher (%d)", sort, gs[0].ID, rs[0].Photo.ID)
+		}
+	}
+}
+
+// Group columns left on photos by an interrupted rebuild (their group row
+// already replaced or gone) are cleared by the next one.
+func TestRebuildClearsLeftovers(t *testing.T) {
+	st, ps := groupFixture(t)
+	o := GroupOptions{Gap: 3, Hamming: 6}
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	var lone int64 // a photo in no group
+	if err := st.DB.QueryRow(`SELECT id FROM photos WHERE burst_id = 0 AND dup_id = 0 LIMIT 1`).Scan(&lone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`UPDATE photos SET burst_id = 999999, stack_top = 999999, stack_size = 2, stacked = 1, dup_id = 999999 WHERE id = ?`, lone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	compareGroups(t, storedGroups(t, st), referenceGroups(ps, o.Gap, o.Hamming))
+}
+
+// A run of more than maxStackRun frames (a camera's default clock) is a
+// burst, but is not stacked: stacking compares frames pairwise.
+func TestHugeRunIsNotStacked(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "h.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*Result
+	for i := 0; i < maxStackRun+500; i++ {
+		p := fmt.Sprintf("/h/%d", i)
+		rs = append(rs, &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, CameraModel: "CAM",
+			TakenAt: 946684800, PHash: 42, Overall: float64(i % 50), Version: SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := st.RebuildGroups(context.Background(), GroupOptions{Gap: 3, Hamming: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Bursts != 1 || stats.Stacks != 0 {
+		t.Fatalf("%s", stats)
+	}
+}
+
+// Every sort pages straight off an index: no sorting of all groups.
+func TestGroupSortsUseIndexes(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "e.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, so := range []string{"", "worst", "newest", "oldest", "technical", "aesthetic", "sharpness", "colorful", "faces"} {
+		rows, err := st.DB.Query(`EXPLAIN QUERY PLAN SELECT id FROM photo_groups WHERE kind = ? AND size >= ? ORDER BY `+
+			groupSort(so)+`, id DESC LIMIT 30 OFFSET 0`, GroupBurst, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan []string
+		for rows.Next() {
+			var a, b, c int
+			var d string
+			rows.Scan(&a, &b, &c, &d)
+			plan = append(plan, d)
+		}
+		rows.Close()
+		if p := strings.Join(plan, "; "); strings.Contains(p, "TEMP B-TREE") || !strings.Contains(p, "INDEX photo_groups_") {
+			t.Errorf("sort %q: %s", so, p)
 		}
 	}
 }

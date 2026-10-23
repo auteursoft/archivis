@@ -784,6 +784,14 @@ func TestDuplicatesPage(t *testing.T) {
 	if body = get(t, h, "/duplicates?min_overall=55"); strings.Count(body, `class="card stack"`) != 0 {
 		t.Fatal("a set with no matching copy is listed")
 	}
+	// a copy's page lists every other copy, with its path
+	body = get(t, h, fmt.Sprintf("/photo/%d", rs[0].Photo.ID))
+	if !strings.Contains(body, "Identical copies (2 more)") || !strings.Contains(body, "/d/1.jpg") || !strings.Contains(body, "/d/2.jpg") {
+		t.Fatalf("photo page lacks its copies: %.300s", body[strings.Index(body, "</aside>"):])
+	}
+	if body = get(t, h, fmt.Sprintf("/photo/%d", rs[5].Photo.ID)); strings.Contains(body, "Identical copies") {
+		t.Fatal("a photo with no copies lists some")
+	}
 }
 
 // The request log shows each request's status, and a failed API call's

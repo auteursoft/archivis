@@ -26,7 +26,7 @@ const (
 )
 
 // groupsVersion changes when the grouping rules do, forcing a rebuild.
-const groupsVersion = "2"
+const groupsVersion = "3"
 
 // GroupOptions are the rules RebuildGroups groups by.
 type GroupOptions struct {
@@ -109,7 +109,8 @@ type groupRow struct {
 	maxTechnical, maxAesthetic, maxFocus, maxColorful float64
 	focusSharp                                        float64 // sharpness of the sharpest-focus member (its tie-break, as on the Photos page)
 	maxFaces                                          int
-	members                                           string // JSON ids, ascending
+	facesOverall                                      float64 // best overall among the members with the most faces
+	members                                           string  // JSON ids, ascending
 }
 
 // rebuild holds one RebuildGroups run's state.
@@ -122,7 +123,6 @@ type rebuild struct {
 	pending []groupRow // groups found, not yet compared with the stored ones
 	ids     [3][]int64 // new group ids by kind (burst, dup)
 	members [3][]int64 // new groups' members by kind
-	left    [3][]int64 // changed or deleted groups' old members, by kind
 }
 
 // RebuildGroups works out every burst, stack and set of identical images
@@ -290,6 +290,17 @@ func (r *rebuild) burstDetails(runs [][]int64) error {
 	if err != nil {
 		return err
 	}
+	// Work out every run first, then write: a write transaction must not
+	// stay open (blocking other writers) through the stacking.
+	if err := r.w.commit(); err != nil {
+		return err
+	}
+	type plan struct {
+		burst  int64
+		frames []*gphoto
+		want   map[int64][3]int64
+	}
+	var plans []plan
 	for _, x := range runs {
 		var frames []*gphoto
 		for _, id := range x {
@@ -304,26 +315,37 @@ func (r *rebuild) burstDetails(runs [][]int64) error {
 		for _, f := range frames {
 			burst = min(burst, f.id)
 		}
+		var want map[int64][3]int64
+		if len(frames) <= maxStackRun {
+			want = stackFrames(frames, r.o.Hamming)
+		}
+		plans = append(plans, plan{burst, frames, want})
+		r.addGroup(GroupBurst, frames)
+	}
+	for _, pl := range plans {
 		r.st.Bursts++
-		want := stackFrames(frames, r.o.Hamming)
-		for _, f := range frames {
-			w := want[f.id]
+		for _, f := range pl.frames {
+			w := pl.want[f.id]
 			if w[0] == f.id {
 				r.st.Stacks++
 			}
 			r.members[GroupBurst] = append(r.members[GroupBurst], f.id)
-			if f.cur[0] != burst || f.cur[1] != w[0] || f.cur[2] != w[1] || f.cur[3] != w[2] {
+			if f.cur[0] != pl.burst || f.cur[1] != w[0] || f.cur[2] != w[1] || f.cur[3] != w[2] {
 				if err := r.w.exec(`UPDATE photos SET burst_id = ?, stack_top = ?, stack_size = ?, stacked = ? WHERE id = ?`,
-					burst, w[0], w[1], w[2], f.id); err != nil {
+					pl.burst, w[0], w[1], w[2], f.id); err != nil {
 					return err
 				}
 				r.st.PhotoWrites++
 			}
 		}
-		r.addGroup(GroupBurst, frames)
 	}
 	return r.writePending()
 }
+
+// maxStackRun is the most frames a burst may have and still be stacked:
+// stacking compares frames pairwise, and a run of thousands (a camera
+// stamping every photo with its default clock) is not a real burst.
+const maxStackRun = 1000
 
 // stackFrames clusters a burst's frames into stacks of near-identical
 // frames: taking frames best first (overall, then lower id), each frame not
@@ -518,7 +540,9 @@ func (r *rebuild) addGroup(kind int, ps []*gphoto) {
 			g.maxFocus, g.focusSharp = p.focus, p.sharpness
 		}
 		g.maxColorful = math.Max(g.maxColorful, p.colr)
-		g.maxFaces = max(g.maxFaces, p.faces)
+		if p.faces > g.maxFaces || (p.faces == g.maxFaces && p.overall > g.facesOverall) {
+			g.maxFaces, g.facesOverall = p.faces, p.overall
+		}
 		g.start, g.end = min(g.start, p.at), max(g.end, p.at)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
@@ -530,7 +554,7 @@ func (r *rebuild) addGroup(kind int, ps []*gphoto) {
 }
 
 const groupCols = `kind, id, size, start_at, end_at, camera, best_id, best_overall, min_overall,
-	max_technical, max_aesthetic, max_focus, focus_sharp, max_colorful, max_faces, members`
+	max_technical, max_aesthetic, max_focus, focus_sharp, max_colorful, max_faces, faces_overall, members`
 
 // writePending writes the queued groups that are new or changed, noting the
 // old members of changed ones.
@@ -553,7 +577,7 @@ func (r *rebuild) writePending() error {
 			for rows.Next() {
 				var g groupRow
 				if err := rows.Scan(&g.kind, &g.id, &g.size, &g.start, &g.end, &g.camera, &g.best, &g.bestOverall, &g.minOverall,
-					&g.maxTechnical, &g.maxAesthetic, &g.maxFocus, &g.focusSharp, &g.maxColorful, &g.maxFaces, &g.members); err != nil {
+					&g.maxTechnical, &g.maxAesthetic, &g.maxFocus, &g.focusSharp, &g.maxColorful, &g.maxFaces, &g.facesOverall, &g.members); err != nil {
 					rows.Close()
 					return err
 				}
@@ -572,12 +596,9 @@ func (r *rebuild) writePending() error {
 			if ok && o == g {
 				continue
 			}
-			if ok {
-				r.noteLeft(kind, o.members)
-			}
-			if err := r.w.exec(`INSERT OR REPLACE INTO photo_groups (`+groupCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			if err := r.w.exec(`INSERT OR REPLACE INTO photo_groups (`+groupCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 				g.kind, g.id, g.size, g.start, g.end, g.camera, g.best, g.bestOverall, g.minOverall,
-				g.maxTechnical, g.maxAesthetic, g.maxFocus, g.focusSharp, g.maxColorful, g.maxFaces, g.members); err != nil {
+				g.maxTechnical, g.maxAesthetic, g.maxFocus, g.focusSharp, g.maxColorful, g.maxFaces, g.facesOverall, g.members); err != nil {
 				return err
 			}
 			r.st.GroupWrites++
@@ -585,13 +606,6 @@ func (r *rebuild) writePending() error {
 	}
 	r.pending = r.pending[:0]
 	return nil
-}
-
-func (r *rebuild) noteLeft(kind int, members string) {
-	var ids []int64
-	if json.Unmarshal([]byte(members), &ids) == nil {
-		r.left[kind] = append(r.left[kind], ids...)
-	}
 }
 
 // deleteGone deletes the stored groups that no longer exist, noting their
@@ -631,7 +645,6 @@ func (r *rebuild) deleteGone() error {
 				return err
 			}
 			for _, g := range batch {
-				r.noteLeft(kind, g.members)
 				if err := r.w.exec(`DELETE FROM photo_groups WHERE kind = ? AND id = ?`, kind, g.id); err != nil {
 					return err
 				}
@@ -651,31 +664,38 @@ func contains(ids []int64, id int64) bool {
 	return i < len(ids) && ids[i] == id
 }
 
-// resetOld clears the group columns of photos no longer in a group: the
-// old members of changed and deleted groups, and every hidden stack member
-// (found through the photos_stacked index, so a run cut short cannot leave
-// photos hidden).
+// resetOld clears the group columns of every photo no longer in a group.
+// It finds the grouped photos from the database (through the photos_in_*
+// and photos_stacked indexes), not from what this run replaced, so photos
+// left over by an earlier, interrupted run are cleared too.
 func (r *rebuild) resetOld() error {
 	newBurst, newDup := dedupe(r.members[GroupBurst]), dedupe(r.members[GroupDuplicate])
-	hidden := r.left[GroupBurst]
-	rows, err := r.query(`SELECT id FROM photos WHERE stacked = 1`)
+	ids := func(q string) ([]int64, error) {
+		rows, err := r.query(q)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			out = append(out, id)
+		}
+		return out, rows.Err()
+	}
+	inBurst, err := ids(`SELECT id FROM photos WHERE burst_id != 0 UNION SELECT id FROM photos WHERE stacked = 1`)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		hidden = append(hidden, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	inDup, err := ids(`SELECT id FROM photos WHERE dup_id != 0`)
+	if err != nil {
 		return err
 	}
 	// frames still in a group were brought up to date when it was found
-	for _, id := range dedupe(hidden) {
+	for _, id := range dedupe(inBurst) {
 		if !contains(newBurst, id) {
 			if err := r.w.exec(`UPDATE photos SET burst_id = 0, stack_top = 0, stack_size = 0, stacked = 0 WHERE id = ?`, id); err != nil {
 				return err
@@ -683,7 +703,7 @@ func (r *rebuild) resetOld() error {
 			r.st.PhotoWrites++
 		}
 	}
-	for _, id := range dedupe(r.left[GroupDuplicate]) {
+	for _, id := range dedupe(inDup) {
 		if !contains(newDup, id) {
 			if err := r.w.exec(`UPDATE photos SET dup_id = 0 WHERE id = ?`, id); err != nil {
 				return err
@@ -778,6 +798,16 @@ type Group struct {
 	Members []Photo // the members matching the page's filter, best first
 }
 
+// GroupMembers returns every member of a group, best first (nil if the
+// group is gone).
+func (s *Store) GroupMembers(kind int, id int64) ([]Photo, error) {
+	gs, err := s.loadGroups(kind, []int64{id}, "", nil)
+	if err != nil || len(gs) == 0 {
+		return nil, err
+	}
+	return gs[0].Members, nil
+}
+
 // groupSort maps a sort name to the photo_groups column and direction a
 // page of groups is ordered by (ties: newer group id first).
 func groupSort(name string) string {
@@ -797,7 +827,7 @@ func groupSort(name string) string {
 	case "colorful":
 		return "max_colorful DESC"
 	case "faces":
-		return "max_faces DESC, best_overall DESC" // as the Photos page: faces, then overall
+		return "max_faces DESC, faces_overall DESC" // as the Photos page: faces, then overall
 	}
 	return "best_overall DESC"
 }

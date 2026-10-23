@@ -632,6 +632,7 @@ type photoData struct {
 	Faces   []faceView
 	Tags    []store.Tag
 	Similar []catalog.PhotoHit
+	Copies  []catalog.PhotoHit // the other photos with the identical image (its Duplicates set)
 	Metrics []metricRow
 	Cast    string
 	// Feedback is this viewer's latest judgement of the aesthetic score.
@@ -667,6 +668,15 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	d.Similar, err = s.cat.SimilarPhotos(id, store.Filter{}, 12)
 	if _, has := s.cat.PhotoIndex().Vector(id); has { // no embedding is not a failure
 		errs.note("similar photos", err)
+	}
+	if ph.DupID != 0 {
+		copies, err := s.cat.Store.GroupMembers(store.GroupDuplicate, ph.DupID)
+		errs.note("identical copies", err)
+		for _, c := range copies {
+			if c.ID != id {
+				d.Copies = append(d.Copies, catalog.PhotoHit{Photo: c})
+			}
+		}
 	}
 	d.Cast = quality.CastLabel(ph.CastA, ph.CastB, ph.CastStrength)
 	d.Metrics = metricsFor(ph, d.Cast)
