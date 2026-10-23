@@ -110,6 +110,16 @@ Interrupt it with Ctrl-C whenever you need to; running the same command again
 resumes. You can start the web interface (next step) while this runs; new
 photos appear in it within a minute.
 
+**Apple Photos library.** You can index `~/Pictures/Photos Library.photoslibrary`,
+or a folder containing it. Only the originals inside it are catalogued. The
+library also holds Apple's own resized copies of every photo, and those are
+skipped. Copies catalogued by older versions of Archivis are removed at the
+end of the next index run, once each one's original is in the catalogue.
+Face names and ratings given to a copy are moved to the original first. With
+**Optimize Mac Storage** turned on (Photos → Settings → iCloud), many originals
+are only in iCloud, and those photos are skipped until you download them.
+The index log reports how many copies were kept for that reason.
+
 ### 6. Run the web interface as a service
 
 This creates a per-user launchd agent that starts when you log in and
