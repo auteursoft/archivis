@@ -116,7 +116,10 @@ func referenceGroups(ps []Photo, gap int64, hamming int) groupState {
 		}
 		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 		out.groups[[2]int64{GroupBurst, ids[0]}] = ids
-		stacks := stackFrames(gs, hamming)
+		var stacks map[int64][3]int64
+		if len(gs) <= maxStackRun {
+			stacks = stackFrames(gs, hamming)
+		}
 		for _, id := range ids {
 			w := stacks[id]
 			out.photos[id] = [5]int64{ids[0], w[0], w[1], w[2], 0}
@@ -693,5 +696,28 @@ func TestResetOldStopsWhenCancelled(t *testing.T) {
 	}
 	if !st.GroupsStale(GroupOptions{Gap: 1, Hamming: 0}) {
 		t.Fatal("a cancelled rebuild left the groups looking current")
+	}
+}
+
+// However many photos share one second (a camera's default clock), the
+// scan reads at most scanPage rows at a time, and a run too long to stack
+// is read in chunks: the groups still match the reference exactly.
+func TestFloodsAreReadInPages(t *testing.T) {
+	st, ps := groupFixture(t) // 60 photos at one second, among others
+	defer func(n, m int) { scanPage, maxStackRun = n, m }(scanPage, maxStackRun)
+	scanPage, maxStackRun = 7, 5
+	most := 0
+	scanHook = func(n int) { most = max(most, n) }
+	defer func() { scanHook = nil }()
+	o := GroupOptions{Gap: 3, Hamming: 6}
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if most > scanPage {
+		t.Fatalf("a scan read %d rows, more than a page of %d", most, scanPage)
+	}
+	compareGroups(t, storedGroups(t, st), referenceGroups(ps, o.Gap, o.Hamming))
+	if again, _ := st.RebuildGroups(context.Background(), o); again.PhotoWrites != 0 || again.GroupWrites != 0 {
+		t.Fatalf("second rebuild wrote: %s", again)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,6 +50,9 @@ type RebuildStats struct {
 
 // scanPage is the rows per read: short reads let the WAL checkpoint.
 var scanPage = 50000
+
+// scanHook, if set (by tests), sees how many rows each burst-scan read got.
+var scanHook func(rows int)
 
 const (
 	writeBatch = 500 // rows per write transaction ...
@@ -215,9 +219,31 @@ func (r *rebuild) bursts() error {
 			f.cam = mk + "\x00" + md
 			out = append(out, f)
 		}
+		if scanHook != nil {
+			scanHook(len(out))
+		}
 		return out, rows.Err()
 	}
 	const cols = `SELECT taken_at, COALESCE(camera_make, ''), COALESCE(camera_model, ''), id FROM photos`
+	// feed adds frames, in time order, to their cameras' runs
+	feed := func(batch []frame) error {
+		for _, f := range batch {
+			x := open[f.cam]
+			if x != nil && f.at-x.last > r.o.Gap {
+				if err := end(f.cam, x); err != nil {
+					return err
+				}
+				x = nil
+			}
+			if x == nil {
+				x = &run{}
+				open[f.cam] = x
+			}
+			x.ids = append(x.ids, f.id)
+			x.last = f.at
+		}
+		return nil
+	}
 	at := int64(math.MinInt64)
 	for {
 		if err := r.ctx.Err(); err != nil {
@@ -236,27 +262,34 @@ func (r *rebuild) bursts() error {
 			}
 			if i > 0 {
 				batch = batch[:i] // the last second's frames come next page
-			} else if batch, err = read(cols+` WHERE taken_at = ?`, last); err != nil {
-				return err // a page of one second: read all of it
+			} else {
+				// a page of one second (a camera's default clock): read that
+				// second in pages too, by id (photos_taken holds the rowid)
+				for id := int64(math.MinInt64); ; {
+					if err := r.ctx.Err(); err != nil {
+						return err
+					}
+					chunk, err := read(cols+` INDEXED BY photos_taken WHERE taken_at = ? AND id > ? ORDER BY id LIMIT ?`, last, id, scanPage)
+					if err != nil {
+						return err
+					}
+					if err := feed(chunk); err != nil {
+						return err
+					}
+					if len(chunk) < scanPage {
+						break
+					}
+					id = chunk[len(chunk)-1].id
+				}
+				batch = nil
+				at = last
 			}
 		}
 		if len(batch) > 0 {
 			at = batch[len(batch)-1].at
 		}
-		for _, f := range batch {
-			x := open[f.cam]
-			if x != nil && f.at-x.last > r.o.Gap {
-				if err := end(f.cam, x); err != nil {
-					return err
-				}
-				x = nil
-			}
-			if x == nil {
-				x = &run{}
-				open[f.cam] = x
-			}
-			x.ids = append(x.ids, f.id)
-			x.last = f.at
+		if err := feed(batch); err != nil {
+			return err
 		}
 		// end runs no later frame can join (keeps open runs few)
 		cams := make([]string, 0, len(open))
@@ -284,9 +317,18 @@ func (r *rebuild) burstDetails(runs [][]int64) error {
 		return nil
 	}
 	var ids []int64
+	var normal [][]int64
 	for _, x := range runs {
+		if len(x) > maxStackRun {
+			if err := r.hugeBurst(x); err != nil { // not stacked: read in chunks
+				return err
+			}
+			continue
+		}
+		normal = append(normal, x)
 		ids = append(ids, x...)
 	}
+	runs = normal
 	byID, err := r.details(ids)
 	if err != nil {
 		return err
@@ -312,11 +354,7 @@ func (r *rebuild) burstDetails(runs [][]int64) error {
 		for _, f := range frames {
 			burst = min(burst, f.id)
 		}
-		var want map[int64][3]int64
-		if len(frames) <= maxStackRun {
-			want = stackFrames(frames, r.o.Hamming)
-		}
-		plans = append(plans, plan{burst, frames, want})
+		plans = append(plans, plan{burst, frames, stackFrames(frames, r.o.Hamming)})
 		r.addGroup(GroupBurst, frames)
 	}
 	for _, pl := range plans {
@@ -339,10 +377,51 @@ func (r *rebuild) burstDetails(runs [][]int64) error {
 	return r.writePending()
 }
 
+// hugeBurst handles a run too long to stack (a camera's default clock
+// stamping thousands of photos alike): its frames are read, and their
+// changes queued, a chunk at a time, so memory stays bounded but for the
+// run's ids.
+func (r *rebuild) hugeBurst(ids []int64) error {
+	burst := slices.Min(ids)
+	a := newGroupAcc(GroupBurst)
+	for start := 0; start < len(ids); start += 2000 {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		chunk := ids[start:min(len(ids), start+2000)]
+		byID, err := r.details(chunk)
+		if err != nil {
+			return err
+		}
+		for _, id := range chunk {
+			f := byID[id]
+			if f == nil {
+				continue // deleted meanwhile
+			}
+			a.add(f)
+			r.members[GroupBurst] = append(r.members[GroupBurst], f.id)
+			if f.cur[0] != burst || f.cur[1] != 0 || f.cur[2] != 0 || f.cur[3] != 0 {
+				if err := r.w.exec(`UPDATE photos SET burst_id = ?, stack_top = 0, stack_size = 0, stacked = 0 WHERE id = ?`, burst, f.id); err != nil {
+					return err
+				}
+				r.st.PhotoWrites++
+			}
+		}
+	}
+	if a.g.size < 2 {
+		return nil
+	}
+	r.st.Bursts++
+	g := a.row()
+	g.id = burst // as the frames record it, even if that frame went meanwhile
+	r.queueGroup(g)
+	return r.writePending()
+}
+
 // maxStackRun is the most frames a burst may have and still be stacked:
 // stacking compares frames pairwise, and a run of thousands (a camera
 // stamping every photo with its default clock) is not a real burst.
-const maxStackRun = 1000
+var maxStackRun = 1000 // a variable so tests can make huge runs cheaply
 
 // stackFrames clusters a burst's frames into stacks of near-identical
 // frames: taking frames best first (overall, then lower id), each frame not
@@ -520,37 +599,64 @@ func (r *rebuild) details(ids []int64) (map[int64]*gphoto, error) {
 	return out, nil
 }
 
+// groupAcc works out a group's photo_groups row from its members, added
+// one at a time (so a huge group can be read in chunks).
+type groupAcc struct {
+	g    groupRow
+	ids  []int64
+	best *gphoto
+}
+
+func newGroupAcc(kind int) *groupAcc {
+	return &groupAcc{g: groupRow{kind: kind, minOverall: math.Inf(1), start: math.MaxInt64, end: math.MinInt64}}
+}
+
+func (a *groupAcc) add(p *gphoto) {
+	g := &a.g
+	g.size++
+	a.ids = append(a.ids, p.id)
+	if a.best == nil || p.overall > a.best.overall || (p.overall == a.best.overall && p.id < a.best.id) {
+		best := *p // a copy: chunks' details are dropped as the scan moves on
+		a.best = &best
+	}
+	g.minOverall = math.Min(g.minOverall, p.overall)
+	g.maxTechnical = math.Max(g.maxTechnical, p.technical)
+	g.maxAesthetic = math.Max(g.maxAesthetic, p.aesthetic)
+	if p.focus > g.maxFocus || (p.focus == g.maxFocus && p.sharpness > g.focusSharp) {
+		g.maxFocus, g.focusSharp = p.focus, p.sharpness
+	}
+	g.maxColorful = math.Max(g.maxColorful, p.colr)
+	if p.faces > g.maxFaces || (p.faces == g.maxFaces && p.overall > g.facesOverall) {
+		g.maxFaces, g.facesOverall = p.faces, p.overall
+	}
+	g.start, g.end = min(g.start, p.at), max(g.end, p.at) // the whole span, undated (0) too: date filters rule groups out by it
+	if p.at != 0 && (g.oldest == 0 || p.at < g.oldest) {
+		g.oldest = p.at
+	}
+}
+
+// row is the finished row (at least one member added).
+func (a *groupAcc) row() groupRow {
+	sort.Slice(a.ids, func(i, j int) bool { return a.ids[i] < a.ids[j] })
+	g := a.g
+	g.id, g.best, g.bestOverall, g.camera = a.ids[0], a.best.id, a.best.overall, a.best.camera
+	b, _ := json.Marshal(a.ids)
+	g.members = string(b)
+	return g
+}
+
 // addGroup queues a group's photo_groups row.
 func (r *rebuild) addGroup(kind int, ps []*gphoto) {
-	g := groupRow{kind: kind, size: len(ps), minOverall: math.Inf(1), start: math.MaxInt64, end: math.MinInt64}
-	ids := make([]int64, 0, len(ps))
-	var best *gphoto
+	a := newGroupAcc(kind)
 	for _, p := range ps {
-		ids = append(ids, p.id)
-		if best == nil || p.overall > best.overall || (p.overall == best.overall && p.id < best.id) {
-			best = p
-		}
-		g.minOverall = math.Min(g.minOverall, p.overall)
-		g.maxTechnical = math.Max(g.maxTechnical, p.technical)
-		g.maxAesthetic = math.Max(g.maxAesthetic, p.aesthetic)
-		if p.focus > g.maxFocus || (p.focus == g.maxFocus && p.sharpness > g.focusSharp) {
-			g.maxFocus, g.focusSharp = p.focus, p.sharpness
-		}
-		g.maxColorful = math.Max(g.maxColorful, p.colr)
-		if p.faces > g.maxFaces || (p.faces == g.maxFaces && p.overall > g.facesOverall) {
-			g.maxFaces, g.facesOverall = p.faces, p.overall
-		}
-		g.start, g.end = min(g.start, p.at), max(g.end, p.at) // the whole span, undated (0) too: date filters rule groups out by it
-		if p.at != 0 && (g.oldest == 0 || p.at < g.oldest) {
-			g.oldest = p.at
-		}
+		a.add(p)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	g.id, g.best, g.bestOverall, g.camera = ids[0], best.id, best.overall, best.camera
-	b, _ := json.Marshal(ids)
-	g.members = string(b)
+	r.queueGroup(a.row())
+}
+
+func (r *rebuild) queueGroup(g groupRow) {
 	r.pending = append(r.pending, g)
-	r.ids[kind] = append(r.ids[kind], g.id)
+	r.ids[g.kind] = append(r.ids[g.kind], g.id)
 }
 
 const groupCols = `kind, id, size, start_at, end_at, oldest_at, camera, best_id, best_overall, min_overall,
