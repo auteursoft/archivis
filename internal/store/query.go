@@ -143,7 +143,7 @@ func (s *Store) Browse(f Filter) ([]Photo, int, error) {
 	if f.Limit <= 0 {
 		f.Limit = 200
 	}
-	q := `SELECT ` + photoCols + ` FROM photos` + where + f.order() + ` LIMIT ? OFFSET ?`
+	q := `SELECT ` + readCols + ` FROM photos` + where + f.order() + ` LIMIT ? OFFSET ?`
 	ps, err := s.queryPhotos(q, append(args, f.Limit, f.Offset)...)
 	return ps, total, err
 }

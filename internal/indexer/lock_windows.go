@@ -11,13 +11,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// ErrIndexRunning means another `archivis index` is using this catalogue.
-var ErrIndexRunning = errors.New("another archivis index is already running on this catalogue")
-
-// LockIndex takes the catalogue's index lock (see lock_unix.go) using a
+// lockFile takes an exclusive lock on the file (see lock_unix.go) using a
 // Windows byte-range lock, which the OS releases if the process dies.
-func LockIndex(dir string) (unlock func(), err error) {
-	f, err := os.OpenFile(filepath.Join(dir, "index.lock"), os.O_RDWR|os.O_CREATE, 0o644)
+func lockFile(path string, busy error) (unlock func(), err error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +24,7 @@ func LockIndex(dir string) (unlock func(), err error) {
 	if err != nil {
 		f.Close()
 		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) || errors.Is(err, windows.ERROR_IO_PENDING) {
-			return nil, fmt.Errorf("%w (%s)", ErrIndexRunning, dir)
+			return nil, fmt.Errorf("%w (%s)", busy, filepath.Dir(path))
 		}
 		return nil, err
 	}

@@ -43,6 +43,7 @@ Commands:
   retag        recompute category tags from stored embeddings
   prune        drop catalogue entries for files that no longer exist
   stats        catalogue summary
+  groups       bursts, stacks and identical images: status | rebuild
   errors       show files that failed to index
   inspect      show what Archivis reads from photo files (camera, lens, preview, rotation)
   users        web accounts: list | add-admin | invite | reset | password | role | disable | enable | signout
@@ -224,7 +225,7 @@ func main() {
 		"setup": runSetup, "index": runIndex, "serve": runServe, "search": runSearch,
 		"list": runList, "export": runExport, "people": runPeople, "retag": runRetag,
 		"prune": runPrune, "stats": runStats, "errors": runErrors, "aesthetic": runAesthetic, "inspect": runInspect,
-		"users": runUsers, "version": runVersion,
+		"users": runUsers, "version": runVersion, "groups": runGroups,
 	}
 	fn, ok := cmds[cmd]
 	if cmd == "" {
@@ -353,6 +354,9 @@ func runIndex(g *globals, args []string) error {
 		if n > 0 {
 			fmt.Fprintf(os.Stderr, "auto-labelled %d faces of named people\n", n)
 		}
+	}
+	if ctx.Err() == nil {
+		regroup(ctx, g.data, cat.Store)
 	}
 	st, _ := cat.Store.Stats()
 	fmt.Fprintf(os.Stderr, "catalogue: %d photos, %d faces, %d people\n", st.Photos, st.Faces, st.People)

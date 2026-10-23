@@ -59,6 +59,9 @@ type Server struct {
 	dmu        sync.Mutex
 	discovered []catalog.Cluster
 	discAt     time.Time
+
+	regrouping  atomic.Bool
+	lastRegroup atomic.Int64 // unix time the last regroup started
 }
 
 type queryEntry struct {
@@ -181,12 +184,14 @@ func sameOrigin(next http.Handler) http.Handler {
 // ListenAndServe serves until the process exits, refreshing the in-memory
 // indexes periodically so photos indexed meanwhile become searchable.
 func (s *Server) ListenAndServe(addr string) error {
+	go s.regroup(false)
 	go func() {
 		for range time.Tick(time.Minute) {
 			if err := s.cat.Refresh(); err != nil {
 				log.Printf("refresh: %v", err)
 			}
 			s.expireQueries()
+			go s.regroup(false)
 		}
 	}()
 	srv := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
