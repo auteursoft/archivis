@@ -341,6 +341,19 @@ func runIndex(g *globals, args []string) error {
 	if runErr != nil && runErr != context.Canceled {
 		return runErr
 	}
+	if ctx.Err() == nil {
+		// Apple's copies catalogued from inside Photos libraries by older
+		// versions: removed once their originals are in (names moved first),
+		// before auto-labelling so moved names count as examples.
+		res, err := cat.Store.CleanPhotosLibraries(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: cleaning up Photos library copies: %v (retried on the next run)\n", err)
+		}
+		if res.Removed > 0 || res.Kept > 0 {
+			fmt.Fprintf(os.Stderr, "Photos libraries: removed %d of Apple's copies (moved %d face names, %d ratings to the originals); kept %d with no original catalogued\n",
+				res.Removed, res.LabelsMoved, res.FeedbackMoved, res.Kept)
+		}
+	}
 	if !*noMatch && ctx.Err() == nil {
 		// The photos are indexed either way; a failure here only means named
 		// people were not matched, so say so and how to retry.
