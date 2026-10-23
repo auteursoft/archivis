@@ -108,13 +108,18 @@ func TestCleanPhotosLibrariesRecovers(t *testing.T) {
 	if err := st.Save([]*Result{orig, cp}); err != nil {
 		t.Fatal(err)
 	}
-	st.SetMeta(libraryCleanupKey, "{damaged")
-	res, err := st.CleanPhotosLibraries(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Removed != 1 || res.Kept != 0 || st.GetMeta(libraryCleanupKey) != "[]" {
-		t.Fatalf("cleanup: %+v, meta %s", res, st.GetMeta(libraryCleanupKey))
+	for _, damaged := range []string{"{damaged", "null"} {
+		if err := st.Save([]*Result{cp}); err != nil { // the copy back, if removed
+			t.Fatal(err)
+		}
+		st.SetMeta(libraryCleanupKey, damaged)
+		res, err := st.CleanPhotosLibraries(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Removed != 1 || res.Kept != 0 || st.GetMeta(libraryCleanupKey) != "[]" {
+			t.Fatalf("%s: cleanup %+v, meta %s", damaged, res, st.GetMeta(libraryCleanupKey))
+		}
 	}
 }
 

@@ -62,7 +62,7 @@ func (s *Store) CleanPhotosLibraries(ctx context.Context) (LibraryCleanup, error
 	var res LibraryCleanup
 	var libs []string
 	v := s.GetMeta(libraryCleanupKey)
-	if v != "" && json.Unmarshal([]byte(v), &libs) == nil {
+	if v != "" && json.Unmarshal([]byte(v), &libs) == nil && libs != nil { // "null" is damage too
 		if len(libs) == 0 {
 			return res, nil // done
 		}
