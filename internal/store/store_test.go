@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -211,20 +212,23 @@ func TestBursts(t *testing.T) {
 	if err := st.Save(rs); err != nil {
 		t.Fatal(err)
 	}
-	bs, _, err := st.Bursts(Filter{Limit: 10}, 3, 3)
+	if _, err := st.RebuildGroups(context.Background(), GroupOptions{Gap: 3, Hamming: 6}); err != nil {
+		t.Fatal(err)
+	}
+	bs, _, err := st.GroupPage(GroupBurst, Filter{Limit: 10}, 3, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(bs) != 2 {
 		t.Fatalf("want 2 bursts, got %d", len(bs))
 	}
-	sizes := map[int]bool{len(bs[0].Photos): true, len(bs[1].Photos): true}
+	sizes := map[int]bool{len(bs[0].Members): true, len(bs[1].Members): true}
 	if !sizes[4] || !sizes[3] {
-		t.Fatalf("burst sizes %d,%d", len(bs[0].Photos), len(bs[1].Photos))
+		t.Fatalf("burst sizes %d,%d", len(bs[0].Members), len(bs[1].Members))
 	}
 	for _, b := range bs {
-		if len(b.Photos) == 4 && b.Photos[0].Path != "/a3" {
-			t.Fatalf("best frame first: got %s", b.Photos[0].Path)
+		if len(b.Members) == 4 && b.Members[0].Path != "/a3" {
+			t.Fatalf("best frame first: got %s", b.Members[0].Path)
 		}
 	}
 }

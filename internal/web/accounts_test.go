@@ -534,12 +534,12 @@ func TestSettingsWithoutAccounts(t *testing.T) {
 	if rec := b.do("POST", "/admin/settings", url.Values{"burst_gap": {"4"}}); rec.Code != http.StatusSeeOther || cat.Store.GetSettings().BurstGap != 4 {
 		t.Fatalf("save without accounts: %d", rec.Code)
 	}
-	// the Bursts page uses it as its default gap
-	if body := b.do("GET", "/bursts", nil).Body.String(); !strings.Contains(body, `name="gap"`) || !strings.Contains(body, `value="4"`) {
-		t.Fatal("Bursts page does not default to the configured gap")
+	// bursts are grouped by it (the Bursts page has no gap of its own)
+	if cat.Store.GroupOptions().Gap != 4 {
+		t.Fatal("grouping does not use the configured gap")
 	}
-	if body := b.do("GET", "/bursts?gap=9", nil).Body.String(); !strings.Contains(body, `value="9"`) {
-		t.Fatal("an explicit gap no longer overrides the default")
+	if body := b.do("GET", "/bursts", nil).Body.String(); strings.Contains(body, `name="gap"`) {
+		t.Fatal("Bursts page still has a gap field")
 	}
 	// behind --auth, the log names who changed them
 	s.Auth = "anna:secret"

@@ -9,6 +9,7 @@ import (
 	"html"
 	"log"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -37,7 +38,9 @@ func newTestServer(t *testing.T) (*Server, *catalog.Catalog, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(cat), cat, id
+	s := New(cat)
+	t.Cleanup(s.background.Wait) // runs before cat.Close
+	return s, cat, id
 }
 
 func post(h http.Handler, path, body, contentType string, hdr map[string]string) *httptest.ResponseRecorder {
@@ -647,6 +650,15 @@ func TestPagerKeepsFilters(t *testing.T) {
 	}
 }
 
+// groupNow works out the catalogue's bursts and identical images, as an
+// index run or the server would.
+func groupNow(t *testing.T, cat *catalog.Catalog) {
+	t.Helper()
+	if _, err := cat.Store.RebuildGroups(context.Background(), cat.Store.GroupOptions()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Pages that show photos must render with photos in them: an empty
 // catalogue hides template errors (the bursts page once failed on any
 // real burst).
@@ -661,53 +673,59 @@ func TestBurstsPageRenders(t *testing.T) {
 	if err := cat.Store.Save(rs); err != nil {
 		t.Fatal(err)
 	}
-	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/bursts", nil))
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "3 frames") || !strings.Contains(rec.Body.String(), `href="/photo/`) {
-		t.Fatalf("bursts page: %d %.300s", rec.Code, rec.Body.String())
+	// before grouping: a note, no error
+	if body := get(t, s.Handler(), "/bursts"); !strings.Contains(body, "being worked out") {
+		t.Fatalf("ungrouped bursts page: %.300s", body)
+	}
+	s.background.Wait() // the regroup that page view started
+	if cat.Store.GroupsStale(cat.Store.GroupOptions()) {
+		t.Fatal("viewing the page did not group the catalogue")
+	}
+	body := get(t, s.Handler(), "/bursts")
+	if !strings.Contains(body, "3 frames") || !strings.Contains(body, `href="/photo/`) || strings.Contains(body, "being worked out") {
+		t.Fatalf("bursts page: %.300s", body)
 	}
 }
 
-// Bursts takes the same filters as the Photos page, and pages through
-// bursts with the filters kept.
+// Bursts takes the same filters and sorts as the Photos page, and pages
+// through bursts with them kept; a burst shows only its matching frames.
 func TestBurstsFiltersAndPaging(t *testing.T) {
 	s, cat, _ := newTestServer(t)
 	var rs []*store.Result
 	n := 0
-	add := func(cam string, at int64) {
+	add := func(cam string, at int64, overall float64) {
 		n++
 		rs = append(rs, &store.Result{Photo: store.Photo{Path: fmt.Sprintf("/b/%d.jpg", n), Size: 1, MTime: 1,
-			Fingerprint: fmt.Sprintf("%032x", n), CameraModel: cam, TakenAt: at, Overall: 50, Version: store.SchemaVersion}})
+			Fingerprint: fmt.Sprintf("%032x", n), CameraModel: cam, TakenAt: at, Overall: overall, Version: store.SchemaVersion}})
 	}
-	// 31 D810 bursts (one more than a page) and one Sony burst, an hour apart
+	// 31 D810 bursts (one more than a page) and one Sony burst, an hour apart;
+	// one frame in each D810 burst scores 90
 	for b := 0; b < 31; b++ {
 		for i := 0; i < 3; i++ {
-			add("NIKON D810", 1_700_000_000+int64(b)*3600+int64(i))
+			add("NIKON D810", 1_700_000_000+int64(b)*3600+int64(i), float64(40+50*(i/2)))
 		}
 	}
 	for i := 0; i < 3; i++ {
-		add("ILCE-7RM4", 1_600_000_000+int64(i))
+		add("ILCE-7RM4", 1_600_000_000+int64(i), 50)
 	}
 	if err := cat.Store.Save(rs); err != nil {
 		t.Fatal(err)
 	}
-	get := func(u string) string {
-		rec := httptest.NewRecorder()
-		s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", u, nil))
-		if rec.Code != 200 {
-			t.Fatalf("%s: %d %.300s", u, rec.Code, rec.Body.String())
-		}
-		return rec.Body.String()
-	}
-	body := get("/bursts?camera=ILCE")
+	groupNow(t, cat)
+	h := s.Handler()
+	body := get(t, h, "/bursts?camera=ILCE")
 	if c := strings.Count(body, `<section class="burst">`); c != 1 || strings.Contains(body, "NIKON") {
 		t.Fatalf("camera filter: %d bursts", c)
 	}
-	if !strings.Contains(body, `action="/bursts"`) || !strings.Contains(body, `name="min_focus"`) || !strings.Contains(body, `name="gap"`) {
-		t.Fatal("bursts page lacks the Photos filters")
+	if !strings.Contains(body, `action="/bursts"`) || !strings.Contains(body, `name="min_focus"`) || !strings.Contains(body, `name="sort"`) {
+		t.Fatal("bursts page lacks the Photos filters and sort")
 	}
-	body = get("/bursts?camera=D810&gap=5")
-	if c := strings.Count(body, `<section class="burst">`); c != burstsPerPage {
+	body = get(t, h, "/bursts?min_overall=85")
+	if c := strings.Count(body, `<section class="burst">`); c != burstsPage.perPage || !strings.Contains(body, "1 of 3 frames") {
+		t.Fatalf("quality filter: %d bursts, matching frames only: %v", c, strings.Contains(body, "1 of 3 frames"))
+	}
+	body = get(t, h, "/bursts?camera=D810&sort=oldest")
+	if c := strings.Count(body, `<section class="burst">`); c != burstsPage.perPage {
 		t.Fatalf("first page: %d bursts", c)
 	}
 	i := strings.Index(body, "Next →")
@@ -716,38 +734,63 @@ func TestBurstsFiltersAndPaging(t *testing.T) {
 	}
 	j := strings.LastIndex(body[:i], `href="`)
 	next, _ := url.Parse(html.UnescapeString(body[j+6 : strings.Index(body[j+6:], `"`)+j+6]))
-	if q := next.Query(); next.Path != "/bursts" || q.Get("camera") != "D810" || q.Get("gap") != "5" || q.Get("page") != "1" {
+	if q := next.Query(); next.Path != "/bursts" || q.Get("camera") != "D810" || q.Get("sort") != "oldest" || q.Get("page") != "1" {
 		t.Fatalf("Next link %v", next)
 	}
-	body = get(next.String())
+	body = get(t, h, next.String())
 	if c := strings.Count(body, `<section class="burst">`); c != 1 || strings.Contains(body, "Next →") || !strings.Contains(body, "← Previous") {
 		t.Fatalf("second page: %d bursts", c)
 	}
+	// an absurd page number is bounded: an empty page, not page one again
+	if body = get(t, h, "/bursts?page=9223372036854775807"); strings.Contains(body, `<section class="burst">`) || strings.Contains(body, "Next →") {
+		t.Fatal("huge page number wrapped around to real bursts")
+	}
+	body = get(t, h, next.String())
+	// oldest first: the last D810 burst comes last
+	if !strings.Contains(body, fmt.Sprintf(`/photo/%d"`, rs[92].Photo.ID)) {
+		t.Fatal("oldest-first order: the newest burst is not on the last page")
+	}
 }
 
-// The last reachable page offers no Next link (it would only reload itself).
-func TestBurstsLastPageHasNoNext(t *testing.T) {
-	defer func(n int) { maxBurstPage = n }(maxBurstPage)
-	maxBurstPage = 1
+// Duplicates: one stacked card per set of identical images, with the
+// Photos filters; the card opens the set's best copy.
+func TestDuplicatesPage(t *testing.T) {
 	s, cat, _ := newTestServer(t)
 	var rs []*store.Result
-	for i := 0; i < 3*(2*burstsPerPage+5); i++ { // more than two pages of bursts
-		rs = append(rs, &store.Result{Photo: store.Photo{Path: fmt.Sprintf("/l/%d.jpg", i), Size: 1, MTime: 1,
-			Fingerprint: fmt.Sprintf("%032x", i+1), CameraModel: "NIKON D810", TakenAt: 1_700_000_000 + int64(i/3)*3600 + int64(i%3),
-			Overall: 50, Version: store.SchemaVersion}})
+	for i, h := range []uint64{7, 7, 7, 9, 9, 11} {
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: fmt.Sprintf("/d/%d.jpg", i), Size: 1, MTime: 1,
+			Fingerprint: fmt.Sprintf("%032x", i+1), PHash: h, Overall: float64(10 * (i + 1)), Version: store.SchemaVersion}})
 	}
 	if err := cat.Store.Save(rs); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		u    string
-		next bool
-	}{{"/bursts", true}, {"/bursts?page=1", false}, {"/bursts?page=5", false}} {
-		rec := httptest.NewRecorder()
-		s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", tc.u, nil))
-		if has := strings.Contains(rec.Body.String(), "Next →"); has != tc.next {
-			t.Errorf("%s: Next link %v, want %v", tc.u, has, tc.next)
-		}
+	groupNow(t, cat)
+	h := s.Handler()
+	body := get(t, h, "/duplicates")
+	if c := strings.Count(body, `class="card stack"`); c != 2 {
+		t.Fatalf("%d sets, want 2: %.500s", c, body)
+	}
+	// best copy first: the 7s' best is /d/2, the 9s' /d/4; sorted by best
+	if a, b := strings.Index(body, fmt.Sprintf(`href="/photo/%d"`, rs[4].Photo.ID)), strings.Index(body, fmt.Sprintf(`href="/photo/%d"`, rs[2].Photo.ID)); a < 0 || b < 0 || a > b {
+		t.Fatalf("cards: best set first, opening its best copy (%d, %d)", a, b)
+	}
+	if !strings.Contains(body, `>3</span>`) || !strings.Contains(body, `name="sort"`) {
+		t.Fatal("no copy count, or no filters")
+	}
+	body = get(t, h, "/duplicates?min_overall=30")
+	if c := strings.Count(body, `class="card stack"`); c != 2 || !strings.Contains(body, `>1/3</span>`) {
+		t.Fatalf("filtered: %d sets; the 7s show 1 of 3 matching", c)
+	}
+	if body = get(t, h, "/duplicates?min_overall=55"); strings.Count(body, `class="card stack"`) != 0 {
+		t.Fatal("a set with no matching copy is listed")
+	}
+	// a copy's page lists every other copy, with its path
+	body = get(t, h, fmt.Sprintf("/photo/%d", rs[0].Photo.ID))
+	if !strings.Contains(body, "Identical copies (2 more)") || !strings.Contains(body, "/d/1.jpg") || !strings.Contains(body, "/d/2.jpg") {
+		t.Fatalf("photo page lacks its copies: %.300s", body[strings.Index(body, "</aside>"):])
+	}
+	if body = get(t, h, fmt.Sprintf("/photo/%d", rs[5].Photo.ID)); strings.Contains(body, "Identical copies") {
+		t.Fatal("a photo with no copies lists some")
 	}
 }
 
@@ -869,4 +912,31 @@ func TestYearRangeFilter(t *testing.T) {
 	if strings.Contains(get(t, h, "/"), `<option>2018</option>`) {
 		t.Error("a year without photos is still offered")
 	}
+}
+
+// When serving stops (here: the address is taken), the background work
+// (refreshes, regroups) has stopped before ListenAndServe returns, so the
+// caller can close the catalogue under it.
+func TestListenAndServeStopsBackgroundWork(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	rs := []*store.Result{{Photo: store.Photo{Path: "/x.jpg", Size: 1, MTime: 1, Fingerprint: fmt.Sprintf("%032x", 1), PHash: 7, Version: store.SchemaVersion}}}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err := s.ListenAndServe(l.Addr().String()); err == nil {
+		t.Fatal("served on a taken address")
+	}
+	done := make(chan struct{})
+	go func() { s.background.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("background work still running after ListenAndServe returned")
+	}
+	s.regroup(true) // after shutdown: does nothing
 }

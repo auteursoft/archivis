@@ -1,15 +1,13 @@
 {{define "content"}}
 {{template "filters" .}}
 <h1>Bursts &amp; sequences</h1>
-<p class="hint">Runs of 3+ frames from the same camera, taken within the chosen number of seconds of each other, newest first. The best frame (highest overall score) is first and outlined. Filters choose which frames count, so a quality filter leaves out the frames that fail it.</p>
-{{range .Data.Bursts}}
+<p class="hint">Runs of 3+ frames from the same camera, each within the burst gap of the last (set under Settings). The best frame (highest overall score) is first and outlined. A burst is listed if any frame matches the filters, with just the frames that match; Sort ranks bursts by their best frame (worst first: by their worst).</p>
+{{template "groupstate" .Data}}
+{{range .Data.Groups}}
 <section class="burst">
-  <h2>{{len .Photos}} frames · {{date (index .Photos 0).TakenAt}} · {{(index .Photos 0).CameraModel}}</h2>
+  <h2>{{if ne .Matching .Size}}{{.Matching}} of {{end}}{{.Size}} frames · {{date .Taken}}{{with .Camera}} · {{.}}{{end}}</h2>
   {{template "photogrid" .Photos}}
 </section>
-{{else}}<p class="empty">No bursts found{{if .Data.Page}} on this page{{end}} (bursts need EXIF capture times; filters may exclude frames).</p>{{end}}
-<div class="pager">
-  {{with .Data.Prev}}<a class="btn ghost" href="{{.}}">← Previous</a>{{end}}
-  {{with .Data.Next}}<a class="btn ghost" href="{{.}}">Next →</a>{{end}}
-</div>
+{{else}}<p class="empty">No bursts found{{if .Data.Page}} on this page{{end}}{{if .Data.Filtered}} with these filters{{end}} (bursts need EXIF capture times).</p>{{end}}
+{{template "grouppager" .Data}}
 {{end}}

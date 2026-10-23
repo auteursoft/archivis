@@ -51,6 +51,7 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, v, false, err.Error())
 		return
 	}
+	s.regroupInBackground(true)                                            // by the new rules
 	log.Printf("%s changed settings: burst gap %ds", rater(r), v.BurstGap) // account, --auth user or "local"
 	http.Redirect(w, r, "/admin/settings?saved=1", http.StatusSeeOther)
 }

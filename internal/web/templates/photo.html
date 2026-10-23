@@ -73,6 +73,9 @@
     </table>
   </aside>
 </div>
+{{with .Copies}}<h2>Identical copies ({{len .}} more)</h2>
+<ul class="copies">{{range .}}<li><a href="/photo/{{.ID}}">{{.Path}}</a></li>{{end}}</ul>
+{{template "photogrid" .}}{{end}}
 {{if .Similar}}<h2>Similar photos</h2>{{template "photogrid" .Similar}}{{end}}
 {{end}}
 {{end}}

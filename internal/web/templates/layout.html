@@ -57,6 +57,24 @@
 </div>
 {{end}}
 
+{{/* stackcard: one card for a group of photos (a stack of burst frames, a
+   set of identical images): its top photo, with a count and offset edges. */}}
+{{define "stackcard"}}{{$top := .Top}}
+<a class="card stack" href="/photo/{{$top.ID}}" title="{{$top.Path}}">
+  <img loading="lazy" src="/t/{{$top.Fingerprint}}.jpg" alt="{{base $top.Path}}">
+  <span class="badge {{scoreClass $top.Overall}}">{{f0 $top.Overall}}</span>
+  <span class="count" title="{{.Size}} photos{{if ne .Matching .Size}}, {{.Matching}} matching the filters{{end}}">{{if ne .Matching .Size}}{{.Matching}}/{{end}}{{.Size}}</span>
+  <span class="meta"><i>{{$top.Path}}</i></span>
+</a>
+{{end}}
+
+{{define "groupstate"}}{{if .Regrouping}}<p class="note">Bursts and identical images are being worked out now; this page fills in as they are.</p>{{else if .Stale}}<p class="note">Bursts and identical images are being worked out (for the first time, or by changed settings); this page shows the previous grouping until then.</p>{{end}}{{end}}
+
+{{define "grouppager"}}{{if .Partial}}<p class="note">These filters were checked against the first 200,000 groups in this order only; more may match further on. Narrow them (a year range, camera or person) to look further.</p>{{end}}<div class="pager">
+  {{with .Prev}}<a class="btn ghost" href="{{.}}">← Previous</a>{{end}}
+  {{with .Next}}<a class="btn ghost" href="{{.}}">Next →</a>{{end}}
+</div>{{end}}
+
 {{define "facepicker"}}
 <div class="facegrid picker">
 {{range .}}
@@ -85,11 +103,9 @@
    (a page's .Nav picks which). */}}
 {{define "filters"}}
 {{$p := .Params}}
-{{$bursts := eq .Nav "bursts"}}
 <form class="filters" method="get" action="{{$p.action}}">
   {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
-  {{if $bursts}}<label title="Frames this many seconds apart or closer count as one burst">Burst gap (s) <input type="number" name="gap" min="1" max="60" value="{{$p.gap}}" style="width:4em"></label>
-  {{else}}<label>Sort
+  <label>Sort
     <select name="sort">
       {{$sort := index $p "sort"}}{{if $.Query}}<option value="relevance" {{if or (eq $sort "") (eq $sort "relevance")}}selected{{end}}>Best match</option>{{end}}
       <option value="overall" {{if eq $p.sort "overall"}}selected{{end}}>Best overall</option>
@@ -102,7 +118,7 @@
       <option value="faces" {{if eq $p.sort "faces"}}selected{{end}}>Most faces</option>
       <option value="worst" {{if eq $p.sort "worst"}}selected{{end}}>Worst first (cull)</option>
     </select>
-  </label>{{end}}
+  </label>
   <label>Overall ≥ <input type="number" name="min_overall" min="0" max="100" step="5" value="{{$p.min_overall}}"></label>
   <label>Focus ≥
     <select name="min_focus">

@@ -283,6 +283,11 @@ func (s *Store) SetBlendedScores(updates []BlendUpdate) error {
 			return err
 		}
 	}
+	if len(updates) > 0 {
+		if err := markGroupsDirty(tx); err != nil { // groups rank by these scores
+			return err
+		}
+	}
 	return tx.Commit()
 }
 

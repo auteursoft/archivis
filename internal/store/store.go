@@ -68,7 +68,18 @@ CREATE TABLE IF NOT EXISTS photos (
 	version          INTEGER NOT NULL,
 	-- change counter: each Save takes the next value (see nextSeq), so a
 	-- reader can find everything saved since it last looked
-	seq              INTEGER NOT NULL DEFAULT 0
+	seq              INTEGER NOT NULL DEFAULT 0,
+	-- groups, worked out by RebuildGroups (groups.go), never by Save; 0 = none.
+	-- burst_id: the burst (photo_groups id) this frame belongs to.
+	-- stack_top: the best frame of this frame's stack of near-identical
+	-- frames (itself, for the top); stack_size: frames in that stack;
+	-- stacked: 1 for frames shown only through their stack's top.
+	-- dup_id: the set of identical images (same perceptual hash).
+	burst_id         INTEGER NOT NULL DEFAULT 0,
+	stack_top        INTEGER NOT NULL DEFAULT 0,
+	stack_size       INTEGER NOT NULL DEFAULT 0,
+	stacked          INTEGER NOT NULL DEFAULT 0,
+	dup_id           INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS photos_fp      ON photos(fingerprint);
 CREATE INDEX IF NOT EXISTS photos_taken   ON photos(taken_at);
@@ -76,6 +87,57 @@ CREATE INDEX IF NOT EXISTS photos_overall ON photos(overall);
 CREATE INDEX IF NOT EXISTS photos_phash   ON photos(phash);
 CREATE INDEX IF NOT EXISTS photos_burst   ON photos(taken_at, camera_make, camera_model);
 CREATE INDEX IF NOT EXISTS photos_seq     ON photos(seq);
+-- hidden stack members by their top (small: only stacked rows)
+CREATE INDEX IF NOT EXISTS photos_stacked ON photos(stack_top) WHERE stacked = 1;
+
+-- One row per burst (kind 1) or set of identical images (kind 2), with
+-- what pages sort by, so a page of groups is an index range, not an
+-- aggregation over every photo. id is the group's lowest member photo id.
+CREATE TABLE IF NOT EXISTS photo_groups (
+	kind          INTEGER NOT NULL,
+	id            INTEGER NOT NULL,
+	size          INTEGER NOT NULL,
+	start_at      INTEGER NOT NULL,
+	end_at        INTEGER NOT NULL,
+	oldest_at     INTEGER NOT NULL DEFAULT 0,
+	camera        TEXT NOT NULL DEFAULT '',
+	best_id       INTEGER NOT NULL,
+	best_overall  REAL NOT NULL,
+	min_overall   REAL NOT NULL,
+	max_technical REAL NOT NULL DEFAULT 0,
+	max_aesthetic REAL NOT NULL DEFAULT 0,
+	max_focus     REAL NOT NULL DEFAULT 0,
+	focus_sharp   REAL NOT NULL DEFAULT 0,
+	max_colorful  REAL NOT NULL DEFAULT 0,
+	max_faces     INTEGER NOT NULL DEFAULT 0,
+	faces_overall REAL NOT NULL DEFAULT 0,
+	members       TEXT NOT NULL,
+	PRIMARY KEY (kind, id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS photo_groups_overall   ON photo_groups(kind, best_overall);
+CREATE INDEX IF NOT EXISTS photo_groups_worst2    ON photo_groups(kind, min_overall, id DESC);
+CREATE INDEX IF NOT EXISTS photo_groups_end       ON photo_groups(kind, end_at);
+CREATE INDEX IF NOT EXISTS photo_groups_oldest    ON photo_groups(kind, oldest_at = 0, oldest_at, id DESC);
+CREATE INDEX IF NOT EXISTS photo_groups_technical ON photo_groups(kind, max_technical);
+CREATE INDEX IF NOT EXISTS photo_groups_aesthetic ON photo_groups(kind, max_aesthetic);
+CREATE INDEX IF NOT EXISTS photo_groups_focus     ON photo_groups(kind, max_focus, focus_sharp);
+CREATE INDEX IF NOT EXISTS photo_groups_colorful  ON photo_groups(kind, max_colorful);
+CREATE INDEX IF NOT EXISTS photo_groups_faces2    ON photo_groups(kind, max_faces, faces_overall);
+
+-- Grouped photos, for the rebuild to find any left over from an earlier,
+-- interrupted one (small: only photos in a group).
+CREATE INDEX IF NOT EXISTS photos_in_burst ON photos(burst_id) WHERE burst_id != 0;
+CREATE INDEX IF NOT EXISTS photos_in_dup   ON photos(dup_id) WHERE dup_id != 0;
+
+-- Deleting a stack's top shows its other frames again; any delete marks
+-- the groups for rebuilding (prune, cleanups), even of a photo not yet
+-- grouped: a rebuild under way may have read it already.
+CREATE TRIGGER IF NOT EXISTS photos_ungroup2 AFTER DELETE ON photos
+BEGIN
+	UPDATE photos SET stacked = 0, stack_top = 0, stack_size = 0 WHERE stacked = 1 AND stack_top = OLD.id;
+	INSERT OR REPLACE INTO meta (key, value)
+		VALUES ('groups_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'groups_dirty'), 0) + 1);
+END;
 
 -- CLIP embeddings live in their own table so that filtering and counting
 -- photos scans small rows (the 1 KB blobs made full scans ~7x slower).
@@ -217,6 +279,11 @@ func Open(path string) (*Store, error) {
 	}
 	// an earlier release created photos_burst with a different column order
 	db.Exec(`DROP INDEX IF EXISTS photos_burst_v1`)
+	// group sort indexes replaced by ones matching their ORDER BY exactly
+	for _, old := range []string{"photo_groups_worst", "photo_groups_start", "photo_groups_start2", "photo_groups_faces"} {
+		db.Exec(`DROP INDEX IF EXISTS ` + old)
+	}
+	db.Exec(`DROP TRIGGER IF EXISTS photos_ungroup`) // replaced by photos_ungroup2
 	var oldDef string
 	db.QueryRow(`SELECT sql FROM sqlite_master WHERE name = 'photos_burst'`).Scan(&oldDef)
 	if strings.Contains(oldDef, "camera_make, camera_model, taken_at") {
@@ -438,6 +505,13 @@ type Photo struct {
 	CLIP            []byte  // float16 embedding (stored in photo_clip; not filled by queries — see Store.CLIP)
 	IndexedAt       int64
 	Version         int
+
+	// Groups (read-only here: set by RebuildGroups, never by Save).
+	BurstID   int64 // the burst this frame belongs to (0 = none)
+	StackTop  int64 // best frame of this frame's stack (0 = not stacked)
+	StackSize int   // frames in that stack
+	Stacked   bool  // shown only through StackTop
+	DupID     int64 // the set of identical images (0 = none)
 }
 
 // Face is a detected face.
@@ -469,13 +543,19 @@ const photoCols = `id, path, size, mtime, fingerprint, format, width, height, ta
 	saturation, monochrome, noise, focus_score, exposure_score, color_score, noise_score,
 	technical, aesthetic, overall, face_count, blockiness, indexed_at, version`
 
+// readCols are photoCols plus the group columns. Reads use them; writes
+// (insertPhotoSQL, updatePhotoSQL) use photoCols, so saving a re-indexed
+// photo never resets its groups.
+const readCols = photoCols + `, burst_id, stack_top, stack_size, stacked, dup_id`
+
 func (p *Photo) scanArgs() []any {
 	return []any{&p.ID, &p.Path, &p.Size, &p.MTime, &p.Fingerprint, &p.Format, &p.Width, &p.Height, &p.TakenAt,
 		&p.CameraMake, &p.CameraModel, &p.Lens, &p.FocalLength, &p.Focal35, &p.FNumber, &p.ExposureTime, &p.ISO, &p.Flash,
 		&p.GPSLat, &p.GPSLon, &p.Artist, (*int64ptr)(&p.PHash), &p.Sharpness, &p.SharpnessGlobal, &p.FaceSharpness, &p.Brightness,
 		&p.Highlights, &p.Shadows, &p.DynamicRange, &p.Contrast, &p.CastA, &p.CastB, &p.CastStrength, &p.Colorfulness,
 		&p.Saturation, &p.Monochrome, &p.Noise, &p.FocusScore, &p.ExposureScore, &p.ColorScore, &p.NoiseScore,
-		&p.Technical, &p.Aesthetic, &p.Overall, &p.FaceCount, &p.Blockiness, &p.IndexedAt, &p.Version}
+		&p.Technical, &p.Aesthetic, &p.Overall, &p.FaceCount, &p.Blockiness, &p.IndexedAt, &p.Version,
+		&p.BurstID, &p.StackTop, &p.StackSize, &p.Stacked, &p.DupID}
 }
 
 // int64ptr lets a uint64 phash round-trip through SQLite's signed integers.
@@ -543,7 +623,7 @@ func (s *Store) ErrorFor(path string, size, mtime int64) (bool, error) {
 
 // ByFingerprint returns photos with the given content fingerprint.
 func (s *Store) ByFingerprint(fp string) ([]Photo, error) {
-	return s.queryPhotos(`SELECT `+photoCols+` FROM photos WHERE fingerprint = ?`, fp)
+	return s.queryPhotos(`SELECT `+readCols+` FROM photos WHERE fingerprint = ?`, fp)
 }
 
 func (s *Store) queryPhotos(q string, args ...any) ([]Photo, error) {
@@ -565,7 +645,7 @@ func (s *Store) queryPhotos(q string, args ...any) ([]Photo, error) {
 
 // Photo loads one photo by id.
 func (s *Store) Photo(id int64) (*Photo, error) {
-	ps, err := s.queryPhotos(`SELECT `+photoCols+` FROM photos WHERE id = ?`, id)
+	ps, err := s.queryPhotos(`SELECT `+readCols+` FROM photos WHERE id = ?`, id)
 	if err != nil || len(ps) == 0 {
 		return nil, err
 	}
@@ -580,7 +660,7 @@ func (s *Store) Photos(ids []int64) ([]Photo, error) {
 	byID := map[int64]Photo{}
 	for start := 0; start < len(ids); start += 500 {
 		chunk := ids[start:min(len(ids), start+500)]
-		q := `SELECT ` + photoCols + ` FROM photos WHERE id IN (` + placeholders(len(chunk)) + `)`
+		q := `SELECT ` + readCols + ` FROM photos WHERE id IN (` + placeholders(len(chunk)) + `)`
 		ps, err := s.queryPhotos(q, int64sToAny(chunk)...)
 		if err != nil {
 			return nil, err
