@@ -627,7 +627,7 @@ func TestThumbnailsHaveNames(t *testing.T) {
 // separate parameters, not escaped into one ("min_focus%3d0.7%26…").
 func TestPagerKeepsFilters(t *testing.T) {
 	s, _, _ := newTestServer(t)
-	req := httptest.NewRequest("GET", "/?min_focus=0.7&sort=newest&camera=Nikon+D810&page=1", nil)
+	req := httptest.NewRequest("GET", "/?min_focus=0.7&sort=newest&camera=Nikon+D810&year_from=2010&year_to=2015&page=1", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	body := rec.Body.String()
@@ -642,7 +642,7 @@ func TestPagerKeepsFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := u.Query()
-	if q.Get("min_focus") != "0.7" || q.Get("sort") != "newest" || q.Get("camera") != "Nikon D810" || q.Get("page") != "0" {
+	if q.Get("min_focus") != "0.7" || q.Get("sort") != "newest" || q.Get("camera") != "Nikon D810" || q.Get("year_from") != "2010" || q.Get("year_to") != "2015" || q.Get("page") != "0" {
 		t.Fatalf("Previous link %q lost the filters: %v", href, q)
 	}
 }
@@ -823,3 +823,50 @@ func TestRequestLogFirstStatus(t *testing.T) {
 }
 
 func atoiStatus(s string) int { n, _ := strconv.Atoi(strings.TrimSpace(s)); return n }
+
+// The year pickers: a range, an old single year= link, and a reversed pair.
+func TestYearRangeFilter(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	var rs []*store.Result
+	for i, y := range []int{2018, 2019, 2020, 2021} {
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: fmt.Sprintf("/y/%d.jpg", y), Size: 1, MTime: 1,
+			Fingerprint: fmt.Sprintf("%032x", i+1), TakenAt: store.YearStart(y) + 86400, Overall: 50, Version: store.SchemaVersion}})
+	}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	h := s.Handler()
+	for u, want := range map[string]string{
+		"/?year_from=2019&year_to=2020": "2019.jpg 2020.jpg",
+		"/?year_from=2020&year_to=2019": "2019.jpg 2020.jpg", // reversed
+		"/?year=2021":                   "2021.jpg",          // old links
+		"/?year_from=2020":              "2020.jpg 2021.jpg",
+	} {
+		body := get(t, h, u)
+		for _, y := range []string{"2018.jpg", "2019.jpg", "2020.jpg", "2021.jpg"} {
+			if strings.Contains(body, `alt="`+y+`"`) != strings.Contains(want, y) {
+				t.Errorf("%s: %s shown=%v", u, y, !strings.Contains(want, y))
+			}
+		}
+	}
+	// the pickers list the catalogue's years and keep the choice, also for year=
+	body := get(t, h, "/?year=2019")
+	for _, want := range []string{`name="year_from"`, `<option selected>2019</option>`, `<option>2021</option>`, `action="/"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("form lacks %q", want)
+		}
+	}
+	if strings.Contains(body, `name="year"`) {
+		t.Error("the old single year field is still there")
+	}
+	// deleting a year's photos (prune) leaves seq alone; the list catches up
+	if _, err := cat.Store.DB.Exec(`DELETE FROM photos WHERE path = '/y/2018.jpg'`); err != nil {
+		t.Fatal(err)
+	}
+	s.ymu.Lock()
+	s.yearsAt = time.Now().Add(-2 * time.Minute)
+	s.ymu.Unlock()
+	if strings.Contains(get(t, h, "/"), `<option>2018</option>`) {
+		t.Error("a year without photos is still offered")
+	}
+}

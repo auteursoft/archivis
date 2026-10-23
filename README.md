@@ -91,6 +91,7 @@ From the terminal:
 archivis search "firefighters at night" --min-focus 0.7
 archivis search --face portrait-of-alice.jpg --format paths
 archivis search --like reference.jpg --year 2019
+archivis list --year-from 2015 --year-to 2018 --sort aesthetic --limit 50   # a range of years
 archivis list --person "Alice Smith" --min-overall 70 --sort aesthetic --format csv > alice.csv
 archivis list --sort worst --limit 500 --format paths        # culling candidates
 archivis export --tag protest --min-focus 0.7 --min-exposure 0.8 --limit 300 ~/Desktop/protest-picks
