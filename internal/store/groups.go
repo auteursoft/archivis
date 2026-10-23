@@ -54,10 +54,12 @@ var scanPage = 50000
 // scanHook, if set (by tests), sees how many rows each burst-scan read got.
 var scanHook func(rows int)
 
-const (
-	writeBatch = 500 // rows per write transaction ...
-	writeSlice = 5 * time.Millisecond
-)
+// writeBatch is the most statements per write transaction (a variable so
+// tests can flush often) ...
+var writeBatch = 500
+
+// ... and writeSlice the most time.
+const writeSlice = 5 * time.Millisecond
 
 // GroupsStale reports whether the stored groups may be out of date: photos
 // changed or were deleted since, or the rules changed.
@@ -144,6 +146,12 @@ func (s *Store) RebuildGroups(ctx context.Context, o GroupOptions) (RebuildStats
 		return r.st, err
 	}
 	defer s.SetMeta("groups_running", "")
+	// Until this run finishes and stamps the groups current, they count as
+	// stale: a run that fails, is cancelled or dies partway (after some
+	// batches are written) leaves them to the next regroup to repair.
+	if err := s.SetMeta("groups_version", ""); err != nil {
+		return r.st, err
+	}
 
 	steps := []func() error{r.bursts, r.duplicates, r.deleteGone, r.resetOld}
 	for _, step := range steps {

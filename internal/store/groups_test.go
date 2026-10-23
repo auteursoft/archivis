@@ -660,7 +660,7 @@ func TestBatchWriterHoldsNoLockBetweenWrites(t *testing.T) {
 	}
 	var got int64
 	st.DB.QueryRow(`SELECT burst_id FROM photos WHERE id = ?`, rs[0].Photo.ID).Scan(&got)
-	if got != writeBatch+10 {
+	if got != int64(writeBatch+10) {
 		t.Fatalf("after commit burst_id = %d, want %d", got, writeBatch+10)
 	}
 	w.exec(`UPDATE photos SET burst_id = 1 WHERE id = ?`, rs[0].Photo.ID)
@@ -669,7 +669,7 @@ func TestBatchWriterHoldsNoLockBetweenWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.DB.QueryRow(`SELECT burst_id FROM photos WHERE id = ?`, rs[0].Photo.ID).Scan(&got)
-	if got != writeBatch+10 {
+	if got != int64(writeBatch+10) {
 		t.Fatal("a rolled-back write landed")
 	}
 }
@@ -720,4 +720,47 @@ func TestFloodsAreReadInPages(t *testing.T) {
 	if again, _ := st.RebuildGroups(context.Background(), o); again.PhotoWrites != 0 || again.GroupWrites != 0 {
 		t.Fatalf("second rebuild wrote: %s", again)
 	}
+}
+
+// A rebuild that stops partway, after some of its writes have landed,
+// leaves the groups stale (even if they were current before), so the next
+// regroup repairs them.
+func TestInterruptedRebuildLeavesGroupsStale(t *testing.T) {
+	st, ps := groupFixture(t)
+	o := GroupOptions{Gap: 3, Hamming: 6}
+	defer func(n, b int) { scanPage, writeBatch = n, b }(scanPage, writeBatch)
+	scanPage, writeBatch = 11, 3 // flush often
+	total := 0 // burst-scan reads in a whole run
+	scanHook = func(int) { total++ }
+	defer func() { scanHook = nil }()
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	// cancel on the scan's last read: the bursts' writes then land, and the
+	// next phase stops
+	ctx, cancel := context.WithCancel(context.Background())
+	reads := 0
+	scanHook = func(int) {
+		if reads++; reads == total {
+			cancel()
+		}
+	}
+	// new rules, so the run has writes to make before it is cancelled
+	stats, err := st.RebuildGroups(ctx, GroupOptions{Gap: 20, Hamming: 10})
+	if err == nil {
+		t.Fatal("the cancelled rebuild succeeded")
+	}
+	if stats.PhotoWrites == 0 {
+		t.Fatal("cancelled before any write: the test proves nothing")
+	}
+	for _, rules := range []GroupOptions{o, {Gap: 20, Hamming: 10}} {
+		if !st.GroupsStale(rules) {
+			t.Fatalf("groups look current under %+v after an interrupted rebuild", rules)
+		}
+	}
+	scanHook = nil
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	compareGroups(t, storedGroups(t, st), referenceGroups(ps, o.Gap, o.Hamming))
 }
