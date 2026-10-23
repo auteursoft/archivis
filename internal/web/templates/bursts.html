@@ -5,7 +5,7 @@
 {{template "groupstate" .Data}}
 {{range .Data.Groups}}
 <section class="burst">
-  <h2>{{if ne (len .Photos) .Size}}{{len .Photos}} of {{end}}{{.Size}} frames · {{date .Taken}}{{with .Camera}} · {{.}}{{end}}</h2>
+  <h2>{{if ne .Matching .Size}}{{.Matching}} of {{end}}{{.Size}} frames · {{date .Taken}}{{with .Camera}} · {{.}}{{end}}</h2>
   {{template "photogrid" .Photos}}
 </section>
 {{else}}<p class="empty">No bursts found{{if .Data.Page}} on this page{{end}}{{if .Data.Filtered}} with these filters{{end}} (bursts need EXIF capture times).</p>{{end}}

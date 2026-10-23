@@ -707,13 +707,23 @@ func (r *rebuild) resetOld() error {
 		return out
 	}
 	leftBurst, leftDup := gone(inBurst, newBurst), gone(inDup, newDup)
-	for _, id := range leftBurst {
+	for i, id := range leftBurst {
+		if i%writeBatch == 0 {
+			if err := r.ctx.Err(); err != nil {
+				return err // stop between batches; RebuildGroups drops the rest
+			}
+		}
 		if err := r.w.exec(`UPDATE photos SET burst_id = 0, stack_top = 0, stack_size = 0, stacked = 0 WHERE id = ?`, id); err != nil {
 			return err
 		}
 		r.st.PhotoWrites++
 	}
-	for _, id := range leftDup {
+	for i, id := range leftDup {
+		if i%writeBatch == 0 {
+			if err := r.ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if err := r.w.exec(`UPDATE photos SET dup_id = 0 WHERE id = ?`, id); err != nil {
 			return err
 		}
@@ -816,19 +826,20 @@ type GroupPageInfo struct {
 
 // Group is a burst or a set of identical images, as a page shows it.
 type Group struct {
-	Kind    int
-	ID      int64
-	Size    int // members in all
-	StartAt int64
-	EndAt   int64
-	Camera  string
-	Members []Photo // the members matching the page's filter, best first
+	Kind     int
+	ID       int64
+	Size     int // members in all
+	StartAt  int64
+	EndAt    int64
+	Camera   string
+	Members  []Photo // the members matching the page's filter, best first (only the best, for a summary)
+	Matching int     // how many members match the filter (all, without one)
 }
 
 // GroupMembers returns every member of a group, best first (nil if the
 // group is gone).
 func (s *Store) GroupMembers(kind int, id int64) ([]Photo, error) {
-	gs, err := s.loadGroups(kind, []int64{id}, "", nil)
+	gs, err := s.loadGroups(kind, []int64{id}, "", nil, false)
 	if err != nil || len(gs) == 0 {
 		return nil, err
 	}
@@ -875,7 +886,7 @@ var maxGroupWalk = 200000 // a variable so tests can reach it
 // group's best (or, for "worst", worst) member, and whether more follow.
 // With a filter, a group is listed if any member matches, with only its
 // matching members.
-func (s *Store) GroupPage(kind int, f Filter, minSize int) ([]Group, GroupPageInfo, error) {
+func (s *Store) GroupPage(kind int, f Filter, minSize int, summary bool) ([]Group, GroupPageInfo, error) {
 	var info GroupPageInfo
 	limit := max(1, f.Limit)
 	offset := max(0, f.Offset)
@@ -904,7 +915,7 @@ func (s *Store) GroupPage(kind int, f Filter, minSize int) ([]Group, GroupPageIn
 	if info.More {
 		ids = ids[:limit]
 	}
-	groups, err := s.loadGroups(kind, ids, where, args)
+	groups, err := s.loadGroups(kind, ids, where, args, summary)
 	return groups, info, err
 }
 
@@ -1094,29 +1105,33 @@ func (s *Store) matching(ids []int64, where string, args []any) (map[int64]bool,
 }
 
 // loadGroups loads groups by id, in order, with their members matching the
-// filter (all members without one), best first.
-func (s *Store) loadGroups(kind int, ids []int64, where string, args []any) ([]Group, error) {
+// filter (all members without one), best first. A summary loads only the
+// best matching member (with the count), so a set of thousands of copies
+// costs one photo's details.
+func (s *Store) loadGroups(kind int, ids []int64, where string, args []any, summary bool) ([]Group, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := s.DB.Query(`SELECT id, size, start_at, end_at, camera, members FROM photo_groups WHERE kind = ? AND id IN (`+
+	rows, err := s.DB.Query(`SELECT id, size, start_at, end_at, camera, best_id, members FROM photo_groups WHERE kind = ? AND id IN (`+
 		placeholders(len(ids))+`)`, append([]any{kind}, int64sToAny(ids)...)...)
 	if err != nil {
 		return nil, err
 	}
 	byID := map[int64]*Group{}
 	members := map[int64][]int64{}
+	best := map[int64]int64{} // group -> its best member
 	var all []int64
 	for rows.Next() {
 		g := &Group{Kind: kind}
 		var m string
-		if err := rows.Scan(&g.ID, &g.Size, &g.StartAt, &g.EndAt, &g.Camera, &m); err != nil {
+		var b int64
+		if err := rows.Scan(&g.ID, &g.Size, &g.StartAt, &g.EndAt, &g.Camera, &b, &m); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		var ms []int64
 		json.Unmarshal([]byte(m), &ms)
-		byID[g.ID], members[g.ID] = g, ms
+		byID[g.ID], members[g.ID], best[g.ID] = g, ms, b
 		all = append(all, ms...)
 	}
 	rows.Close()
@@ -1128,12 +1143,30 @@ func (s *Store) loadGroups(kind int, ids []int64, where string, args []any) ([]G
 		if keep, err = s.matching(all, where, args); err != nil {
 			return nil, err
 		}
-		all = all[:0] // load only the members shown: a big set may match in one photo
+	}
+	// the members whose details to load
+	var load []int64
+	switch {
+	case summary && keep == nil:
+		for _, b := range best {
+			load = append(load, b)
+		}
+	case summary:
+		// the best matching member of each group, from scores alone
+		if best, err = s.bestOf(members, keep); err != nil {
+			return nil, err
+		}
+		for _, b := range best {
+			load = append(load, b)
+		}
+	case keep == nil:
+		load = all
+	default:
 		for id := range keep {
-			all = append(all, id)
+			load = append(load, id)
 		}
 	}
-	ps, err := s.Photos(all)
+	ps, err := s.Photos(load)
 	if err != nil {
 		return nil, err
 	}
@@ -1148,6 +1181,12 @@ func (s *Store) loadGroups(kind int, ids []int64, where string, args []any) ([]G
 			continue
 		}
 		for _, m := range members[id] {
+			if keep == nil || keep[m] {
+				g.Matching++
+			}
+			if summary && m != best[id] {
+				continue
+			}
 			if p, ok := photo[m]; ok && (keep == nil || keep[m]) {
 				g.Members = append(g.Members, p)
 			}
@@ -1161,6 +1200,49 @@ func (s *Store) loadGroups(kind int, ids []int64, where string, args []any) ([]G
 		})
 		if len(g.Members) > 0 {
 			out = append(out, *g)
+		}
+	}
+	return out, nil
+}
+
+// bestOf returns each group's best member among those kept (highest
+// overall, then lowest id), reading only ids and scores.
+func (s *Store) bestOf(members map[int64][]int64, keep map[int64]bool) (map[int64]int64, error) {
+	var ids []int64
+	for id := range keep {
+		ids = append(ids, id)
+	}
+	score := make(map[int64]float64, len(ids))
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(len(ids), start+500)]
+		rows, err := s.DB.Query(`SELECT id, COALESCE(overall, 0) FROM photos WHERE id IN (`+placeholders(len(chunk))+`)`, int64sToAny(chunk)...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			var o float64
+			if err := rows.Scan(&id, &o); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			score[id] = o
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	out := map[int64]int64{}
+	for g, ms := range members {
+		for _, m := range ms {
+			o, ok := score[m]
+			if !ok || !keep[m] {
+				continue
+			}
+			if b, has := out[g]; !has || o > score[b] || (o == score[b] && m < b) {
+				out[g] = m
+			}
 		}
 	}
 	return out, nil

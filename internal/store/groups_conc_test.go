@@ -42,7 +42,7 @@ func TestGroupPagesConcurrentNoDeadlock(t *testing.T) {
 				for range 3 {
 					for _, f := range []Filter{{Limit: 5}, {Limit: 5, MinOverall: 100}, {Limit: 5, Tag: "x"}} {
 						for _, kind := range []int{GroupBurst, GroupDuplicate} {
-							if _, _, err := st.GroupPage(kind, f, 2); err != nil {
+							if _, _, err := st.GroupPage(kind, f, 2, false); err != nil {
 								t.Error(err)
 							}
 						}

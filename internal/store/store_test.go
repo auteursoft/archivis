@@ -215,7 +215,7 @@ func TestBursts(t *testing.T) {
 	if _, err := st.RebuildGroups(context.Background(), GroupOptions{Gap: 3, Hamming: 6}); err != nil {
 		t.Fatal(err)
 	}
-	bs, _, err := st.GroupPage(GroupBurst, Filter{Limit: 10}, 3)
+	bs, _, err := st.GroupPage(GroupBurst, Filter{Limit: 10}, 3, false)
 	if err != nil {
 		t.Fatal(err)
 	}

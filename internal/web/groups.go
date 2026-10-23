@@ -64,19 +64,21 @@ type groupPage struct {
 	title   string
 	minSize int // members a group needs to be listed
 	perPage int
+	summary bool // a card per group: load only its best shown member
 }
 
 var (
-	burstsPage     = groupPage{store.GroupBurst, "/bursts", "Bursts", 3, 30}
-	duplicatesPage = groupPage{store.GroupDuplicate, "/duplicates", "Duplicates", 2, 48}
+	burstsPage     = groupPage{store.GroupBurst, "/bursts", "Bursts", 3, 30, false}
+	duplicatesPage = groupPage{store.GroupDuplicate, "/duplicates", "Duplicates", 2, 48, true}
 )
 
 type groupView struct {
-	ID     int64
-	Size   int // members in all
-	Taken  int64
-	Camera string
-	Photos []catalog.PhotoHit // the members shown (matching the filters), best first
+	ID       int64
+	Size     int // members in all
+	Matching int // members matching the filters
+	Taken    int64
+	Camera   string
+	Photos   []catalog.PhotoHit // the members shown (matching the filters), best first
 }
 
 // Top is the group's best shown member.
@@ -103,7 +105,7 @@ func (s *Server) handleGroups(gp groupPage) http.HandlerFunc {
 		pg = min(max(pg, 0), maxPage) // bounded, as on the Photos page: no overflow, no huge offsets
 		f.Offset, f.Limit = pg*gp.perPage, gp.perPage
 		st := s.cat.Store
-		gs, info, err := st.GroupPage(gp.kind, f, gp.minSize)
+		gs, info, err := st.GroupPage(gp.kind, f, gp.minSize, gp.summary)
 		d := &groupsData{Page: pg, Filtered: f.Restricts(), Regrouping: st.GroupsRebuilding(), Partial: info.Partial}
 		if !d.Regrouping {
 			// never grouped, or the rules changed: say so, and group at once
@@ -118,7 +120,7 @@ func (s *Server) handleGroups(gp groupPage) http.HandlerFunc {
 			d.Prev = pageLink(r, gp.path, pg-1)
 		}
 		for _, g := range gs {
-			v := groupView{ID: g.ID, Size: g.Size, Taken: g.StartAt, Camera: g.Camera}
+			v := groupView{ID: g.ID, Size: g.Size, Matching: g.Matching, Taken: g.StartAt, Camera: g.Camera}
 			for _, ph := range g.Members {
 				v.Photos = append(v.Photos, catalog.PhotoHit{Photo: ph})
 			}

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -321,7 +322,8 @@ func runIndex(g *globals, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer unlock()
+	release := sync.OnceFunc(unlock)
+	defer release()
 	eng, err := g.engines(need{faces: !*noFaces, clip: true}, *workers)
 	if err != nil {
 		return err
@@ -357,6 +359,7 @@ func runIndex(g *globals, args []string) error {
 		}
 	}
 	if ctx.Err() == nil {
+		release() // indexing is done: another index run may start while this regroups
 		regroup(ctx, g.data, cat.Store)
 	}
 	st, _ := cat.Store.Stats()

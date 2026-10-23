@@ -63,7 +63,7 @@
 <a class="card stack" href="/photo/{{$top.ID}}" title="{{$top.Path}}">
   <img loading="lazy" src="/t/{{$top.Fingerprint}}.jpg" alt="{{base $top.Path}}">
   <span class="badge {{scoreClass $top.Overall}}">{{f0 $top.Overall}}</span>
-  <span class="count" title="{{.Size}} photos{{if ne (len .Photos) .Size}}, {{len .Photos}} matching the filters{{end}}">{{if ne (len .Photos) .Size}}{{len .Photos}}/{{end}}{{.Size}}</span>
+  <span class="count" title="{{.Size}} photos{{if ne .Matching .Size}}, {{.Matching}} matching the filters{{end}}">{{if ne .Matching .Size}}{{.Matching}}/{{end}}{{.Size}}</span>
   <span class="meta"><i>{{$top.Path}}</i></span>
 </a>
 {{end}}

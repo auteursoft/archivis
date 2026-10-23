@@ -358,7 +358,7 @@ func TestGroupPage(t *testing.T) {
 					f.Sort, f.Limit = so, 7
 					for page := 0; ; page++ {
 						f.Offset = page * f.Limit
-						gs, more, err := st.GroupPage(kind, f, minSize)
+						gs, more, err := st.GroupPage(kind, f, minSize, false)
 						if err != nil {
 							t.Fatalf("%s: %v", name, err)
 						}
@@ -368,8 +368,21 @@ func TestGroupPage(t *testing.T) {
 							for _, m := range g.Members {
 								ids = append(ids, m.ID)
 							}
-							if !reflect.DeepEqual(ids, wantMembers[g.ID]) {
-								t.Fatalf("%s: group %d members %v, want %v", name, g.ID, ids, wantMembers[g.ID])
+							if !reflect.DeepEqual(ids, wantMembers[g.ID]) || g.Matching != len(ids) {
+								t.Fatalf("%s: group %d members %v (matching %d), want %v", name, g.ID, ids, g.Matching, wantMembers[g.ID])
+							}
+						}
+						// a summary page: the same groups, each with only its best
+						// matching member and the count
+						sum, _, err := st.GroupPage(kind, f, minSize, true)
+						if err != nil || len(sum) != len(gs) {
+							t.Fatalf("%s: summary %d groups, %v", name, len(sum), err)
+						}
+						for i, g := range sum {
+							w := wantMembers[g.ID]
+							if g.ID != gs[i].ID || len(g.Members) != 1 || g.Members[0].ID != w[0] || g.Matching != len(w) {
+								t.Fatalf("%s: summary of group %d: %d members, first %d, matching %d; want %d of %d", name, g.ID,
+									len(g.Members), g.Members[0].ID, g.Matching, w[0], len(w))
 							}
 						}
 						if !more.More {
@@ -399,12 +412,12 @@ func TestGroupPagePartial(t *testing.T) {
 	}
 	defer func(n int) { maxGroupWalk = n }(maxGroupWalk)
 	maxGroupWalk = 5
-	_, info, err := st.GroupPage(GroupBurst, Filter{Limit: 10, MinOverall: 1000}, 2) // matches nothing
+	_, info, err := st.GroupPage(GroupBurst, Filter{Limit: 10, MinOverall: 1000}, 2, false) // matches nothing
 	if err != nil || !info.Partial || info.More {
 		t.Fatalf("stopped at the limit: %+v %v", info, err)
 	}
 	maxGroupWalk = 1 << 30
-	if _, info, _ = st.GroupPage(GroupBurst, Filter{Limit: 10, MinOverall: 1000}, 2); info.Partial {
+	if _, info, _ = st.GroupPage(GroupBurst, Filter{Limit: 10, MinOverall: 1000}, 2, false); info.Partial {
 		t.Fatal("partial though every group was checked")
 	}
 }
@@ -465,7 +478,7 @@ func TestGroupSortTieBreaks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, sort := range []string{"sharpness", "faces"} {
-		gs, _, err := st.GroupPage(GroupDuplicate, Filter{Sort: sort, Limit: 10}, 2)
+		gs, _, err := st.GroupPage(GroupDuplicate, Filter{Sort: sort, Limit: 10}, 2, false)
 		if err != nil || len(gs) != 2 {
 			t.Fatalf("%s: %d groups, %v", sort, len(gs), err)
 		}
@@ -594,7 +607,7 @@ func TestOldestIgnoresUndatedMembers(t *testing.T) {
 	if _, err := st.RebuildGroups(context.Background(), GroupOptions{Gap: 3, Hamming: 6}); err != nil {
 		t.Fatal(err)
 	}
-	gs, _, err := st.GroupPage(GroupDuplicate, Filter{Sort: "oldest", Limit: 10}, 2)
+	gs, _, err := st.GroupPage(GroupDuplicate, Filter{Sort: "oldest", Limit: 10}, 2, false)
 	if err != nil || len(gs) != 3 {
 		t.Fatalf("%d groups, %v", len(gs), err)
 	}
@@ -655,5 +668,30 @@ func TestBatchWriterHoldsNoLockBetweenWrites(t *testing.T) {
 	st.DB.QueryRow(`SELECT burst_id FROM photos WHERE id = ?`, rs[0].Photo.ID).Scan(&got)
 	if got != writeBatch+10 {
 		t.Fatal("a rolled-back write landed")
+	}
+}
+
+// Cleanup stops when the rebuild is cancelled, and the groups stay stale.
+func TestResetOldStopsWhenCancelled(t *testing.T) {
+	st, _ := groupFixture(t)
+	o := GroupOptions{Gap: 3, Hamming: 6}
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	// new rules leave memberships to clear; cancel before the cleanup
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &rebuild{s: st, ctx: ctx, o: GroupOptions{Gap: 1, Hamming: 0}, w: &batchWriter{s: st}}
+	cancel()
+	if err := r.resetOld(); err != context.Canceled {
+		t.Fatalf("resetOld after cancel: %v", err)
+	}
+	if r.st.PhotoWrites != 0 {
+		t.Fatalf("%d writes queued after cancel", r.st.PhotoWrites)
+	}
+	if _, err := st.RebuildGroups(ctx, GroupOptions{Gap: 1, Hamming: 0}); err == nil {
+		t.Fatal("a cancelled rebuild succeeded")
+	}
+	if !st.GroupsStale(GroupOptions{Gap: 1, Hamming: 0}) {
+		t.Fatal("a cancelled rebuild left the groups looking current")
 	}
 }
