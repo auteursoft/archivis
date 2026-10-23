@@ -940,3 +940,46 @@ func TestListenAndServeStopsBackgroundWork(t *testing.T) {
 	}
 	s.regroup(true) // after shutdown: does nothing
 }
+
+// The Photos page shows a stack of near-identical burst frames as one card,
+// its best frame with the count; with stacking off, every frame. A frame's
+// page lists the rest of its stack.
+func TestPhotosPageStacks(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	var rs []*store.Result
+	for i, o := range []float64{70, 90, 60, 80} {
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: fmt.Sprintf("/st/%d.jpg", i), Size: 1, MTime: 1,
+			Fingerprint: fmt.Sprintf("%032x", i+1), CameraModel: "CAM", TakenAt: 1_700_000_000 + int64(i),
+			PHash: 0xF0F0F0F0F0F0F0F0 ^ uint64(i), Overall: o, Version: store.SchemaVersion}})
+	}
+	rs = append(rs, &store.Result{Photo: store.Photo{Path: "/st/single.jpg", Size: 1, MTime: 1,
+		Fingerprint: fmt.Sprintf("%032x", 9), Overall: 40, Version: store.SchemaVersion}})
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	groupNow(t, cat)
+	h := s.Handler()
+	body := get(t, h, "/")
+	if n := strings.Count(body, `href="/photo/`); n != 2 || strings.Count(body, `class="card stack"`) != 1 ||
+		!strings.Contains(body, `title="4 near-identical frames">4</span>`) || !strings.Contains(body, "5 photos <small") {
+		t.Fatalf("stacked page: %d cards: %.400s", n, body[strings.Index(body, `<h1 class="summary"`):])
+	}
+	if !strings.Contains(body, fmt.Sprintf(`href="/photo/%d"`, rs[1].Photo.ID)) {
+		t.Fatal("the stack's card is not its best frame")
+	}
+	// a frame's page lists the others
+	page := get(t, h, fmt.Sprintf("/photo/%d", rs[2].Photo.ID))
+	if !strings.Contains(page, "Other frames in this stack (3)") || !strings.Contains(page, fmt.Sprintf(`href="/photo/%d"`, rs[1].Photo.ID)) {
+		t.Fatal("photo page lacks its stack")
+	}
+	// stacking off: every frame, no stack cards
+	v := cat.Store.GetSettings()
+	v.StackBursts = false
+	if err := cat.Store.SetSettings(v); err != nil {
+		t.Fatal(err)
+	}
+	body = get(t, h, "/")
+	if n := strings.Count(body, `href="/photo/`); n != 5 || strings.Contains(body, `class="card stack"`) {
+		t.Fatalf("unstacked page: %d cards", n)
+	}
+}

@@ -29,9 +29,8 @@ const (
 )
 
 // settingKeys are the settings' names, as `archivis settings` and the meta
-// table use them. Only settings something reads are listed; the stacking
-// ones join when stacking does.
-var settingKeys = []string{"burst_gap"}
+// table use them.
+var settingKeys = []string{"burst_gap", "stack_bursts", "stack_hamming"}
 
 // SettingNames lists the settings' names.
 func SettingNames() []string { return append([]string(nil), settingKeys...) }

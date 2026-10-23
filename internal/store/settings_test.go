@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -24,8 +25,16 @@ func TestSettings(t *testing.T) {
 	if got := st.GetSettings(); got.BurstGap != 5 {
 		t.Fatalf("round trip: %+v", got)
 	}
-	if names := SettingNames(); len(names) != 1 || names[0] != "burst_gap" {
+	if names := strings.Join(SettingNames(), " "); names != "burst_gap stack_bursts stack_hamming" {
 		t.Fatalf("settings offered: %v", names)
+	}
+	// stacking settings round-trip too
+	v.StackBursts, v.StackHamming = false, 9
+	if err := st.SetSettings(v); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.GetSettings(); got.StackBursts || got.StackHamming != 9 {
+		t.Fatalf("stacking round trip: %+v", got)
 	}
 
 	// out of range or malformed values are refused and change nothing

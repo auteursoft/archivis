@@ -303,6 +303,27 @@ func (c *Catalog) PhotoOfFace(faceID int64) int64 {
 type PhotoHit struct {
 	store.Photo
 	Score float32
+	Stack int // frames in the stack this card stands for (0: one photo)
+}
+
+// CollapseStacks keeps the first hit of each stack of near-identical burst
+// frames, marked with the stack's size, and drops the rest.
+func CollapseStacks(hits []PhotoHit) []PhotoHit {
+	seen := map[int64]bool{}
+	out := hits[:0:0]
+	for _, h := range hits {
+		if h.StackTop == 0 || h.StackSize < 2 {
+			out = append(out, h)
+			continue
+		}
+		if seen[h.StackTop] {
+			continue
+		}
+		seen[h.StackTop] = true
+		h.Stack = h.StackSize
+		out = append(out, h)
+	}
+	return out
 }
 
 // filtered runs a vector search and applies the SQL filter to the hits.
@@ -332,7 +353,7 @@ func (c *Catalog) filtered(hits []vindex.Hit, f store.Filter, k int) ([]PhotoHit
 	}
 	out := make([]PhotoHit, len(ps))
 	for i, p := range ps {
-		out[i] = PhotoHit{p, score[p.ID]}
+		out[i] = PhotoHit{Photo: p, Score: score[p.ID]}
 	}
 	return out, nil
 }
@@ -550,7 +571,7 @@ func (c *Catalog) SearchFacePhotos(q []float32, f store.Filter, k int, minScore 
 			}
 			out := make([]PhotoHit, len(ps))
 			for i, p := range ps {
-				out[i] = PhotoHit{p, best[p.ID]}
+				out[i] = PhotoHit{Photo: p, Score: best[p.ID]}
 			}
 			sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 			return out, nil

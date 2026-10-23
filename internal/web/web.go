@@ -492,6 +492,7 @@ type browseData struct {
 	Page     int
 	HasMore  bool
 	Searched bool
+	Stacked  bool // near-identical burst frames show as one card
 	// Prev and Next are the pager links, with every filter kept. They are
 	// built here: a query string put into the template as text would be
 	// escaped into a single parameter, and the filters lost.
@@ -583,9 +584,10 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	s.filterForm(r, p, "/")
 	d := &browseData{Page: f.Offset / f.Limit}
 	pageURL := func(n int) template.URL { return pageLink(r, "/", n) }
+	stacking := s.cat.Store.GetSettings().StackBursts
 	if text != "" {
 		d.Searched = true
-		hits, err := s.cat.SearchText(text, f, f.Offset+f.Limit)
+		hits, err := s.searchStacked(text, f, f.Offset+f.Limit, stacking)
 		if err != nil {
 			p.Error = err.Error()
 		} else {
@@ -600,15 +602,21 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 			d.HasMore = len(hits) == f.Limit
 		}
 	} else {
-		ps, total, err := s.cat.Store.Browse(f)
+		f.Stacked = stacking
+		d.Stacked = stacking
+		ps, total, more, err := s.cat.Store.BrowsePage(f)
 		if err != nil {
 			p.Error = err.Error()
 		}
 		for _, ph := range ps {
-			d.Photos = append(d.Photos, catalog.PhotoHit{Photo: ph})
+			hit := catalog.PhotoHit{Photo: ph}
+			if stacking && ph.StackTop == ph.ID && ph.StackSize > 1 {
+				hit.Stack = ph.StackSize
+			}
+			d.Photos = append(d.Photos, hit)
 		}
 		d.Total = total
-		d.HasMore = f.Offset+len(ps) < total
+		d.HasMore = more
 	}
 	if d.Page > 0 {
 		d.Prev = pageURL(d.Page - 1)
@@ -618,6 +626,25 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 	p.Data = d
 	s.render(w, r, "browse", p)
+}
+
+// searchStacked returns the best n hits for a text search; with stacking,
+// a stack of near-identical frames counts once (its best-matching frame,
+// marked with the stack's size), widening the search to still fill n.
+func (s *Server) searchStacked(text string, f store.Filter, n int, stacking bool) ([]catalog.PhotoHit, error) {
+	if !stacking {
+		return s.cat.SearchText(text, f, n)
+	}
+	for k := n * 2; ; k *= 2 {
+		hits, err := s.cat.SearchText(text, f, k)
+		if err != nil {
+			return nil, err
+		}
+		got := catalog.CollapseStacks(hits)
+		if len(got) >= n || len(hits) < k || k >= n*32 {
+			return got[:min(len(got), n)], nil
+		}
+	}
 }
 
 type faceView struct {
@@ -633,6 +660,7 @@ type photoData struct {
 	Tags    []store.Tag
 	Similar []catalog.PhotoHit
 	Copies  []catalog.PhotoHit // the other photos with the identical image (its Duplicates set)
+	Stack   []catalog.PhotoHit // the other frames of its stack of near-identical burst frames
 	Metrics []metricRow
 	Cast    string
 	// Feedback is this viewer's latest judgement of the aesthetic score.
@@ -668,6 +696,15 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	d.Similar, err = s.cat.SimilarPhotos(id, store.Filter{}, 12)
 	if _, has := s.cat.PhotoIndex().Vector(id); has { // no embedding is not a failure
 		errs.note("similar photos", err)
+	}
+	if ph.StackTop != 0 {
+		frames, err := s.cat.Store.StackMembers(ph.StackTop)
+		errs.note("stack", err)
+		for _, f := range frames {
+			if f.ID != id {
+				d.Stack = append(d.Stack, catalog.PhotoHit{Photo: f})
+			}
+		}
 	}
 	if ph.DupID != 0 {
 		copies, err := s.cat.Store.GroupMembers(store.GroupDuplicate, ph.DupID)

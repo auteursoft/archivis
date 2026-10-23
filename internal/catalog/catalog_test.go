@@ -549,3 +549,20 @@ func TestRefreshDuringIndexingDoesNotRebuild(t *testing.T) {
 		t.Fatalf("after a deletion the photo index has %d, want 10", got)
 	}
 }
+
+// Search results keep one hit per stack (the first, best-matching one),
+// marked with the stack's size; photos outside stacks are untouched.
+func TestCollapseStacks(t *testing.T) {
+	hit := func(id, top int64, size int) PhotoHit {
+		return PhotoHit{Photo: store.Photo{ID: id, StackTop: top, StackSize: size}}
+	}
+	got := CollapseStacks([]PhotoHit{hit(3, 1, 3), hit(9, 0, 0), hit(1, 1, 3), hit(5, 5, 2), hit(2, 1, 3), hit(6, 5, 2)})
+	var ids []int64
+	var stacks []int
+	for _, h := range got {
+		ids, stacks = append(ids, h.ID), append(stacks, h.Stack)
+	}
+	if fmt.Sprint(ids) != "[3 9 5]" || fmt.Sprint(stacks) != "[3 0 2]" {
+		t.Fatalf("collapsed to %v (stacks %v)", ids, stacks)
+	}
+}
