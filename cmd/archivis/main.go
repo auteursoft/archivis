@@ -456,6 +456,8 @@ func filterFlags(fs *flag.FlagSet) *store.Filter {
 	fs.StringVar(&f.Faces, "faces", "", "any | none | 1 | group")
 	fs.StringVar(&f.Mono, "mono", "", "only | exclude black & white")
 	fs.IntVar(&f.Year, "year", 0, "year taken")
+	fs.IntVar(&f.YearFrom, "year-from", 0, "taken in this year or later")
+	fs.IntVar(&f.YearTo, "year-to", 0, "taken in this year or earlier")
 	fs.StringVar(&f.Sort, "sort", "overall", "overall|technical|aesthetic|sharpness|newest|oldest|colorful|faces|worst|path")
 	fs.IntVar(&f.Limit, "limit", 100, "maximum results (0 = all)")
 	return f

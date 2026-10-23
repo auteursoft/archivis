@@ -1,13 +1,16 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
-	"golang.org/x/text/unicode/norm"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Filter narrows a browse/search query. Zero values mean "no constraint".
@@ -27,8 +30,10 @@ type Filter struct {
 	PersonID      int64
 	Faces         string // "", "any", "none", "1", "group" (3+)
 	Mono          string // "", "only", "exclude"
-	From, To      int64  // unix seconds (taken_at)
-	Year          int
+	From, To      int64  // unix seconds (taken_at); 0 = no bound
+	Year          int    // one year; shorthand for YearFrom = YearTo = Year
+	YearFrom      int    // first year taken (inclusive); 0 = no bound
+	YearTo        int    // last year taken (inclusive); 0 = no bound
 	Sort          string // overall|technical|aesthetic|sharpness|newest|oldest|colorful|faces|worst
 	Limit         int
 	Offset        int
@@ -93,19 +98,63 @@ func (f Filter) where() (string, []any) {
 	case "exclude":
 		add("monochrome = 0")
 	}
-	if f.From > 0 {
+	if f.From != 0 {
 		add("taken_at >= ?", f.From)
 	}
-	if f.To > 0 {
+	if f.To != 0 {
 		add("taken_at < ?", f.To)
 	}
-	if f.Year > 0 {
-		add("strftime('%Y', taken_at, 'unixepoch') = ?", fmt.Sprint(f.Year))
+	// Years as a range of capture times, which the taken_at index serves.
+	// taken_at is the camera's wall-clock time stored as if UTC, so years
+	// start at UTC midnight. Undated photos (taken_at 0) never match.
+	if from, to := f.years(); from != 0 || to != 0 {
+		if from != 0 {
+			add("taken_at >= ?", YearStart(from))
+		}
+		if to != 0 {
+			add("taken_at < ?", YearStart(to+1))
+		}
+		add("taken_at != 0")
 	}
 	if len(w) == 0 {
 		return "", nil
 	}
 	return " WHERE " + strings.Join(w, " AND "), a
+}
+
+// years is the filter's inclusive year range (0 = no bound).
+func (f Filter) years() (from, to int) {
+	if f.Year != 0 {
+		return f.Year, f.Year
+	}
+	return f.YearFrom, f.YearTo
+}
+
+// YearStart is the first second of year y as a taken_at value.
+func YearStart(y int) int64 { return time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC).Unix() }
+
+// Years lists the years that have dated photos, oldest first. It jumps from
+// year to year through the taken_at index, so it reads one row per year, not
+// one per photo.
+func (s *Store) Years() ([]int, error) {
+	var out []int
+	cursor := YearStart(1800)
+	for i := 0; i < 500; i++ {
+		var t sql.NullInt64
+		if err := s.DB.QueryRow(`SELECT MIN(taken_at) FROM photos WHERE taken_at >= ? AND taken_at != 0`, cursor).Scan(&t); err != nil {
+			return nil, err
+		}
+		if !t.Valid {
+			break
+		}
+		y := time.Unix(t.Int64, 0).UTC().Year()
+		if y > time.Now().Year()+1 {
+			break // clock errors in the far future
+		}
+		out = append(out, y)
+		cursor = YearStart(y + 1)
+	}
+	return out, nil
 }
 
 func (f Filter) order() string {

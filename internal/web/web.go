@@ -59,6 +59,10 @@ type Server struct {
 	dmu        sync.Mutex
 	discovered []catalog.Cluster
 	discAt     time.Time
+
+	ymu      sync.Mutex
+	years    []int // years with dated photos, for the year pickers
+	yearsSeq int64 // catalogue change number years was read at
 }
 
 type queryEntry struct {
@@ -343,6 +347,7 @@ type page struct {
 	People []store.Person
 	Tags   []store.Tag
 	Params map[string]string
+	Years  []int // years with photos, for the filter form's year pickers
 
 	User    *store.User // signed in; nil without accounts
 	CanEdit bool        // may change labels, rate and download originals
@@ -421,7 +426,7 @@ func parseFilter(r *http.Request) store.Filter {
 		Sort:          q.Get("sort"),
 		Limit:         120,
 	}
-	f.Year, _ = strconv.Atoi(q.Get("year"))
+	f.YearFrom, f.YearTo = yearRange(q)
 	f.PersonID, _ = strconv.ParseInt(q.Get("person"), 10, 64)
 	pg, _ := strconv.Atoi(q.Get("page"))
 	if pg > 0 {
@@ -467,7 +472,32 @@ type browseData struct {
 
 // filterForm fills in what the shared filter form shows: the request's
 // values and the people and categories to choose from.
-func (s *Server) filterForm(r *http.Request, p *page) {
+// yearRange reads the year range: year_from and year_to (either may be
+// missing; a reversed pair is swapped), or the older single year=N.
+func yearRange(q url.Values) (from, to int) {
+	year := func(k string) int {
+		y, err := strconv.Atoi(q.Get(k))
+		if err != nil || y < 1800 || y > 3000 {
+			return 0
+		}
+		return y
+	}
+	from, to = year("year_from"), year("year_to")
+	if from == 0 && to == 0 {
+		if y := year("year"); y != 0 {
+			return y, y
+		}
+	}
+	if from != 0 && to != 0 && from > to {
+		from, to = to, from
+	}
+	return from, to
+}
+
+// filterForm fills in what the shared filter form shows: the request's
+// values, where the form submits (action), and the people, categories and
+// years to choose from.
+func (s *Server) filterForm(r *http.Request, p *page, action string) {
 	if p.Params == nil {
 		p.Params = map[string]string{}
 	}
@@ -476,8 +506,36 @@ func (s *Server) filterForm(r *http.Request, p *page) {
 			p.Params[k] = v[0]
 		}
 	}
+	p.Params["action"] = action
+	// show an old single year=N link in the range pickers
+	from, to := yearRange(r.URL.Query())
+	p.Params["year_from"], p.Params["year_to"] = "", ""
+	if from != 0 {
+		p.Params["year_from"] = strconv.Itoa(from)
+	}
+	if to != 0 {
+		p.Params["year_to"] = strconv.Itoa(to)
+	}
 	p.People, _ = s.cat.Store.People()
 	p.Tags, _ = s.cat.Store.TagCounts()
+	p.Years = s.yearList()
+}
+
+// yearList is the list of years with photos, re-read only when the
+// catalogue has changed.
+func (s *Server) yearList() []int {
+	s.ymu.Lock()
+	defer s.ymu.Unlock()
+	seq := s.cat.Store.MaxSeq()
+	if s.years == nil || seq != s.yearsSeq {
+		ys, err := s.cat.Store.Years()
+		if err != nil {
+			log.Printf("years: %v", err)
+			return s.years
+		}
+		s.years, s.yearsSeq = ys, seq
+	}
+	return s.years
 }
 
 // pageLink is a pager link to page n of path with every other query value
@@ -493,7 +551,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	f := parseFilter(r)
 	text := strings.TrimSpace(r.URL.Query().Get("q"))
 	p := &page{Title: "Photos", Nav: "browse", Filter: f, Query: text}
-	s.filterForm(r, p)
+	s.filterForm(r, p, "/")
 	d := &browseData{Page: f.Offset / f.Limit}
 	pageURL := func(n int) template.URL { return pageLink(r, "/", n) }
 	if text != "" {
@@ -1147,7 +1205,7 @@ func (s *Server) handleBursts(w http.ResponseWriter, r *http.Request) {
 		d.Bursts = append(d.Bursts, v)
 	}
 	p := &page{Title: "Bursts", Nav: "bursts", Filter: f, Data: d, Params: map[string]string{"gap": fmt.Sprint(gap)}}
-	s.filterForm(r, p)
+	s.filterForm(r, p, "/bursts")
 	p.Params["gap"] = fmt.Sprint(gap)
 	if err != nil {
 		p.Error = err.Error()
