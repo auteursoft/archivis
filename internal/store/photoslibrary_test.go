@@ -91,6 +91,33 @@ func TestCleanPhotosLibraries(t *testing.T) {
 	}
 }
 
+// A damaged progress record means looking again, not "done"; an originals
+// folder spelled in capitals (as the walker accepts) still finds originals.
+func TestCleanPhotosLibrariesRecovers(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "l.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	lib := "/p/Photos Library.photoslibrary"
+	const u = "CCCC3333-0000-4000-8000-000000000003"
+	mk := func(path string) *Result {
+		return &Result{Photo: Photo{Path: path, Size: 1, MTime: 1, Fingerprint: path, Version: SchemaVersion}}
+	}
+	orig, cp := mk(lib+"/ORIGINALS/C/"+u+".heic"), mk(lib+"/resources/derivatives/C/"+u+"_1_105_c.jpeg")
+	if err := st.Save([]*Result{orig, cp}); err != nil {
+		t.Fatal(err)
+	}
+	st.SetMeta(libraryCleanupKey, "{damaged")
+	res, err := st.CleanPhotosLibraries(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Removed != 1 || res.Kept != 0 || st.GetMeta(libraryCleanupKey) != "[]" {
+		t.Fatalf("cleanup: %+v, meta %s", res, st.GetMeta(libraryCleanupKey))
+	}
+}
+
 func TestLibraryParts(t *testing.T) {
 	for path, want := range map[string][2]string{
 		"/p/Photos Library.photoslibrary/originals/A/x.heic": {"/p/Photos Library.photoslibrary", "originals/A/x.heic"},

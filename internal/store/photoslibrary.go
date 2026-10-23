@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -60,14 +61,12 @@ const libraryCleanupKey = "photoslibrary_cleanup" // "" never run; else JSON lis
 func (s *Store) CleanPhotosLibraries(ctx context.Context) (LibraryCleanup, error) {
 	var res LibraryCleanup
 	var libs []string
-	if v := s.GetMeta(libraryCleanupKey); v != "" {
-		if err := json.Unmarshal([]byte(v), &libs); err != nil {
-			libs = nil
-		}
+	v := s.GetMeta(libraryCleanupKey)
+	if v != "" && json.Unmarshal([]byte(v), &libs) == nil {
 		if len(libs) == 0 {
 			return res, nil // done
 		}
-	} else {
+	} else { // never run, or the record is damaged: look again
 		found, err := s.findLibraries()
 		if err != nil {
 			return res, err
@@ -123,6 +122,7 @@ type libCopy struct {
 func (s *Store) cleanLibrary(ctx context.Context, lib string, res *LibraryCleanup) (int, error) {
 	// the library's catalogued paths, through the path index
 	var copies []libCopy
+	roots := map[string]bool{"originals": true} // spellings of the originals folder
 	for _, sep := range []string{"/", `\`} {
 		rows, err := s.DB.Query(`SELECT id, path FROM photos WHERE path >= ? AND path < ?`, lib+sep, lib+string(sep[0]+1))
 		if err != nil {
@@ -136,10 +136,21 @@ func (s *Store) cleanLibrary(ctx context.Context, lib string, res *LibraryCleanu
 			}
 			if _, rest := libraryParts(c.path); !isLibraryOriginal(rest) {
 				copies = append(copies, c)
+			} else if first, _, _ := strings.Cut(strings.ReplaceAll(rest, `\`, "/"), "/"); strings.EqualFold(first, "originals") {
+				roots[first] = true
 			}
 		}
+		err = rows.Err()
 		rows.Close()
+		if err != nil {
+			return 0, err // a partial list must not count as the whole library
+		}
 	}
+	var rootNames []string
+	for r := range roots {
+		rootNames = append(rootNames, r)
+	}
+	sort.Strings(rootNames)
 	kept := 0
 	for start := 0; start < len(copies); start += 200 { // short transactions
 		if err := ctx.Err(); err != nil {
@@ -148,7 +159,16 @@ func (s *Store) cleanLibrary(ctx context.Context, lib string, res *LibraryCleanu
 		batch := copies[start:min(start+200, len(copies))]
 		err := s.inTx(func(tx *sql.Tx) error {
 			for _, c := range batch {
-				orig, err := originalOf(tx, lib, c.path)
+				// the id was read before this transaction: make sure it is
+				// still this copy (a deleted photo's id can be reused)
+				var same int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM photos WHERE id = ? AND path = ?`, c.id, c.path).Scan(&same); err != nil {
+					return err
+				}
+				if same == 0 {
+					continue // gone meanwhile
+				}
+				orig, err := originalOf(tx, lib, rootNames, c.path)
 				if err != nil {
 					return err
 				}
@@ -183,24 +203,26 @@ func (s *Store) cleanLibrary(ctx context.Context, lib string, res *LibraryCleanu
 }
 
 // originalOf finds the catalogued original of a copy inside lib: the photo
-// at originals/<X>/<UUID>.<ext>, by the UUID the copy's name begins with
+// at originals/<X>/<UUID>.<ext> (originals as spelled in roots), by the UUID the copy's name begins with
 // (0 if none).
-func originalOf(tx *sql.Tx, lib, copyPath string) (int64, error) {
+func originalOf(tx *sql.Tx, lib string, roots []string, copyPath string) (int64, error) {
 	base := copyPath[strings.LastIndexAny(copyPath, `/\`)+1:]
 	uuid := uuidPrefix.FindString(base)
 	if uuid == "" {
 		return 0, nil
 	}
 	for _, sep := range []string{"/", `\`} {
-		for _, first := range []string{strings.ToUpper(uuid[:1]), strings.ToLower(uuid[:1])} {
-			prefix := lib + sep + "originals" + sep + first + sep + uuid + "."
-			var id int64
-			err := tx.QueryRow(`SELECT id FROM photos WHERE path >= ? AND path < ? ORDER BY path LIMIT 1`, prefix, prefix+"\xff").Scan(&id)
-			if err == nil {
-				return id, nil
-			}
-			if err != sql.ErrNoRows {
-				return 0, err
+		for _, root := range roots {
+			for _, first := range []string{strings.ToUpper(uuid[:1]), strings.ToLower(uuid[:1])} {
+				prefix := lib + sep + root + sep + first + sep + uuid + "."
+				var id int64
+				err := tx.QueryRow(`SELECT id FROM photos WHERE path >= ? AND path < ? ORDER BY path LIMIT 1`, prefix, prefix+"\xff").Scan(&id)
+				if err == nil {
+					return id, nil
+				}
+				if err != sql.ErrNoRows {
+					return 0, err
+				}
 			}
 		}
 	}
