@@ -47,6 +47,7 @@ Commands:
   errors       show files that failed to index
   inspect      show what Archivis reads from photo files (camera, lens, preview, rotation)
   users        web accounts: list | add-admin | invite | reset | password | role | disable | enable | signout
+  settings     list | get NAME | set NAME VALUE (e.g. burst_gap)
   version      which build this is (git commit), to check an upgrade took
 
 Global flags (all commands):
@@ -225,7 +226,7 @@ func main() {
 		"setup": runSetup, "index": runIndex, "serve": runServe, "search": runSearch,
 		"list": runList, "export": runExport, "people": runPeople, "retag": runRetag,
 		"prune": runPrune, "stats": runStats, "errors": runErrors, "aesthetic": runAesthetic, "inspect": runInspect,
-		"users": runUsers, "version": runVersion, "groups": runGroups,
+		"users": runUsers, "version": runVersion, "settings": runSettings, "groups": runGroups,
 	}
 	fn, ok := cmds[cmd]
 	if cmd == "" {
@@ -460,6 +461,8 @@ func filterFlags(fs *flag.FlagSet) *store.Filter {
 	fs.StringVar(&f.Faces, "faces", "", "any | none | 1 | group")
 	fs.StringVar(&f.Mono, "mono", "", "only | exclude black & white")
 	fs.IntVar(&f.Year, "year", 0, "year taken")
+	fs.IntVar(&f.YearFrom, "year-from", 0, "taken in this year or later")
+	fs.IntVar(&f.YearTo, "year-to", 0, "taken in this year or earlier")
 	fs.StringVar(&f.Sort, "sort", "overall", "overall|technical|aesthetic|sharpness|newest|oldest|colorful|faces|worst|path")
 	fs.IntVar(&f.Limit, "limit", 100, "maximum results (0 = all)")
 	return f

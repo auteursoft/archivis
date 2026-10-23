@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/base64"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -481,5 +482,75 @@ func TestNameLimitSharedByEquivalentSpellings(t *testing.T) {
 	b := &browser{t: t, h: h, remote: "198.51.100.9:1"}
 	if rec := b.login("STRASSE", testPassword); rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("equivalent spellings escaped the per-name limit: %d", rec.Code)
+	}
+}
+
+// Settings: admins only with accounts; anyone admitted without accounts.
+func TestSettingsPage(t *testing.T) {
+	s, cat, _ := accountsServer(t)
+	h := s.Handler()
+	admin := &browser{t: t, h: h}
+	admin.login("root", testPassword)
+	newUser(t, cat, "eve", store.RoleEditor)
+	editor := &browser{t: t, h: h}
+	editor.login("eve", testPassword)
+
+	if rec := editor.do("GET", "/admin/settings", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("editor GET settings: %d", rec.Code)
+	}
+	if rec := editor.do("POST", "/admin/settings", url.Values{"burst_gap": {"9"}}); rec.Code != http.StatusForbidden {
+		t.Fatalf("editor POST settings: %d", rec.Code)
+	}
+	if strings.Contains(editor.do("GET", "/people", nil).Body.String(), "/admin/settings") {
+		t.Fatal("non-admin sees the Settings link")
+	}
+
+	rec := admin.do("GET", "/admin/settings", nil)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `name="burst_gap"`) || !strings.Contains(rec.Body.String(), `value="3"`) {
+		t.Fatalf("admin GET settings: %d", rec.Code)
+	}
+	if !strings.Contains(admin.do("GET", "/people", nil).Body.String(), `href="/admin/settings"`) {
+		t.Fatal("admin lacks the Settings link")
+	}
+	rec = admin.do("POST", "/admin/settings", url.Values{"burst_gap": {"7"}})
+	if rec.Code != http.StatusSeeOther || cat.Store.GetSettings().BurstGap != 7 {
+		t.Fatalf("save: %d, gap %d", rec.Code, cat.Store.GetSettings().BurstGap)
+	}
+	if rec := admin.do("POST", "/admin/settings", url.Values{"burst_gap": {"0"}}); rec.Code != http.StatusBadRequest || cat.Store.GetSettings().BurstGap != 7 {
+		t.Fatalf("invalid value: %d, gap %d", rec.Code, cat.Store.GetSettings().BurstGap)
+	}
+	admin.hdr = map[string]string{"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+	if rec := admin.do("POST", "/admin/settings", url.Values{"burst_gap": {"30"}}); rec.Code != http.StatusForbidden || cat.Store.GetSettings().BurstGap != 7 {
+		t.Fatalf("cross-site save: %d", rec.Code)
+	}
+}
+
+func TestSettingsWithoutAccounts(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	b := &browser{t: t, h: s.Handler()}
+	if !strings.Contains(b.do("GET", "/people", nil).Body.String(), `href="/admin/settings"`) {
+		t.Fatal("no Settings link without accounts")
+	}
+	if rec := b.do("POST", "/admin/settings", url.Values{"burst_gap": {"4"}}); rec.Code != http.StatusSeeOther || cat.Store.GetSettings().BurstGap != 4 {
+		t.Fatalf("save without accounts: %d", rec.Code)
+	}
+	// the Bursts page uses it as its default gap
+	if body := b.do("GET", "/bursts", nil).Body.String(); !strings.Contains(body, `name="gap"`) || !strings.Contains(body, `value="4"`) {
+		t.Fatal("Bursts page does not default to the configured gap")
+	}
+	if body := b.do("GET", "/bursts?gap=9", nil).Body.String(); !strings.Contains(body, `value="9"`) {
+		t.Fatal("an explicit gap no longer overrides the default")
+	}
+	// behind --auth, the log names who changed them
+	s.Auth = "anna:secret"
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	b.hdr = map[string]string{"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte("anna:secret"))}
+	if rec := b.do("POST", "/admin/settings", url.Values{"burst_gap": {"5"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save behind --auth: %d", rec.Code)
+	}
+	if !strings.Contains(logged.String(), "anna changed settings") {
+		t.Fatalf("log does not name the user: %q", logged.String())
 	}
 }

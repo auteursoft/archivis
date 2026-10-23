@@ -24,7 +24,8 @@
     <label class="btn filebtn">Search by photo<input class="visually-hidden" type="file" name="image" accept="image/*,.cr2,.cr3,.nef,.arw,.dng,.raf,.orf,.rw2,.heic" onchange="this.form.submit()"></label>
   </form>
   <span class="stats">{{.Stats.Photos}} photos · {{.Stats.Faces}} faces · {{.Stats.People}} people</span>
-  {{with .User}}<span class="account">{{if $.Admin}}<a href="/admin/users" class="{{if eq $.Nav "users"}}on{{end}}">Users</a> · {{end}}<span title="{{.Role}}">{{.Name}}</span>
+  {{if and (not .User) (not .Bare)}}<span class="account"><a href="/admin/settings" class="{{if eq .Nav "settings"}}on{{end}}">Settings</a></span>{{end}}
+  {{with .User}}<span class="account">{{if $.Admin}}<a href="/admin/users" class="{{if eq $.Nav "users"}}on{{end}}">Users</a> · <a href="/admin/settings" class="{{if eq $.Nav "settings"}}on{{end}}">Settings</a> · {{end}}<span title="{{.Role}}">{{.Name}}</span>
     <form action="/logout" method="post"><button class="btn small ghost">Sign out</button></form></span>{{end}}
   {{end}}
 </header>
@@ -85,7 +86,7 @@
 {{define "filters"}}
 {{$p := .Params}}
 {{$bursts := eq .Nav "bursts"}}
-<form class="filters" method="get" action="{{if $bursts}}/bursts{{else}}/{{end}}">
+<form class="filters" method="get" action="{{$p.action}}">
   {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
   {{if $bursts}}<label title="Frames this many seconds apart or closer count as one burst">Burst gap (s) <input type="number" name="gap" min="1" max="60" value="{{$p.gap}}" style="width:4em"></label>
   {{else}}<label>Sort
@@ -160,10 +161,14 @@
       <option value="exclude" {{if eq $p.mono "exclude"}}selected{{end}}>exclude</option>
     </select>
   </label>
-  <label>Year <input type="number" name="year" min="1900" max="2100" value="{{$p.year}}" style="width:5em"></label>
+  <label>Years
+    <span class="yearrange"><select name="year_from" aria-label="From year"><option value="">any</option>{{range .Years}}<option{{if eq (printf "%d" .) $p.year_from}} selected{{end}}>{{.}}</option>{{end}}</select>
+    to
+    <select name="year_to" aria-label="To year"><option value="">any</option>{{range .Years}}<option{{if eq (printf "%d" .) $p.year_to}} selected{{end}}>{{.}}</option>{{end}}</select></span>
+  </label>
   <label>Camera <input type="text" name="camera" value="{{$p.camera}}" size="8"></label>
   <label>Path <input type="text" name="path" value="{{$p.path}}" size="10"></label>
   <button class="btn primary">Apply</button>
-  {{if $bursts}}<a class="btn ghost" href="/bursts">Reset</a>{{else}}<a class="btn ghost" href="/{{if .Query}}?q={{q .Query}}{{end}}">Reset</a>{{end}}
+  <a class="btn ghost" href="{{$p.action}}{{if .Query}}?q={{q .Query}}{{end}}">Reset</a>
 </form>
 {{end}}

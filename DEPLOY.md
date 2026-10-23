@@ -617,6 +617,17 @@ How it is protected:
 Use accounts over HTTPS (see above). Over plain HTTP, passwords and
 sign-in cookies cross the network unencrypted.
 
+## Settings
+
+Catalogue-wide options are on the **Settings** page (top right, for admins;
+for everyone the server admits when there are no accounts), or from the
+server:
+
+```sh
+archivis settings                    # list them
+archivis settings set burst_gap 5    # frames up to 5 s apart form one burst
+```
+
 ## Teaching it your taste
 
 Rate photos on their pages in the web interface (or say the aesthetic score
