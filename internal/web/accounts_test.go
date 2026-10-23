@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/base64"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -539,5 +540,17 @@ func TestSettingsWithoutAccounts(t *testing.T) {
 	}
 	if body := b.do("GET", "/bursts?gap=9", nil).Body.String(); !strings.Contains(body, `value="9"`) {
 		t.Fatal("an explicit gap no longer overrides the default")
+	}
+	// behind --auth, the log names who changed them
+	s.Auth = "anna:secret"
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	b.hdr = map[string]string{"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte("anna:secret"))}
+	if rec := b.do("POST", "/admin/settings", url.Values{"burst_gap": {"5"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save behind --auth: %d", rec.Code)
+	}
+	if !strings.Contains(logged.String(), "anna changed settings") {
+		t.Fatalf("log does not name the user: %q", logged.String())
 	}
 }
