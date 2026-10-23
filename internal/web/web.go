@@ -66,7 +66,8 @@ type Server struct {
 	yearsAt  time.Time
 
 	regrouping  atomic.Bool
-	lastRegroup atomic.Int64 // unix time the last regroup started
+	lastRegroup atomic.Int64   // unix time the last regroup started
+	background  sync.WaitGroup // regroups in flight (tests wait for them)
 }
 
 type queryEntry struct {
@@ -105,8 +106,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /people", s.handlePeople)
 	mux.HandleFunc("GET /person/{id}", s.handlePerson)
 	mux.HandleFunc("GET /discover", s.handleDiscover)
-	mux.HandleFunc("GET /bursts", s.handleBursts)
-	mux.HandleFunc("GET /duplicates", s.handleDuplicates)
+	mux.HandleFunc("GET /bursts", s.handleGroups(burstsPage))
+	mux.HandleFunc("GET /duplicates", s.handleGroups(duplicatesPage))
 	mux.HandleFunc("GET /guide", s.handleGuide)
 	mux.HandleFunc("GET /t/{fp}", s.handleThumb)
 	mux.HandleFunc("GET /f/{fp}/{ord}", s.handleFaceThumb)
@@ -191,14 +192,14 @@ func sameOrigin(next http.Handler) http.Handler {
 // ListenAndServe serves until the process exits, refreshing the in-memory
 // indexes periodically so photos indexed meanwhile become searchable.
 func (s *Server) ListenAndServe(addr string) error {
-	go s.regroup(false)
+	s.regroupInBackground(false)
 	go func() {
 		for range time.Tick(time.Minute) {
 			if err := s.cat.Refresh(); err != nil {
 				log.Printf("refresh: %v", err)
 			}
 			s.expireQueries()
-			go s.regroup(false)
+			s.regroupInBackground(false)
 		}
 	}()
 	srv := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
@@ -1171,64 +1172,6 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	p := &page{Title: "Discover people", Nav: "discover", Data: out}
 	p.People, _ = s.cat.Store.People()
 	s.render(w, r, "discover", p)
-}
-
-const burstsPerPage = 30
-
-// maxBurstPage bounds the scan: page n ranks the newest (n+1) pages of
-// bursts. (A variable so tests can reach the last page cheaply.)
-var maxBurstPage = 100
-
-type burstView struct{ Photos []catalog.PhotoHit }
-
-type burstsData struct {
-	Bursts     []burstView
-	Page       int
-	Prev, Next template.URL
-}
-
-func (s *Server) handleBursts(w http.ResponseWriter, r *http.Request) {
-	// The same filters as the Photos page choose which frames count.
-	f := parseFilter(r)
-	gap, _ := strconv.ParseInt(r.URL.Query().Get("gap"), 10, 64)
-	if gap <= 0 || gap > 3600 {
-		gap = int64(s.cat.Store.GetSettings().BurstGap) // the catalogue's default (Settings)
-	}
-	pg, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	pg = min(max(pg, 0), maxBurstPage)
-	f.Offset, f.Limit = pg*burstsPerPage, burstsPerPage
-	bs, more, err := s.cat.Store.Bursts(f, gap, 3)
-	d := &burstsData{Page: pg}
-	if more && pg < maxBurstPage { // past the last page there is nowhere to go
-		d.Next = pageLink(r, "/bursts", pg+1)
-	}
-	if pg > 0 {
-		d.Prev = pageLink(r, "/bursts", pg-1)
-	}
-	// the shared photo grid shows catalog.PhotoHit (it has a match score)
-	for _, b := range bs {
-		var v burstView
-		for _, ph := range b.Photos {
-			v.Photos = append(v.Photos, catalog.PhotoHit{Photo: ph})
-		}
-		d.Bursts = append(d.Bursts, v)
-	}
-	p := &page{Title: "Bursts", Nav: "bursts", Filter: f, Data: d, Params: map[string]string{"gap": fmt.Sprint(gap)}}
-	s.filterForm(r, p, "/bursts")
-	p.Params["gap"] = fmt.Sprint(gap)
-	if err != nil {
-		p.Error = err.Error()
-	}
-	s.render(w, r, "bursts", p)
-}
-
-func (s *Server) handleDuplicates(w http.ResponseWriter, r *http.Request) {
-	gs, err := s.cat.Store.DuplicateGroups(200)
-	p := &page{Title: "Duplicates", Nav: "duplicates", Data: gs}
-	if err != nil {
-		p.Error = err.Error()
-	}
-	s.render(w, r, "duplicates", p)
 }
 
 func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {

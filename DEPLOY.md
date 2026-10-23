@@ -628,6 +628,22 @@ archivis settings                    # list them
 archivis settings set burst_gap 5    # frames up to 5 s apart form one burst
 ```
 
+### Bursts and identical images
+
+The **Bursts** and **Duplicates** pages read groups that are worked out once
+and stored, so they open quickly however large the catalogue. An index run
+works them out when it finishes. A running `archivis serve` does it when it
+starts, at once after the burst gap changes, and otherwise at most every 30
+minutes while new photos arrive. On a first run this takes about a minute
+per million photos, in the background. While it runs, the pages say so and
+show the previous grouping. Pages keep working, and naming faces is not
+held up.
+
+```sh
+archivis groups              # up to date, or not
+archivis groups rebuild      # work them out now
+```
+
 ## Teaching it your taste
 
 Rate photos on their pages in the web interface (or say the aesthetic score

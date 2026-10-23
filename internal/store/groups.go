@@ -34,11 +34,11 @@ type GroupOptions struct {
 	Hamming int   // most differing perceptual-hash bits for frames to stack
 }
 
-// DefaultGroupOptions are the rules used unless set otherwise.
-var DefaultGroupOptions = GroupOptions{Gap: 3, Hamming: 6}
-
-// GroupOptions are the catalogue's grouping rules.
-func (s *Store) GroupOptions() GroupOptions { return DefaultGroupOptions }
+// GroupOptions are the catalogue's grouping rules (from its Settings).
+func (s *Store) GroupOptions() GroupOptions {
+	v := s.GetSettings()
+	return GroupOptions{Gap: int64(v.BurstGap), Hamming: v.StackHamming}
+}
 
 // RebuildStats reports what RebuildGroups found and wrote.
 type RebuildStats struct {
@@ -58,14 +58,19 @@ const (
 // GroupsStale reports whether the stored groups may be out of date: photos
 // changed or were deleted since, or the rules changed.
 func (s *Store) GroupsStale(o GroupOptions) bool {
-	if s.GetMeta("groups_version") != groupsVersion ||
-		s.GetMeta("groups_gap") != strconv.FormatInt(o.Gap, 10) ||
-		s.GetMeta("groups_hamming") != strconv.Itoa(o.Hamming) ||
-		s.GetMeta("groups_dirty") != s.GetMeta("groups_clean") {
+	if s.GroupRulesChanged(o) || s.GetMeta("groups_dirty") != s.GetMeta("groups_clean") {
 		return true
 	}
 	seq, err := strconv.ParseInt(s.GetMeta("groups_seq"), 10, 64)
 	return err != nil || s.MaxSeq() > seq
+}
+
+// GroupRulesChanged reports whether the groups were worked out by other
+// rules (or never), so they should be worked out again at once.
+func (s *Store) GroupRulesChanged(o GroupOptions) bool {
+	return s.GetMeta("groups_version") != groupsVersion ||
+		s.GetMeta("groups_gap") != strconv.FormatInt(o.Gap, 10) ||
+		s.GetMeta("groups_hamming") != strconv.Itoa(o.Hamming)
 }
 
 // GroupsRebuilding reports whether a rebuild is in progress (for a note on
@@ -912,70 +917,85 @@ func qualify(order, prefix string) string {
 func (s *Store) walkGroups(kind, minSize int, f Filter, order, where string, args []any, offset, n int) ([]int64, error) {
 	q := `SELECT id, members FROM photo_groups WHERE kind = ? AND size >= ?`
 	qa := []any{kind, minSize}
-	if f.From != 0 {
+	from, to := f.From, f.To
+	if yf, yt := f.years(); yf != 0 || yt != 0 { // the same bounds where() uses
+		if yf != 0 && (from == 0 || YearStart(yf) > from) {
+			from = YearStart(yf)
+		}
+		if yt != 0 && (to == 0 || YearStart(yt+1) < to) {
+			to = YearStart(yt + 1)
+		}
+	}
+	if from != 0 {
 		q += ` AND end_at >= ?`
-		qa = append(qa, f.From)
+		qa = append(qa, from)
 	}
-	if f.To != 0 {
+	if to != 0 {
 		q += ` AND start_at < ?`
-		qa = append(qa, f.To)
+		qa = append(qa, to)
 	}
-	rows, err := s.DB.Query(q+` ORDER BY `+order+` LIMIT ?`, append(qa, maxGroupWalk)...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	type gm struct {
 		id      int64
 		members []int64
 	}
+	// Read groups in batches, each read whole before its members are checked
+	// (a cursor held open while checking would take a second connection,
+	// and enough pages at once would wait on each other for ever). Batches
+	// grow, so a page found early costs little and a long walk re-skips
+	// little.
 	var out []int64
 	skipped := 0
-	var chunk []gm
-	var all []int64
-	check := func() (bool, error) {
-		match, err := s.matching(all, where, args)
+	for at, size := 0, 1000; at < maxGroupWalk; at, size = at+size, min(size*4, maxGroupWalk-at-size) {
+		rows, err := s.DB.Query(q+` ORDER BY `+order+` LIMIT ? OFFSET ?`, append(qa, size, at)...)
 		if err != nil {
-			return false, err
-		}
-		for _, g := range chunk {
-			for _, id := range g.members {
-				if match[id] {
-					if skipped < offset {
-						skipped++
-					} else {
-						out = append(out, g.id)
-					}
-					break
-				}
-			}
-			if len(out) >= n {
-				return true, nil
-			}
-		}
-		chunk, all = chunk[:0], all[:0]
-		return false, nil
-	}
-	for rows.Next() {
-		var g gm
-		var members string
-		if err := rows.Scan(&g.id, &members); err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(members), &g.members)
-		chunk = append(chunk, g)
-		all = append(all, g.members...)
-		if len(chunk) == 1000 {
-			if done, err := check(); done || err != nil {
-				return out, err
+		var batch []gm
+		for rows.Next() {
+			var g gm
+			var members string
+			if err := rows.Scan(&g.id, &members); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			json.Unmarshal([]byte(members), &g.members)
+			batch = append(batch, g)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		for start := 0; start < len(batch); start += 1000 {
+			chunk := batch[start:min(len(batch), start+1000)]
+			var all []int64
+			for _, g := range chunk {
+				all = append(all, g.members...)
+			}
+			match, err := s.matching(all, where, args)
+			if err != nil {
+				return nil, err
+			}
+			for _, g := range chunk {
+				for _, id := range g.members {
+					if match[id] {
+						if skipped < offset {
+							skipped++
+						} else {
+							out = append(out, g.id)
+						}
+						break
+					}
+				}
+				if len(out) >= n {
+					return out, nil
+				}
 			}
 		}
+		if len(batch) < size {
+			break
+		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	_, err = check()
-	return out, err
+	return out, nil
 }
 
 // matching returns which of ids pass the filter (where/args from where()).

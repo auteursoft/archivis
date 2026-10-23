@@ -1,13 +1,10 @@
 {{define "content"}}
+{{template "filters" .}}
 <h1>Duplicates</h1>
-<p class="hint">Groups of photos with identical perceptual hashes: the same image saved or exported more than once.</p>
-{{range .Data}}
-<section class="dupes">
-  <div class="grid">
-  {{range .}}
-    <a class="card" href="/photo/{{.ID}}" title="{{.Path}}"><img loading="lazy" src="/t/{{.Fingerprint}}.jpg" alt=""><span class="meta"><i>{{.Path}}</i></span></a>
-  {{end}}
-  </div>
-</section>
-{{else}}<p class="empty">No duplicates found.</p>{{end}}
+<p class="hint">Sets of photos with identical perceptual hashes: the same image saved or exported more than once. Each card is one set, showing its best copy; the number is how many copies there are (and how many match the filters). Open a card to see every copy.</p>
+{{template "groupstate" .Data}}
+<div class="grid">
+{{range .Data.Groups}}{{template "stackcard" .}}{{else}}<p class="empty">No duplicates found{{if .Data.Page}} on this page{{end}}{{if .Data.Filtered}} with these filters{{end}}.</p>{{end}}
+</div>
+{{template "grouppager" .Data}}
 {{end}}

@@ -2,10 +2,15 @@ package web
 
 import (
 	"context"
+	"html/template"
 	"log"
+	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/auteursoft/archivis/internal/catalog"
 	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/store"
 )
 
 // regroupEvery is the least time between regroups while photos keep
@@ -16,11 +21,12 @@ const regroupEvery = 30 * time.Minute
 // in the background, if they are stale; now skips the wait (the rules
 // changed). One runs at a time.
 func (s *Server) regroup(now bool) {
+	st := s.cat.Store
+	o := st.GroupOptions()
+	now = now || st.GroupRulesChanged(o) // new rules (or never grouped): don't wait
 	if !now && time.Since(time.Unix(s.lastRegroup.Load(), 0)) < regroupEvery {
 		return
 	}
-	st := s.cat.Store
-	o := st.GroupOptions()
 	if !st.GroupsStale(o) || !s.regrouping.CompareAndSwap(false, true) {
 		return
 	}
@@ -32,5 +38,89 @@ func (s *Server) regroup(now bool) {
 		log.Printf("grouping bursts and identical images: %v", err)
 	case ran:
 		log.Printf("grouped: %s", stats)
+	}
+}
+
+// regroupInBackground starts regroup(now) without waiting for it.
+func (s *Server) regroupInBackground(now bool) {
+	s.background.Add(1)
+	go func() {
+		defer s.background.Done()
+		s.regroup(now)
+	}()
+}
+
+// groupPage describes a page of groups: Bursts or Duplicates.
+type groupPage struct {
+	kind    int
+	path    string
+	title   string
+	minSize int // members a group needs to be listed
+	perPage int
+}
+
+var (
+	burstsPage     = groupPage{store.GroupBurst, "/bursts", "Bursts", 3, 30}
+	duplicatesPage = groupPage{store.GroupDuplicate, "/duplicates", "Duplicates", 2, 48}
+)
+
+type groupView struct {
+	ID     int64
+	Size   int // members in all
+	Taken  int64
+	Camera string
+	Photos []catalog.PhotoHit // the members shown (matching the filters), best first
+}
+
+// Top is the group's best shown member.
+func (g groupView) Top() catalog.PhotoHit { return g.Photos[0] }
+
+type groupsData struct {
+	Groups     []groupView
+	Page       int
+	Prev, Next template.URL
+	Filtered   bool // filters are set: groups show only matching members
+	Regrouping bool // groups are being worked out now
+	Stale      bool // groups were worked out by other rules, or never
+}
+
+// handleGroups serves a page of bursts or sets of identical images, with the
+// Photos page's filters and sorts: a group is listed if any member matches,
+// with just the matching members, ranked by its best (worst, for "worst
+// first") member.
+func (s *Server) handleGroups(gp groupPage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		f := parseFilter(r)
+		pg, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pg = max(pg, 0)
+		f.Offset, f.Limit = pg*gp.perPage, gp.perPage
+		st := s.cat.Store
+		gs, more, err := st.GroupPage(gp.kind, f, gp.minSize)
+		d := &groupsData{Page: pg, Filtered: f.Restricts(), Regrouping: st.GroupsRebuilding()}
+		if !d.Regrouping {
+			// never grouped, or the rules changed: say so, and group at once
+			// (new photos only wait for the next regroup)
+			d.Stale = st.GroupRulesChanged(st.GroupOptions())
+			s.regroupInBackground(false)
+		}
+		if more {
+			d.Next = pageLink(r, gp.path, pg+1)
+		}
+		if pg > 0 {
+			d.Prev = pageLink(r, gp.path, pg-1)
+		}
+		for _, g := range gs {
+			v := groupView{ID: g.ID, Size: g.Size, Taken: g.StartAt, Camera: g.Camera}
+			for _, ph := range g.Members {
+				v.Photos = append(v.Photos, catalog.PhotoHit{Photo: ph})
+			}
+			d.Groups = append(d.Groups, v)
+		}
+		p := &page{Title: gp.title, Nav: gp.path[1:], Filter: f, Data: d}
+		s.filterForm(r, p, gp.path)
+		if err != nil {
+			p.Error = err.Error()
+		}
+		s.render(w, r, gp.path[1:], p)
 	}
 }
