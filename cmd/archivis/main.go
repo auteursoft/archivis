@@ -46,6 +46,7 @@ Commands:
   errors       show files that failed to index
   inspect      show what Archivis reads from photo files (camera, lens, preview, rotation)
   users        web accounts: list | add-admin | invite | reset | password | role | disable | enable | signout
+  settings     list | get NAME | set NAME VALUE (e.g. burst_gap)
   version      which build this is (git commit), to check an upgrade took
 
 Global flags (all commands):
@@ -224,7 +225,7 @@ func main() {
 		"setup": runSetup, "index": runIndex, "serve": runServe, "search": runSearch,
 		"list": runList, "export": runExport, "people": runPeople, "retag": runRetag,
 		"prune": runPrune, "stats": runStats, "errors": runErrors, "aesthetic": runAesthetic, "inspect": runInspect,
-		"users": runUsers, "version": runVersion,
+		"users": runUsers, "version": runVersion, "settings": runSettings,
 	}
 	fn, ok := cmds[cmd]
 	if cmd == "" {

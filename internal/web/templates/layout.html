@@ -24,7 +24,8 @@
     <label class="btn filebtn">Search by photo<input class="visually-hidden" type="file" name="image" accept="image/*,.cr2,.cr3,.nef,.arw,.dng,.raf,.orf,.rw2,.heic" onchange="this.form.submit()"></label>
   </form>
   <span class="stats">{{.Stats.Photos}} photos · {{.Stats.Faces}} faces · {{.Stats.People}} people</span>
-  {{with .User}}<span class="account">{{if $.Admin}}<a href="/admin/users" class="{{if eq $.Nav "users"}}on{{end}}">Users</a> · {{end}}<span title="{{.Role}}">{{.Name}}</span>
+  {{if and (not .User) (not .Bare)}}<span class="account"><a href="/admin/settings" class="{{if eq .Nav "settings"}}on{{end}}">Settings</a></span>{{end}}
+  {{with .User}}<span class="account">{{if $.Admin}}<a href="/admin/users" class="{{if eq $.Nav "users"}}on{{end}}">Users</a> · <a href="/admin/settings" class="{{if eq $.Nav "settings"}}on{{end}}">Settings</a> · {{end}}<span title="{{.Role}}">{{.Name}}</span>
     <form action="/logout" method="post"><button class="btn small ghost">Sign out</button></form></span>{{end}}
   {{end}}
 </header>
