@@ -46,6 +46,7 @@ func TestYearRange(t *testing.T) {
 		{Filter{Year: 2020}, "2020start"},
 		{Filter{Year: 2019}, "2019end"},
 		{Filter{YearFrom: 2019, YearTo: 2021}, "2019end,2020start,2021"},
+		{Filter{YearFrom: 2021, YearTo: 2019}, "2019end,2020start,2021"}, // reversed (the CLI passes it as given)
 		{Filter{YearFrom: 2021}, "2021,2024"},
 		{Filter{YearTo: 1969}, "1968,1969end"}, // before 1970: negative times, undated excluded
 		{Filter{Year: 1970}, "1970start"},

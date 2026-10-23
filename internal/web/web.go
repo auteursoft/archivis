@@ -63,6 +63,7 @@ type Server struct {
 	ymu      sync.Mutex
 	years    []int // years with dated photos, for the year pickers
 	yearsSeq int64 // catalogue change number years was read at
+	yearsAt  time.Time
 }
 
 type queryEntry struct {
@@ -521,19 +522,20 @@ func (s *Server) filterForm(r *http.Request, p *page, action string) {
 	p.Years = s.yearList()
 }
 
-// yearList is the list of years with photos, re-read only when the
-// catalogue has changed.
+// yearList is the list of years with photos, re-read when photos have
+// changed, or a minute on (deleting photos, as prune does, leaves seq as
+// it was; reading the list costs one row per year).
 func (s *Server) yearList() []int {
 	s.ymu.Lock()
 	defer s.ymu.Unlock()
 	seq := s.cat.Store.MaxSeq()
-	if s.years == nil || seq != s.yearsSeq {
+	if s.years == nil || seq != s.yearsSeq || time.Since(s.yearsAt) > time.Minute {
 		ys, err := s.cat.Store.Years()
 		if err != nil {
 			log.Printf("years: %v", err)
 			return s.years
 		}
-		s.years, s.yearsSeq = ys, seq
+		s.years, s.yearsSeq, s.yearsAt = ys, seq, time.Now()
 	}
 	return s.years
 }

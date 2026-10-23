@@ -859,4 +859,14 @@ func TestYearRangeFilter(t *testing.T) {
 	if strings.Contains(body, `name="year"`) {
 		t.Error("the old single year field is still there")
 	}
+	// deleting a year's photos (prune) leaves seq alone; the list catches up
+	if _, err := cat.Store.DB.Exec(`DELETE FROM photos WHERE path = '/y/2018.jpg'`); err != nil {
+		t.Fatal(err)
+	}
+	s.ymu.Lock()
+	s.yearsAt = time.Now().Add(-2 * time.Minute)
+	s.ymu.Unlock()
+	if strings.Contains(get(t, h, "/"), `<option>2018</option>`) {
+		t.Error("a year without photos is still offered")
+	}
 }

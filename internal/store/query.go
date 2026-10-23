@@ -127,6 +127,9 @@ func (f Filter) years() (from, to int) {
 	if f.Year != 0 {
 		return f.Year, f.Year
 	}
+	if f.YearFrom != 0 && f.YearTo != 0 && f.YearFrom > f.YearTo {
+		return f.YearTo, f.YearFrom // reversed: every caller gets the range meant
+	}
 	return f.YearFrom, f.YearTo
 }
 
