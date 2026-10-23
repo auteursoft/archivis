@@ -16,7 +16,11 @@ page, for admins).
   settings get NAME
   settings set NAME VALUE
 Settings:
-  burst_gap   most seconds between frames of one burst (1-60, default 3)`
+  burst_gap      most seconds between frames of one burst (1-60, default 3)
+  stack_bursts   show near-identical burst frames as one card on the Photos
+                 page (on/off, default on)
+  stack_hamming  how alike frames must be to stack: the most bits their
+                 perceptual hashes may differ by (0-16, default 6)`
 
 func runSettings(g *globals, args []string) error {
 	fs := newFlagSet("settings", settingsHelp)

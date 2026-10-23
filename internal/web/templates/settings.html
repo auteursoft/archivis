@@ -8,8 +8,16 @@
   <label>Burst gap (seconds)
     <input type="number" name="burst_gap" min="{{.MinGap}}" max="{{.MaxGap}}" value="{{.Settings.BurstGap}}" required>
   </label>
+  <p class="note">Frames from one camera taken this many seconds apart or closer count as one burst.</p>
+  <h2>Stacks</h2>
+  <label><input type="checkbox" name="stack_bursts" value="on" {{if .Settings.StackBursts}}checked{{end}}><input type="hidden" name="stack_bursts" value="off">
+    Show near-identical frames of a burst as one card on the Photos page</label>
+  <label>How alike frames must be to stack
+    <input type="number" name="stack_hamming" min="{{.MinHamming}}" max="{{.MaxHamming}}" value="{{.Settings.StackHamming}}" required>
+  </label>
+  <p class="note">The most bits two frames' perceptual hashes may differ by: 0 stacks only frames that look the same, higher values stack more. The card shows the best frame; its page lists the others.</p>
   <button class="btn primary">Save</button>
-  <p class="note">Frames from one camera taken this many seconds apart or closer count as one burst. Bursts are worked out again, in the background, when this changes.</p>
+  <p class="note">Bursts and stacks are worked out again, in the background, when the gap or similarity changes.</p>
 </form>
 </div>
 {{end}}

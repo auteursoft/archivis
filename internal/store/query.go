@@ -37,6 +37,11 @@ type Filter struct {
 	Sort          string // overall|technical|aesthetic|sharpness|newest|oldest|colorful|faces|worst
 	Limit         int
 	Offset        int
+
+	// Stacked shows each stack of near-identical burst frames as its top
+	// frame alone. Only BrowsePage reads it: counts and searches are of
+	// every photo.
+	Stacked bool
 }
 
 func (f Filter) where() (string, []any) {
@@ -187,17 +192,62 @@ func (f Filter) order() string {
 
 // Browse returns a page of photos matching f, plus the total match count.
 func (s *Store) Browse(f Filter) ([]Photo, int, error) {
+	ps, total, _, err := s.BrowsePage(f)
+	return ps, total, err
+}
+
+// BrowsePage is Browse, also saying whether more photos follow the page.
+// With f.Stacked, a frame hidden in a stack is left out, unless the stack's
+// top does not itself match the filter (then the frame shows for it). The
+// total stays the count of every matching photo: counting what stacking
+// leaves would take a full scan.
+func (s *Store) BrowsePage(f Filter) ([]Photo, int, bool, error) {
 	where, args := f.where()
 	var total int
 	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM photos`+where, args...).Scan(&total); err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	if f.Limit <= 0 {
 		f.Limit = 200
 	}
-	q := `SELECT ` + readCols + ` FROM photos` + where + f.order() + ` LIMIT ? OFFSET ?`
-	ps, err := s.queryPhotos(q, append(args, f.Limit, f.Offset)...)
-	return ps, total, err
+	pageWhere, pageArgs := where, args
+	if f.Stacked {
+		hide := `stacked = 0`
+		if where != "" {
+			// hidden, unless its top is filtered out: the subquery's own
+			// columns (t) are what the filter's names refer to inside it
+			hide = `(stacked = 0 OR NOT EXISTS (SELECT 1 FROM photos t` + where + ` AND t.id = photos.stack_top))`
+			pageArgs = append(append([]any{}, args...), args...)
+		}
+		if pageWhere == "" {
+			pageWhere = " WHERE " + hide
+		} else {
+			pageWhere += " AND " + hide
+		}
+	}
+	q := `SELECT ` + readCols + ` FROM photos` + pageWhere + f.order() + ` LIMIT ? OFFSET ?`
+	ps, err := s.queryPhotos(q, append(pageArgs, f.Limit+1, f.Offset)...)
+	more := len(ps) > f.Limit
+	if more {
+		ps = ps[:f.Limit]
+	}
+	return ps, total, more, err
+}
+
+// StackMembers returns the frames of the stack whose top is top, best
+// first (the top among them), or nil if it is not a stack's top.
+func (s *Store) StackMembers(top int64) ([]Photo, error) {
+	ps, err := s.queryPhotos(`SELECT `+readCols+` FROM photos WHERE (stacked = 1 AND stack_top = ?) OR (id = ? AND stack_top = ?)`, top, top, top)
+	if err != nil || len(ps) < 2 {
+		return nil, err
+	}
+	sort.SliceStable(ps, func(i, j int) bool {
+		if ps[i].Overall != ps[j].Overall {
+			return ps[i].Overall > ps[j].Overall
+		}
+		return ps[i].ID < ps[j].ID
+	})
+	return ps, nil
 }
 
 // FilterIDs returns the subset of ids that satisfy f (order not preserved).
