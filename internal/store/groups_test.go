@@ -730,7 +730,7 @@ func TestInterruptedRebuildLeavesGroupsStale(t *testing.T) {
 	o := GroupOptions{Gap: 3, Hamming: 6}
 	defer func(n, b int) { scanPage, writeBatch = n, b }(scanPage, writeBatch)
 	scanPage, writeBatch = 11, 3 // flush often
-	total := 0 // burst-scan reads in a whole run
+	total := 0                   // burst-scan reads in a whole run
 	scanHook = func(int) { total++ }
 	defer func() { scanHook = nil }()
 	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
