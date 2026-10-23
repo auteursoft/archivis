@@ -26,7 +26,7 @@ const (
 )
 
 // groupsVersion changes when the grouping rules do, forcing a rebuild.
-const groupsVersion = "1"
+const groupsVersion = "2"
 
 // GroupOptions are the rules RebuildGroups groups by.
 type GroupOptions struct {
@@ -96,6 +96,7 @@ type gphoto struct {
 	camera                                     string
 	phash                                      uint64
 	overall, technical, aesthetic, focus, colr float64
+	sharpness                                  float64
 	faces                                      int
 	cur                                        [5]int64 // burst_id, stack_top, stack_size, stacked, dup_id
 }
@@ -106,6 +107,7 @@ type groupRow struct {
 	camera                                            string
 	bestOverall, minOverall                           float64
 	maxTechnical, maxAesthetic, maxFocus, maxColorful float64
+	focusSharp                                        float64 // sharpness of the sharpest-focus member (its tie-break, as on the Photos page)
 	maxFaces                                          int
 	members                                           string // JSON ids, ascending
 }
@@ -477,7 +479,7 @@ func (r *rebuild) details(ids []int64) (map[int64]*gphoto, error) {
 	for start := 0; start < len(ids); start += 500 {
 		chunk := ids[start:min(len(ids), start+500)]
 		rows, err := r.query(`SELECT id, taken_at, TRIM(COALESCE(camera_make, '') || ' ' || COALESCE(camera_model, '')), phash, COALESCE(overall, 0),
-			COALESCE(technical, 0), COALESCE(aesthetic, 0), COALESCE(focus_score, 0), COALESCE(colorfulness, 0), face_count,
+			COALESCE(technical, 0), COALESCE(aesthetic, 0), COALESCE(focus_score, 0), COALESCE(colorfulness, 0), COALESCE(sharpness, 0), face_count,
 			burst_id, stack_top, stack_size, stacked, dup_id FROM photos WHERE id IN (`+placeholders(len(chunk))+`)`, int64sToAny(chunk)...)
 		if err != nil {
 			return nil, err
@@ -485,7 +487,7 @@ func (r *rebuild) details(ids []int64) (map[int64]*gphoto, error) {
 		for rows.Next() {
 			p := &gphoto{}
 			if err := rows.Scan(&p.id, &p.at, &p.camera, (*int64ptr)(&p.phash), &p.overall, &p.technical, &p.aesthetic,
-				&p.focus, &p.colr, &p.faces, &p.cur[0], &p.cur[1], &p.cur[2], &p.cur[3], &p.cur[4]); err != nil {
+				&p.focus, &p.colr, &p.sharpness, &p.faces, &p.cur[0], &p.cur[1], &p.cur[2], &p.cur[3], &p.cur[4]); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -512,7 +514,9 @@ func (r *rebuild) addGroup(kind int, ps []*gphoto) {
 		g.minOverall = math.Min(g.minOverall, p.overall)
 		g.maxTechnical = math.Max(g.maxTechnical, p.technical)
 		g.maxAesthetic = math.Max(g.maxAesthetic, p.aesthetic)
-		g.maxFocus = math.Max(g.maxFocus, p.focus)
+		if p.focus > g.maxFocus || (p.focus == g.maxFocus && p.sharpness > g.focusSharp) {
+			g.maxFocus, g.focusSharp = p.focus, p.sharpness
+		}
 		g.maxColorful = math.Max(g.maxColorful, p.colr)
 		g.maxFaces = max(g.maxFaces, p.faces)
 		g.start, g.end = min(g.start, p.at), max(g.end, p.at)
@@ -526,7 +530,7 @@ func (r *rebuild) addGroup(kind int, ps []*gphoto) {
 }
 
 const groupCols = `kind, id, size, start_at, end_at, camera, best_id, best_overall, min_overall,
-	max_technical, max_aesthetic, max_focus, max_colorful, max_faces, members`
+	max_technical, max_aesthetic, max_focus, focus_sharp, max_colorful, max_faces, members`
 
 // writePending writes the queued groups that are new or changed, noting the
 // old members of changed ones.
@@ -549,7 +553,7 @@ func (r *rebuild) writePending() error {
 			for rows.Next() {
 				var g groupRow
 				if err := rows.Scan(&g.kind, &g.id, &g.size, &g.start, &g.end, &g.camera, &g.best, &g.bestOverall, &g.minOverall,
-					&g.maxTechnical, &g.maxAesthetic, &g.maxFocus, &g.maxColorful, &g.maxFaces, &g.members); err != nil {
+					&g.maxTechnical, &g.maxAesthetic, &g.maxFocus, &g.focusSharp, &g.maxColorful, &g.maxFaces, &g.members); err != nil {
 					rows.Close()
 					return err
 				}
@@ -571,9 +575,9 @@ func (r *rebuild) writePending() error {
 			if ok {
 				r.noteLeft(kind, o.members)
 			}
-			if err := r.w.exec(`INSERT OR REPLACE INTO photo_groups (`+groupCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			if err := r.w.exec(`INSERT OR REPLACE INTO photo_groups (`+groupCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 				g.kind, g.id, g.size, g.start, g.end, g.camera, g.best, g.bestOverall, g.minOverall,
-				g.maxTechnical, g.maxAesthetic, g.maxFocus, g.maxColorful, g.maxFaces, g.members); err != nil {
+				g.maxTechnical, g.maxAesthetic, g.maxFocus, g.focusSharp, g.maxColorful, g.maxFaces, g.members); err != nil {
 				return err
 			}
 			r.st.GroupWrites++
@@ -789,11 +793,11 @@ func groupSort(name string) string {
 	case "aesthetic":
 		return "max_aesthetic DESC"
 	case "sharpness":
-		return "max_focus DESC"
+		return "max_focus DESC, focus_sharp DESC" // as the Photos page: focus, then sharpness
 	case "colorful":
 		return "max_colorful DESC"
 	case "faces":
-		return "max_faces DESC"
+		return "max_faces DESC, best_overall DESC" // as the Photos page: faces, then overall
 	}
 	return "best_overall DESC"
 }

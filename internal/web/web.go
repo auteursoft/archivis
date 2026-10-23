@@ -3,6 +3,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"embed"
@@ -66,8 +67,9 @@ type Server struct {
 	yearsAt  time.Time
 
 	regrouping  atomic.Bool
-	lastRegroup atomic.Int64   // unix time the last regroup started
-	background  sync.WaitGroup // regroups in flight (tests wait for them)
+	lastRegroup atomic.Int64                    // unix time the last regroup started
+	background  sync.WaitGroup                  // background work in flight (waited for on shutdown, and by tests)
+	ctx         atomic.Pointer[context.Context] // the serving lifetime (nil: not serving, as in tests)
 }
 
 type queryEntry struct {
@@ -191,10 +193,27 @@ func sameOrigin(next http.Handler) http.Handler {
 
 // ListenAndServe serves until the process exits, refreshing the in-memory
 // indexes periodically so photos indexed meanwhile become searchable.
+// The background work (refreshes, regroups) stops, and is waited for, before
+// it returns, so the caller may close the catalogue.
 func (s *Server) ListenAndServe(addr string) error {
+	ctx, stop := context.WithCancel(context.Background())
+	s.ctx.Store(&ctx)
+	defer func() {
+		stop() // a regroup in progress stops at its next step
+		s.background.Wait()
+	}()
 	s.regroupInBackground(false)
+	s.background.Add(1)
 	go func() {
-		for range time.Tick(time.Minute) {
+		defer s.background.Done()
+		tick := time.NewTicker(time.Minute)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
 			if err := s.cat.Refresh(); err != nil {
 				log.Printf("refresh: %v", err)
 			}

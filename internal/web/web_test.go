@@ -9,6 +9,7 @@ import (
 	"html"
 	"log"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -903,4 +904,31 @@ func TestYearRangeFilter(t *testing.T) {
 	if strings.Contains(get(t, h, "/"), `<option>2018</option>`) {
 		t.Error("a year without photos is still offered")
 	}
+}
+
+// When serving stops (here: the address is taken), the background work
+// (refreshes, regroups) has stopped before ListenAndServe returns, so the
+// caller can close the catalogue under it.
+func TestListenAndServeStopsBackgroundWork(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	rs := []*store.Result{{Photo: store.Photo{Path: "/x.jpg", Size: 1, MTime: 1, Fingerprint: fmt.Sprintf("%032x", 1), PHash: 7, Version: store.SchemaVersion}}}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err := s.ListenAndServe(l.Addr().String()); err == nil {
+		t.Fatal("served on a taken address")
+	}
+	done := make(chan struct{})
+	go func() { s.background.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("background work still running after ListenAndServe returned")
+	}
+	s.regroup(true) // after shutdown: does nothing
 }

@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS photo_groups (
 	max_technical REAL NOT NULL DEFAULT 0,
 	max_aesthetic REAL NOT NULL DEFAULT 0,
 	max_focus     REAL NOT NULL DEFAULT 0,
+	focus_sharp   REAL NOT NULL DEFAULT 0,
 	max_colorful  REAL NOT NULL DEFAULT 0,
 	max_faces     INTEGER NOT NULL DEFAULT 0,
 	members       TEXT NOT NULL,
@@ -117,9 +118,9 @@ CREATE INDEX IF NOT EXISTS photo_groups_end       ON photo_groups(kind, end_at);
 CREATE INDEX IF NOT EXISTS photo_groups_start     ON photo_groups(kind, start_at);
 CREATE INDEX IF NOT EXISTS photo_groups_technical ON photo_groups(kind, max_technical);
 CREATE INDEX IF NOT EXISTS photo_groups_aesthetic ON photo_groups(kind, max_aesthetic);
-CREATE INDEX IF NOT EXISTS photo_groups_focus     ON photo_groups(kind, max_focus);
+CREATE INDEX IF NOT EXISTS photo_groups_focus     ON photo_groups(kind, max_focus, focus_sharp);
 CREATE INDEX IF NOT EXISTS photo_groups_colorful  ON photo_groups(kind, max_colorful);
-CREATE INDEX IF NOT EXISTS photo_groups_faces     ON photo_groups(kind, max_faces);
+CREATE INDEX IF NOT EXISTS photo_groups_faces     ON photo_groups(kind, max_faces, best_overall);
 
 -- Deleting a stack's top shows its other frames again; any delete of a
 -- grouped photo marks the groups for rebuilding (prune, cleanups).

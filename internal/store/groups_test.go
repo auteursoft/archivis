@@ -434,3 +434,41 @@ func TestScoreChangesMakeGroupsStale(t *testing.T) {
 		t.Fatal("SetBlendedScores left the groups looking current")
 	}
 }
+
+// Sorts break ties as the Photos page does: equal focus by sharpness, equal
+// face counts by overall score, before falling back to the group id.
+func TestGroupSortTieBreaks(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*Result
+	add := func(h uint64, focus, sharp, overall float64, faces int) {
+		p := fmt.Sprintf("/t/%d", len(rs))
+		rs = append(rs, &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, PHash: h,
+			FocusScore: focus, Sharpness: sharp, Overall: overall, FaceCount: faces, Version: SchemaVersion}})
+	}
+	// set A (lower ids, so the id fallback alone would put it last): focus
+	// .9 at sharpness 20, 2 faces at overall 60
+	add(1, .9, 20, 60, 2)
+	add(1, .4, 1, 10, 0)
+	// set B: focus .9 at sharpness 10, 2 faces at overall 40
+	add(2, .9, 10, 40, 2)
+	add(2, .5, 99, 30, 0)
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RebuildGroups(context.Background(), GroupOptions{Gap: 3, Hamming: 6}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sort := range []string{"sharpness", "faces"} {
+		gs, _, err := st.GroupPage(GroupDuplicate, Filter{Sort: sort, Limit: 10}, 2)
+		if err != nil || len(gs) != 2 {
+			t.Fatalf("%s: %d groups, %v", sort, len(gs), err)
+		}
+		if gs[0].ID != rs[0].Photo.ID {
+			t.Errorf("%s: set %d first, want the set whose tie-break is higher (%d)", sort, gs[0].ID, rs[0].Photo.ID)
+		}
+	}
+}

@@ -32,9 +32,16 @@ func (s *Server) regroup(now bool) {
 	}
 	defer s.regrouping.Store(false)
 	s.lastRegroup.Store(time.Now().Unix())
-	stats, ran, err := indexer.Regroup(context.Background(), s.cat.Layout.Dir, st, o, false)
+	ctx := context.Background()
+	if c := s.ctx.Load(); c != nil {
+		ctx = *c
+	}
+	if ctx.Err() != nil {
+		return // shutting down
+	}
+	stats, ran, err := indexer.Regroup(ctx, s.cat.Layout.Dir, st, o, false)
 	switch {
-	case err != nil:
+	case err != nil && ctx.Err() == nil: // stopping at shutdown is not a failure
 		log.Printf("grouping bursts and identical images: %v", err)
 	case ran:
 		log.Printf("grouped: %s", stats)
