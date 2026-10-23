@@ -1,0 +1,16 @@
+{{define "content"}}
+{{with .Data}}
+<div class="users-page">
+<h1>Settings</h1>
+{{if .Saved}}<p class="newlink" role="status">Saved.</p>{{end}}
+<form class="inviteform" method="post" action="/admin/settings">
+  <h2>Bursts</h2>
+  <label>Burst gap (seconds)
+    <input type="number" name="burst_gap" min="{{.MinGap}}" max="{{.MaxGap}}" value="{{.Settings.BurstGap}}" required>
+  </label>
+  <button class="btn primary">Save</button>
+  <p class="note">Frames from one camera taken this many seconds apart or closer count as one burst. This is the default on the Bursts page.</p>
+</form>
+</div>
+{{end}}
+{{end}}

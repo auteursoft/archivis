@@ -120,6 +120,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/invite", s.adminInvite)
 	mux.HandleFunc("POST /admin/invite/revoke", s.adminRevokeInvite)
 	mux.HandleFunc("POST /admin/users/{id}", s.adminUser)
+	mux.HandleFunc("GET /admin/settings", s.handleSettings)
+	mux.HandleFunc("POST /admin/settings", s.saveSettings)
 	var h http.Handler = mux
 	h = s.authenticate(h)
 	h = sameOrigin(h)
@@ -1125,7 +1127,7 @@ func (s *Server) handleBursts(w http.ResponseWriter, r *http.Request) {
 	f := parseFilter(r)
 	gap, _ := strconv.ParseInt(r.URL.Query().Get("gap"), 10, 64)
 	if gap <= 0 || gap > 3600 {
-		gap = 3
+		gap = int64(s.cat.Store.GetSettings().BurstGap) // the catalogue's default (Settings)
 	}
 	pg, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	pg = min(max(pg, 0), maxBurstPage)
