@@ -602,3 +602,58 @@ func TestOldestIgnoresUndatedMembers(t *testing.T) {
 		t.Fatalf("oldest first: %v, want the 2020 set, then 2025, then undated", got)
 	}
 }
+
+// The rebuild's writer holds no transaction between its writes: whatever
+// the rebuild computes in between, another writer gets the lock at once.
+// Queued writes land on commit; rollback drops them.
+func TestBatchWriterHoldsNoLockBetweenWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "w.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	rs := []*Result{{Photo: Photo{Path: "/w", Size: 1, MTime: 1, Fingerprint: "/w", Version: SchemaVersion}}}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	// another writer that gives up at once if the lock is held
+	other, err := sql.Open("sqlite3", "file:"+path+"?_busy_timeout=0&_txlock=immediate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	tryWrite := func(when string) {
+		t.Helper()
+		if _, err := other.Exec(`UPDATE photos SET path = path WHERE id = ?`, rs[0].Photo.ID); err != nil {
+			t.Fatalf("%s: another writer is blocked: %v", when, err)
+		}
+	}
+	w := &batchWriter{s: st}
+	for i := 0; i < writeBatch+10; i++ { // one flush happens along the way
+		if err := w.exec(`UPDATE photos SET burst_id = ? WHERE id = ?`, i+1, rs[0].Photo.ID); err != nil {
+			t.Fatal(err)
+		}
+		if i%97 == 0 {
+			tryWrite(fmt.Sprintf("after write %d", i))
+		}
+	}
+	tryWrite("with writes queued")
+	if err := w.commit(); err != nil {
+		t.Fatal(err)
+	}
+	var got int64
+	st.DB.QueryRow(`SELECT burst_id FROM photos WHERE id = ?`, rs[0].Photo.ID).Scan(&got)
+	if got != writeBatch+10 {
+		t.Fatalf("after commit burst_id = %d, want %d", got, writeBatch+10)
+	}
+	w.exec(`UPDATE photos SET burst_id = 1 WHERE id = ?`, rs[0].Photo.ID)
+	w.rollback()
+	if err := w.commit(); err != nil {
+		t.Fatal(err)
+	}
+	st.DB.QueryRow(`SELECT burst_id FROM photos WHERE id = ?`, rs[0].Photo.ID).Scan(&got)
+	if got != writeBatch+10 {
+		t.Fatal("a rolled-back write landed")
+	}
+}

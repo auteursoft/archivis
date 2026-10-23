@@ -291,11 +291,7 @@ func (r *rebuild) burstDetails(runs [][]int64) error {
 	if err != nil {
 		return err
 	}
-	// Work out every run first, then write: a write transaction must not
-	// stay open (blocking other writers) through the stacking.
-	if err := r.w.commit(); err != nil {
-		return err
-	}
+	// Work out every run, then queue the writes.
 	type plan struct {
 		burst  int64
 		frames []*gphoto
@@ -738,58 +734,77 @@ func dedupe(ids []int64) []int64 {
 	return out
 }
 
-// batchWriter runs statements in short transactions: at most writeBatch
-// statements or writeSlice of time each, so other writers (the web
-// interface naming a face) wait at most that long.
+// batchWriter writes in short transactions, so other writers (the web
+// interface naming a face, an index run) wait at most a few milliseconds.
+// Statements are queued, not run: a transaction is open only while a full
+// queue (or commit) is flushed, never while the rebuild computes between
+// writes. A flush ends its transaction after writeBatch statements or
+// writeSlice of time, whichever comes first. Queued writes are not visible
+// to reads until flushed (rebuild.query flushes before reading).
 type batchWriter struct {
 	s     *Store
-	tx    *sql.Tx
-	stmts map[string]*sql.Stmt // prepared in tx
-	n     int
-	began time.Time
+	queue []queued
+}
+
+type queued struct {
+	q    string
+	args []any
 }
 
 func (w *batchWriter) exec(q string, args ...any) error {
-	if w.tx == nil {
-		tx, err := w.s.DB.Begin()
-		if err != nil {
-			return err
-		}
-		w.tx, w.stmts, w.n, w.began = tx, map[string]*sql.Stmt{}, 0, time.Now()
-	}
-	st := w.stmts[q]
-	if st == nil {
-		var err error
-		if st, err = w.tx.Prepare(q); err != nil {
-			return err
-		}
-		w.stmts[q] = st
-	}
-	if _, err := st.Exec(args...); err != nil {
-		return err
-	}
-	w.n++
-	if w.n >= writeBatch || time.Since(w.began) >= writeSlice {
+	w.queue = append(w.queue, queued{q, args})
+	if len(w.queue) >= writeBatch {
 		return w.commit()
 	}
 	return nil
 }
 
+// commit runs every queued statement.
 func (w *batchWriter) commit() error {
-	if w.tx == nil {
-		return nil
+	for len(w.queue) > 0 {
+		n, err := w.flush(w.queue)
+		w.queue = w.queue[n:]
+		if err != nil {
+			w.queue = nil
+			return err
+		}
 	}
-	err := w.tx.Commit() // closes the statements
-	w.tx, w.stmts = nil, nil
-	return err
+	w.queue = nil
+	return nil
 }
 
-func (w *batchWriter) rollback() {
-	if w.tx != nil {
-		w.tx.Rollback()
-		w.tx, w.stmts = nil, nil
+// flush runs queued statements in one transaction until they or its time
+// slice run out, returning how many it committed.
+func (w *batchWriter) flush(qs []queued) (int, error) {
+	tx, err := w.s.DB.Begin()
+	if err != nil {
+		return 0, err
 	}
+	defer tx.Rollback() // after Commit, a no-op
+	stmts := map[string]*sql.Stmt{}
+	began := time.Now()
+	n := 0
+	for _, x := range qs {
+		st := stmts[x.q]
+		if st == nil {
+			if st, err = tx.Prepare(x.q); err != nil {
+				return 0, err
+			}
+			stmts[x.q] = st
+		}
+		if _, err := st.Exec(x.args...); err != nil {
+			return 0, err
+		}
+		n++
+		if time.Since(began) >= writeSlice {
+			break
+		}
+	}
+	return n, tx.Commit() // closes the statements
 }
+
+// rollback drops the queued statements (those already flushed stay).
+func (w *batchWriter) rollback() { w.queue = nil }
 
 // ---- reading groups ---------------------------------------------------
 
