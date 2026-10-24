@@ -187,6 +187,25 @@ CREATE TABLE IF NOT EXISTS errors (
 
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
+-- The folders indexed (archivis index ROOT...; archivis roots), shown as
+-- the top level of Albums.
+CREATE TABLE IF NOT EXISTS roots (
+	path     TEXT PRIMARY KEY,
+	added_at INTEGER NOT NULL DEFAULT 0
+);
+
+-- Every folder holding photos (at any depth below it), with its count and
+-- best photo: worked out with the groups (RebuildFolders), so Albums pages
+-- read an index.
+CREATE TABLE IF NOT EXISTS folders (
+	path          TEXT PRIMARY KEY,
+	parent        TEXT NOT NULL,
+	total         INTEGER NOT NULL,
+	cover_id      INTEGER NOT NULL,
+	cover_overall REAL NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent, path);
+
 CREATE TABLE IF NOT EXISTS aesthetic_models (
 	id         TEXT PRIMARY KEY,
 	name       TEXT NOT NULL,

@@ -138,3 +138,9 @@ table.users form { margin: 0; display: inline; }
 /* viewers: the server refuses edits; hide the controls for them */
 .readonly .assignbar, .readonly [data-action], .readonly .aesthetic-feedback, .readonly input.pick, .readonly .inline-assign { display: none; }
 .filters .yearrange { display: flex; align-items: center; gap: 6px; }
+
+/* Albums: folder cards, named across the bottom, and the way up */
+.card.album .name { position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 8px 6px; font-size: 13px; font-weight: 600; color: #fff;
+  background: linear-gradient(transparent, rgba(0,0,0,.7)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid.albums { margin-bottom: 16px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.crumbs { margin: 8px 0 12px; font-size: 14px; overflow-wrap: anywhere; }

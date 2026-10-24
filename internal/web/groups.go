@@ -17,8 +17,8 @@ import (
 // arriving (an index run regroups when it finishes anyway).
 const regroupEvery = 30 * time.Minute
 
-// regroup brings the bursts, stacks and sets of identical images up to date
-// in the background, if they are stale; now skips the wait (the rules
+// regroup brings the bursts, stacks, sets of identical images and folders
+// up to date in the background, if they are stale; now skips the wait (the rules
 // changed). One runs at a time.
 func (s *Server) regroup(now bool) {
 	st := s.cat.Store
@@ -27,7 +27,7 @@ func (s *Server) regroup(now bool) {
 	if !now && time.Since(time.Unix(s.lastRegroup.Load(), 0)) < regroupEvery {
 		return
 	}
-	if !st.GroupsStale(o) || !s.regrouping.CompareAndSwap(false, true) {
+	if (!st.GroupsStale(o) && !st.FoldersStale()) || !s.regrouping.CompareAndSwap(false, true) {
 		return
 	}
 	defer s.regrouping.Store(false)

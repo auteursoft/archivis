@@ -43,8 +43,10 @@ func (s *Store) GroupOptions() GroupOptions {
 
 // RebuildStats reports what RebuildGroups found and wrote.
 type RebuildStats struct {
-	Bursts, Stacks, Duplicates int // groups found (bursts of 2+ frames)
-	PhotoWrites, GroupWrites   int // rows changed
+	Bursts, Stacks, Duplicates int  // groups found (bursts of 2+ frames)
+	PhotoWrites, GroupWrites   int  // rows changed
+	Folders, FolderWrites      int  // folders found and changed (when worked out)
+	FoldersOnly                bool // only the folders were worked out
 	Took                       time.Duration
 }
 
@@ -1364,6 +1366,14 @@ func (s *Store) bestOf(members map[int64][]int64, keep map[int64]bool) (map[int6
 
 // String describes the stats for logs.
 func (st RebuildStats) String() string {
-	return fmt.Sprintf("%d bursts (%d stacks), %d sets of identical images; %d photos and %d groups updated in %s",
-		st.Bursts, st.Stacks, st.Duplicates, st.PhotoWrites, st.GroupWrites, st.Took.Round(time.Millisecond))
+	var s string
+	if !st.FoldersOnly {
+		s = fmt.Sprintf("%d bursts (%d stacks), %d sets of identical images; %d photos and %d groups updated; ",
+			st.Bursts, st.Stacks, st.Duplicates, st.PhotoWrites, st.GroupWrites)
+	}
+	if st.FoldersOnly || st.Folders > 0 || st.FolderWrites > 0 {
+		s += fmt.Sprintf("%d folders (%d updated); ", st.Folders, st.FolderWrites)
+	}
+	s = strings.TrimSuffix(s, "; ")
+	return s + " in " + st.Took.Round(time.Millisecond).String()
 }

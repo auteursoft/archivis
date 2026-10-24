@@ -11,6 +11,7 @@
   <a class="brand" href="/">Archivis</a>
   {{if not .Bare}}<nav>
     <a href="/" class="{{if eq .Nav "browse"}}on{{end}}">Photos</a>
+    <a href="/albums" class="{{if eq .Nav "albums"}}on{{end}}">Albums</a>
     <a href="/people" class="{{if eq .Nav "people"}}on{{end}}">People</a>
     <a href="/discover" class="{{if eq .Nav "discover"}}on{{end}}">Discover</a>
     <a href="/bursts" class="{{if eq .Nav "bursts"}}on{{end}}">Bursts</a>
@@ -106,6 +107,8 @@
 {{$p := .Params}}
 <form class="filters" method="get" action="{{$p.action}}">
   {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
+  {{with $p.dir}}<input type="hidden" name="dir" value="{{.}}">{{end}}
+  {{with $p.iphone}}<input type="hidden" name="iphone" value="{{.}}">{{end}}
   <label>Sort
     <select name="sort">
       {{$sort := index $p "sort"}}{{if $.Query}}<option value="relevance" {{if or (eq $sort "") (eq $sort "relevance")}}selected{{end}}>Best match</option>{{end}}
@@ -186,6 +189,6 @@
   <label>Camera <input type="text" name="camera" value="{{$p.camera}}" size="8"></label>
   <label>Path <input type="text" name="path" value="{{$p.path}}" size="10"></label>
   <button class="btn primary">Apply</button>
-  <a class="btn ghost" href="{{$p.action}}{{if .Query}}?q={{q .Query}}{{end}}">Reset</a>
+  <a class="btn ghost" href="{{with $p.reset}}{{.}}{{else}}{{$p.action}}{{if .Query}}?q={{q .Query}}{{end}}{{end}}">Reset</a>
 </form>
 {{end}}
