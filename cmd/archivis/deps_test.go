@@ -1,0 +1,143 @@
+package main
+
+import (
+	"archive/zip"
+	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// manifest reads tools/deps/assets.txt: mirror name -> sha256, original URL.
+func manifest(t *testing.T) map[string][2]string {
+	t.Helper()
+	f, err := os.Open("../../tools/deps/assets.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	out := map[string][2]string{}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fs := strings.Fields(line)
+		if len(fs) != 3 || len(fs[0]) != 64 {
+			t.Fatalf("assets.txt: bad line %q", line)
+		}
+		if _, dup := out[fs[1]]; dup {
+			t.Fatalf("assets.txt: %s listed twice", fs[1])
+		}
+		out[fs[1]] = [2]string{fs[0], fs[2]}
+	}
+	return out
+}
+
+// Every file setup downloads is in the mirror manifest, from the same
+// original, with the same checksum, and setup falls back to its mirror
+// copy: adding a model or runtime without mirroring it fails here.
+func TestDepsManifestMatchesSetup(t *testing.T) {
+	m := manifest(t)
+	for name, sum := range ortSHA256 {
+		e, ok := m[name]
+		if !ok || e[0] != sum {
+			t.Errorf("ONNX Runtime %s: manifest has %v, setup pins %s", name, e, sum)
+		}
+		if urls := ortURLs(name); urls[0] != e[1] || urls[len(urls)-1] != mirrorBase+name {
+			t.Errorf("ONNX Runtime %s: sources %v, manifest original %s", name, urls, e[1])
+		}
+	}
+	for _, mf := range modelFiles {
+		if len(mf.urls) < 2 {
+			t.Errorf("%s: no mirror to fall back to: %v", mf.dest, mf.urls)
+			continue
+		}
+		last := mf.urls[len(mf.urls)-1]
+		name := strings.TrimPrefix(last, mirrorBase)
+		e, ok := m[name]
+		switch {
+		case !strings.HasPrefix(last, mirrorBase) || !ok:
+			t.Errorf("%s: last source %s is not a mirrored file", mf.dest, last)
+		case e[1] != mf.urls[0]:
+			t.Errorf("%s: original %s, manifest has %s", mf.dest, mf.urls[0], e[1])
+		case mf.zipMember == "" && e[0] != mf.sha256:
+			t.Errorf("%s: setup pins %s, manifest %s", mf.dest, mf.sha256, e[0])
+		}
+	}
+}
+
+// A source that is gone, or serves a different file, falls through to the
+// next (the mirror), for plain files, zip members and ONNX Runtime.
+func TestSetupFallsBackToMirror(t *testing.T) {
+	good := []byte(strings.Repeat("model bytes ", 200))
+	sum := sha256.Sum256(good)
+	zipped := zipOf(t, map[string][]byte{"m.onnx": good})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/gone", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+	mux.HandleFunc("/changed", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(strings.Repeat("other ", 300))) })
+	mux.HandleFunc("/changed.zip", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(zipOf(t, map[string][]byte{"m.onnx": []byte(strings.Repeat("other ", 300))}))
+	})
+	mux.HandleFunc("/mirror/m.onnx", func(w http.ResponseWriter, r *http.Request) { w.Write(good) })
+	mux.HandleFunc("/mirror/b.zip", func(w http.ResponseWriter, r *http.Request) { w.Write(zipped) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	dir := t.TempDir()
+	for _, c := range []struct {
+		name string
+		m    modelFile
+	}{
+		{"gone", modelFile{urls: []string{srv.URL + "/gone", srv.URL + "/mirror/m.onnx"}}},
+		{"changed", modelFile{urls: []string{srv.URL + "/changed", srv.URL + "/mirror/m.onnx"}}},
+		{"zip gone", modelFile{urls: []string{srv.URL + "/gone", srv.URL + "/mirror/b.zip"}, zipMember: "m.onnx"}},
+		{"zip changed", modelFile{urls: []string{srv.URL + "/changed.zip", srv.URL + "/mirror/b.zip"}, zipMember: "m.onnx"}},
+	} {
+		c.m.sha256 = hex.EncodeToString(sum[:])
+		dest := filepath.Join(dir, strings.ReplaceAll(c.name, " ", "_"))
+		zc := map[string]string{}
+		if err := fetchModel(c.m, dest, zc); err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		} else if b, _ := os.ReadFile(dest); string(b) != string(good) {
+			t.Errorf("%s: wrong file", c.name)
+		}
+		for _, p := range zc {
+			os.Remove(p)
+		}
+	}
+	// every source failing is an error, and leaves nothing behind
+	dest := filepath.Join(dir, "none")
+	if err := fetchModel(modelFile{urls: []string{srv.URL + "/gone", srv.URL + "/changed"}, sha256: hex.EncodeToString(sum[:])}, dest, map[string]string{}); err == nil {
+		t.Error("no good source, yet no error")
+	}
+	if _, err := os.Stat(dest); err == nil {
+		t.Error("a mismatched file was left in place")
+	}
+	if err := fetchVerified([]string{srv.URL + "/changed", srv.URL + "/mirror/m.onnx"}, filepath.Join(dir, "ort"), hex.EncodeToString(sum[:])); err != nil {
+		t.Errorf("fetchVerified: %v", err)
+	}
+}
+
+func zipOf(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	zw := zip.NewWriter(&b)
+	for name, data := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Write(data)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}

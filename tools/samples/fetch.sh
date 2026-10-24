@@ -6,26 +6,25 @@
 #
 #   tools/samples/fetch.sh DIR
 #   ARCHIVIS_SAMPLES=DIR go test ./internal/imageio/ -run RealSamples
+#   tools/samples/fetch.sh --list     the files: sha256 url, one per line
+#
+# A file the original no longer serves (or serves changed) comes from
+# auteursoft's mirror (.github/workflows/deps.yml) instead.
+# ARCHIVIS_SAMPLES_ORIGIN_OFF=1 skips the originals, to test the mirror.
 #
 # rawpy (letmaik/rawpy, test files): the NEFs are NASA photographs from the
 # International Space Station (public domain); the CR2s are from
 # rawsamples.ch (CC BY-NC-SA 4.0).
 # PhotoPrism (photoprism/photoprism, assets/samples): AGPL-3.0 project.
 set -eu
-dir=${1:?usage: fetch.sh DIR}
-mkdir -p "$dir"
+mirror=https://github.com/auteursoft/archivis/releases/download/deps
 rawpy=https://raw.githubusercontent.com/letmaik/rawpy/a39c2e7a44911889c3360891012f862f904ba551/test
 pp=https://raw.githubusercontent.com/photoprism/photoprism/fd375b3ca7ddd4d58e6f46f895a64a27734dc1b2/assets/samples
 sha() { # sha256sum on Linux, shasum on macOS
 	if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
 }
-while read -r sum url; do
-	f="$dir/$(basename "$url")"
-	if [ ! -f "$f" ] || [ "$(sha "$f")" != "$sum" ]; then
-		curl -fsSL --retry 3 -o "$f" "$url"
-	fi
-	[ "$(sha "$f")" = "$sum" ] || { echo "checksum mismatch: $f" >&2; exit 1; }
-done <<LIST
+list() {
+	cat <<LIST
 add8183e643d98d5b07479d50bf5591838451d43449fd3399e2f146cf19beb8d $rawpy/M0054341_01_00005.cr2
 152382ce4dbf644899d12b41b4c577f07638aa3ec5745ac344c36bad93826125 $rawpy/RAW_CANON_40D_SRAW_V103.CR2
 0da28f6f2718ea82fdf95c35a1790597a3a7ecbe328a3f5b60a05f4e95e380e6 $rawpy/RAW_CANON_5DMARK2_PREPROD.CR2
@@ -35,4 +34,21 @@ e5a7adfb8f7fbe43a31e637dab5bc161ed4af2c128f76bc1eb04162373893ecf $pp/canon_eos_6
 c68e438f92341da271a731a059113db9395366f4c2f78ead5ded64deba7de463 $pp/iphone_15_pro.heic
 2a2b5531ac2e1e3dd191f3386a09da2a39ce7f69b2d2dfd749c6c88129745040 $pp/iphone_7.heic
 LIST
+}
+if [ "${1:-}" = --list ]; then
+	list
+	exit 0
+fi
+dir=${1:?usage: fetch.sh DIR | --list}
+mkdir -p "$dir"
+list | while read -r sum url; do
+	f="$dir/$(basename "$url")"
+	[ -f "$f" ] && [ "$(sha "$f")" = "$sum" ] && continue
+	if [ -z "${ARCHIVIS_SAMPLES_ORIGIN_OFF:-}" ] && curl -fsSL --retry 3 -o "$f" "$url" && [ "$(sha "$f")" = "$sum" ]; then
+		continue
+	fi
+	echo "$(basename "$url"): from the auteursoft mirror" >&2
+	curl -fsSL --retry 3 -o "$f" "$mirror/$(basename "$url")" || true
+	[ -f "$f" ] && [ "$(sha "$f")" = "$sum" ] || { echo "checksum mismatch or missing: $f" >&2; exit 1; }
+done
 echo "samples ready in $dir"

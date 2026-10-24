@@ -1,0 +1,18 @@
+# Every repository Archivis depends on, forked into the auteursoft
+# organization by tools/deps/fork.sh, with what each is used for.
+# One per line: owner/repo  go-module-path (or "-")  use
+mattn/go-sqlite3          github.com/mattn/go-sqlite3       Go module: the catalogue database
+yalue/onnxruntime_go      github.com/yalue/onnxruntime_go   Go module: runs the ONNX models
+golang/crypto             golang.org/x/crypto               Go module: password hashing (Argon2id)
+golang/image              golang.org/x/image                Go module: BMP, TIFF and WebP decoding
+golang/sys                golang.org/x/sys                  Go module: Windows system calls
+golang/term               golang.org/x/term                 Go module: indirect (needed by x/crypto)
+golang/text               golang.org/x/text                 Go module: Unicode normalisation, name matching
+microsoft/onnxruntime     -   setup: ONNX Runtime (release archives mirrored, see assets.txt)
+deepinsight/insightface   -   setup: face detection and recognition models (buffalo_l)
+jina-ai/clip-as-service   -   setup: CLIP ViT-B/32 ONNX export (files on S3, mirrored)
+letmaik/rawpy             -   CI: camera sample files
+photoprism/photoprism     -   CI: camera sample files
+actions/checkout          -   CI: GitHub Action
+actions/setup-go          -   CI: GitHub Action
+actions/cache             -   CI: GitHub Action

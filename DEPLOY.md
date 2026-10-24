@@ -682,6 +682,48 @@ new photos with the previous models. To go back to an earlier model:
 `archivis aesthetic use eva-ridge`. IDs can be shortened to any unique
 prefix.
 
+## Dependencies and fallbacks
+
+Everything Archivis depends on has a copy in the auteursoft GitHub
+organization. If an original disappears or changes, Archivis keeps
+building and setting up.
+
+- **Downloaded files.** These are the ONNX Runtime, the face models, the
+  CLIP models and the camera test files. Each has a copy in the
+  [`deps` release](https://github.com/auteursoft/archivis/releases/tag/deps).
+  `archivis setup` tries the original first, then the copy, and checks
+  every file against its pinned SHA-256 either way. So a missing original,
+  or one replaced by something else, falls back on its own.
+  `tools/samples/fetch.sh` does the same for the test files.
+- **Repositories.** `tools/deps/repos.txt` lists each one and what it is
+  used for. Each is forked into auteursoft by `tools/deps/fork.sh`. Run it
+  once, and again from time to time to sync the forks and copy new
+  version tags:
+
+  ```sh
+  tools/deps/fork.sh           # needs a GitHub CLI that may create repositories in auteursoft
+  tools/deps/fork.sh --check   # which forks exist
+  ```
+
+- **Go modules.** proxy.golang.org keeps every published version even if
+  its repository is deleted, so builds keep working. If you need the
+  forks anyway:
+
+  ```sh
+  tools/deps/use-forks.sh                    # every module, at the versions go.mod pins
+  tools/deps/use-forks.sh golang.org/x/image # or just one
+  tools/deps/use-forks.sh --undo
+  ```
+
+- **GitHub Actions** used by CI. If one goes, change its `uses:` line to
+  `auteursoft/<name>@<same version>`.
+
+A weekly job (`.github/workflows/deps.yml`) keeps the copies complete. It
+fails, naming what went, when an original file, repository or Go module
+stops answering. So a loss shows up while the copies still have it. Each
+copied file keeps its own licence, which the release notes list. The
+InsightFace models are for non-commercial research use only.
+
 ## Updating
 
 If you cloned the code from its earlier home (the `photodex-go` branch of
