@@ -87,3 +87,22 @@ func TestAlbumIPhone(t *testing.T) {
 		t.Error("the iPhone album shows photos from elsewhere")
 	}
 }
+
+// The header's search, in an album, searches the album.
+func TestAlbumSearchStaysInAlbum(t *testing.T) {
+	s := albumsServer(t, []string{"/pics"})
+	h := s.Handler()
+	body := html.UnescapeString(get(t, h, "/albums?dir=%2Fpics%2F2019"))
+	i := strings.Index(body, `<form class="search"`)
+	if i < 0 {
+		t.Fatal("no search form")
+	}
+	form := body[i : i+strings.Index(body[i:], "</form>")]
+	mustContain(t, "album search form", form, `action="/albums"`, `<input type="hidden" name="dir" value="/pics/2019">`, "Search this album")
+	body = html.UnescapeString(get(t, h, "/albums?iphone=1"))
+	i = strings.Index(body, `<form class="search"`)
+	mustContain(t, "iPhone search form", body[i:i+strings.Index(body[i:], "</form>")], `action="/albums"`, `name="iphone" value="1"`)
+	body = get(t, h, "/")
+	i = strings.Index(body, `<form class="search"`)
+	mustContain(t, "photos search form", body[i:i+strings.Index(body[i:], "</form>")], `action="/"`)
+}

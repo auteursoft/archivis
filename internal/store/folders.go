@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,7 +17,7 @@ import (
 // RebuildFolders, for the Albums pages. Roots are the folders indexed.
 
 // foldersVersion changes when the rules do, forcing a rebuild.
-const foldersVersion = "1"
+const foldersVersion = "2"
 
 // Folder is a folder holding photos somewhere below it.
 type Folder struct {
@@ -51,10 +53,17 @@ func TrimDir(p string) string {
 	return "/"
 }
 
-// ParentDir is the folder holding p ("" at the top: below "/" or "C:").
+// ParentDir is the folder holding p: "/" for /pics, and "" for "/" and
+// the top of a Windows path ("C:").
 func ParentDir(p string) string {
 	i := strings.LastIndexAny(p, seps(p))
-	if i <= 0 {
+	switch {
+	case p == "/" || i < 0:
+		return ""
+	case i == 0:
+		if seps(p) == "/" {
+			return "/"
+		}
 		return ""
 	}
 	return p[:i]
@@ -154,27 +163,59 @@ func (s *Store) Subfolders(path string) ([]Folder, error) {
 }
 
 // PhotosLibraries lists the Apple Photos libraries (*.photoslibrary
-// folders) that hold photos, by path.
+// folders, not counting one inside another) that hold photos, by path, as
+// the last RebuildFolders found them.
 func (s *Store) PhotosLibraries() ([]Folder, error) {
-	fs, err := s.folders(`WHERE path LIKE '%.photoslibrary' ORDER BY path`)
-	if err != nil {
-		return nil, err
-	}
-	// a library inside another library's folder would count twice
-	var out []Folder
-	for _, f := range fs {
-		if len(out) > 0 && InDir(f.Path, out[len(out)-1].Path) {
-			continue
+	var paths []string
+	if v := s.GetMeta("folders_libraries"); v != "" {
+		if err := json.Unmarshal([]byte(v), &paths); err != nil {
+			return nil, err
 		}
-		out = append(out, f)
 	}
-	return out, nil
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(paths))
+	for i, p := range paths {
+		args[i] = p
+	}
+	return s.folders(`WHERE path IN (`+placeholders(len(paths))+`) ORDER BY path`, args...)
+}
+
+func isLibrary(p string) bool {
+	const ext = ".photoslibrary"
+	return len(p) > len(ext) && strings.EqualFold(p[len(p)-len(ext):], ext)
+}
+
+// outermost keeps the libraries not inside another of them, by path.
+func outermost(libs []string) []string {
+	in := map[string]bool{}
+	for _, l := range libs {
+		in[l] = true
+	}
+	var out []string
+	for _, l := range libs {
+		nested := false
+		for d := ParentDir(l); d != "" && !nested; d = ParentDir(d) {
+			nested = in[d]
+		}
+		if !nested {
+			out = append(out, l)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// foldersDirty changes whenever photos are deleted or moved.
+func (s *Store) foldersDirty() string {
+	return s.GetMeta("groups_dirty") + "/" + s.GetMeta("folders_dirty")
 }
 
 // FoldersStale reports whether the folders may be out of date: photos
-// added, changed or deleted since, or never worked out.
+// added, changed, moved or deleted since, or never worked out.
 func (s *Store) FoldersStale() bool {
-	if s.GetMeta("folders_version") != foldersVersion || s.GetMeta("groups_dirty") != s.GetMeta("folders_clean") {
+	if s.GetMeta("folders_version") != foldersVersion || s.foldersDirty() != s.GetMeta("folders_clean") {
 		return true
 	}
 	seq, err := strconv.ParseInt(s.GetMeta("folders_seq"), 10, 64)
@@ -195,7 +236,7 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 	start := time.Now()
 	var st FolderStats
 	seq := s.MaxSeq()
-	dirty := s.GetMeta("groups_dirty")
+	dirty := s.foldersDirty()
 	if err := s.SetMeta("folders_version", ""); err != nil { // stale until finished
 		return st, err
 	}
@@ -247,10 +288,14 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 	// folder's photos needn't come together (C:\a\x, C:\a2\y, C:\a/z), so
 	// its parts are added up here.
 	win := map[string]Folder{}
+	var libs []string             // Apple Photos libraries
 	finish := func(n int) error { // close the deepest n open folders
 		for ; n > 0; n-- {
 			f := chain[len(chain)-1].f
 			chain = chain[:len(chain)-1]
+			if isLibrary(f.Path) && (len(libs) == 0 || libs[len(libs)-1] != f.Path) {
+				libs = append(libs, f.Path)
+			}
 			if seps(f.Path) != "/" {
 				if o, ok := win[f.Path]; ok {
 					f.Total += o.Total
@@ -374,8 +419,13 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 	if err := w.commit(); err != nil {
 		return st, err
 	}
-	for k, v := range map[string]string{"folders_seq": strconv.FormatInt(seq, 10), "folders_clean": dirty, "folders_version": foldersVersion} {
-		if err := s.SetMeta(k, v); err != nil {
+	lj, err := json.Marshal(outermost(slices.Compact(slices.Sorted(slices.Values(libs)))))
+	if err != nil {
+		return st, err
+	}
+	// the version last: until it is written, the folders read as stale
+	for _, kv := range [][2]string{{"folders_libraries", string(lj)}, {"folders_seq", strconv.FormatInt(seq, 10)}, {"folders_clean", dirty}, {"folders_version", foldersVersion}} {
+		if err := s.SetMeta(kv[0], kv[1]); err != nil {
 			return st, err
 		}
 	}

@@ -18,8 +18,10 @@
     <a href="/duplicates" class="{{if eq .Nav "duplicates"}}on{{end}}">Duplicates</a>
     <a href="/guide" class="{{if eq .Nav "guide"}}on{{end}}">Scores</a>
   </nav>
-  <form class="search" action="/" method="get">
-    <input type="search" name="q" value="{{.Query}}" placeholder="Describe a photo… e.g. “protest at night in the rain”">
+  {{/* in an album, search within it */}}{{$album := or .Params.dir .Params.iphone}}
+  <form class="search" action="{{if $album}}/albums{{else}}/{{end}}" method="get">
+    {{with .Params.dir}}<input type="hidden" name="dir" value="{{.}}">{{end}}{{with .Params.iphone}}<input type="hidden" name="iphone" value="{{.}}">{{end}}
+    <input type="search" name="q" value="{{.Query}}" placeholder="{{if $album}}Search this album… e.g. “sunset on the beach”{{else}}Describe a photo… e.g. “protest at night in the rain”{{end}}">
   </form>
   <form class="upload" action="/query" method="post" enctype="multipart/form-data" title="Search with a photo: finds the people in it and similar scenes">
     <label class="btn filebtn">Search by photo<input class="visually-hidden" type="file" name="image" accept="image/*,.cr2,.cr3,.nef,.arw,.dng,.raf,.orf,.rw2,.heic" onchange="this.form.submit()"></label>

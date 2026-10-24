@@ -139,6 +139,13 @@ BEGIN
 		VALUES ('groups_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'groups_dirty'), 0) + 1);
 END;
 
+-- A photo moved (a file recognised at a new path) changes the folders.
+CREATE TRIGGER IF NOT EXISTS photos_moved AFTER UPDATE OF path ON photos
+BEGIN
+	INSERT OR REPLACE INTO meta (key, value)
+		VALUES ('folders_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'folders_dirty'), 0) + 1);
+END;
+
 -- CLIP embeddings live in their own table so that filtering and counting
 -- photos scans small rows (the 1 KB blobs made full scans ~7x slower).
 CREATE TABLE IF NOT EXISTS photo_clip (

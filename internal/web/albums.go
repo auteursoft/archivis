@@ -59,8 +59,11 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 	}
 	roots, err := st.Roots()
 	fail(err)
-	libs, err := st.PhotosLibraries()
-	fail(err)
+	var libs []store.Folder
+	if dir == "" { // the top page or the iPhone album
+		libs, err = st.PhotosLibraries()
+		fail(err)
+	}
 
 	if dir == "" && !iphone {
 		d.Top = true

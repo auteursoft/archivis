@@ -315,3 +315,74 @@ func TestRoots(t *testing.T) {
 		t.Fatal("removed twice")
 	}
 }
+
+// A move (a file recognised at a new path) changes the folders: they must
+// read as stale, and the rebuild must follow the photo.
+func TestMovedPhotoMakesFoldersStale(t *testing.T) {
+	st := folderStore(t)
+	savePaths(t, st, map[string]float64{"/old/a.jpg": 1, "/keep/b.jpg": 2})
+	rebuildFolders(t, st)
+	var id int64
+	if err := st.DB.QueryRow(`SELECT id FROM photos WHERE path = '/old/a.jpg'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MovePath(id, "/new/a.jpg", 2); err != nil {
+		t.Fatal(err)
+	}
+	if !st.FoldersStale() {
+		t.Fatal("a move left the folders current")
+	}
+	rebuildFolders(t, st)
+	if f, _ := st.Folder("/old"); f != nil {
+		t.Fatalf("/old still listed after the move: %+v", f)
+	}
+	if f, _ := st.Folder("/new"); f == nil || f.Total != 1 {
+		t.Fatalf("Folder(/new) = %+v", f)
+	}
+}
+
+// "/" is a folder like any other: a recorded root of "/" has a count,
+// a cover and subfolders.
+func TestSlashIsAFolder(t *testing.T) {
+	st := folderStore(t)
+	savePaths(t, st, map[string]float64{"/pics/a.jpg": 1, "/docs/b.jpg": 5, `C:\w\c.jpg`: 9})
+	rebuildFolders(t, st)
+	f, _ := st.Folder("/")
+	if f == nil || f.Total != 2 || f.CoverOverall != 5 {
+		t.Fatalf("Folder(/) = %+v, want the 2 Unix photos, the 5 as cover", f)
+	}
+	subs, _ := st.Subfolders("/")
+	if len(subs) != 2 || subs[0].Path != "/docs" || subs[1].Path != "/pics" {
+		t.Fatalf("Subfolders(/) = %+v", subs)
+	}
+	if ParentDir("/") != "" || ParentDir(`C:`) != "" || ParentDir(`C:\w`) != "C:" || ParentDir("/pics") != "/" {
+		t.Fatal("ParentDir tops")
+	}
+}
+
+// Libraries inside a library count once, even when another name sorts
+// between them (a.photoslibrary-old.photoslibrary).
+func TestNestedLibrariesCountOnce(t *testing.T) {
+	st := folderStore(t)
+	savePaths(t, st, map[string]float64{
+		"/a.photoslibrary/originals/1.heic":                      1,
+		"/a.photoslibrary-old.photoslibrary/originals/2.heic":    2,
+		"/a.photoslibrary/nested.photoslibrary/originals/3.heic": 3,
+		"/b/Photos Library.PHOTOSLIBRARY/originals/4.heic":       4,
+	})
+	rebuildFolders(t, st)
+	libs, err := st.PhotosLibraries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	total := 0
+	for _, l := range libs {
+		got = append(got, l.Path)
+		total += l.Total
+	}
+	want := []string{"/a.photoslibrary", "/a.photoslibrary-old.photoslibrary", "/b/Photos Library.PHOTOSLIBRARY"}
+	if !reflect.DeepEqual(got, want) || total != 4 {
+		t.Fatalf("PhotosLibraries = %v (%d photos), want %v (4)", got, total, want)
+	}
+}

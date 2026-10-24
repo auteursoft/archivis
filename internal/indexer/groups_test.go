@@ -35,7 +35,7 @@ func TestRegroupWorksOutFolders(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats, ran, err := Regroup(ctx, dir, st, o, false)
-	if err != nil || !ran || !stats.FoldersOnly || stats.Folders != 2 {
+	if err != nil || !ran || !stats.FoldersOnly || stats.Folders != 3 { // /a/b, /a, /
 		t.Fatalf("folders-only Regroup: %+v, ran %v, %v", stats, ran, err)
 	}
 	if st.FoldersStale() {
