@@ -13,7 +13,7 @@
 # onto a fork needs the pinned version's tag there.
 set -eu
 org=${ARCHIVIS_FORK_ORG:-auteursoft}
-here=$(dirname "$0")
+here=$(cd "$(dirname "$0")" && pwd)
 check=false
 [ "${1:-}" = --check ] && check=true
 status=0

@@ -11,7 +11,7 @@
 # The forks keep their original module path, as replace requires.
 set -eu
 org=${ARCHIVIS_FORK_ORG:-auteursoft}
-here=$(dirname "$0")
+here=$(cd "$(dirname "$0")" && pwd) # absolute: the cd below must not move it
 cd "$here/../.."
 undo=false
 [ "${1:-}" = --undo ] && { undo=true; shift; }
