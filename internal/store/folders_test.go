@@ -386,3 +386,17 @@ func TestNestedLibrariesCountOnce(t *testing.T) {
 		t.Fatalf("PhotosLibraries = %v (%d photos), want %v (4)", got, total, want)
 	}
 }
+
+// A cancelled rebuild stops and leaves the folders stale.
+func TestCancelledFolderRebuildStaysStale(t *testing.T) {
+	st := folderStore(t)
+	savePaths(t, st, map[string]float64{"/a/1.jpg": 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := st.RebuildFolders(ctx); err != context.Canceled {
+		t.Fatalf("RebuildFolders on a cancelled context: %v", err)
+	}
+	if !st.FoldersStale() {
+		t.Fatal("a cancelled rebuild left the folders current")
+	}
+}

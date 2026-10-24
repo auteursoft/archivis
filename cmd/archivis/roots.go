@@ -9,7 +9,7 @@ import (
 )
 
 func runRoots(g *globals, args []string) error {
-	fs := newFlagSet("roots", `The indexed folders Albums starts from (index runs record theirs):
+	fs := newFlagSet("roots", `The indexed folders Albums starts from (each index run records the folders it indexes):
   roots list             list them
   roots add FOLDER...    add folders indexed before Albums existed
   roots remove FOLDER    stop showing a folder (its photos stay catalogued)`)

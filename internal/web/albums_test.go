@@ -106,3 +106,16 @@ func TestAlbumSearchStaysInAlbum(t *testing.T) {
 	i = strings.Index(body, `<form class="search"`)
 	mustContain(t, "photos search form", body[i:i+strings.Index(body[i:], "</form>")], `action="/"`)
 }
+
+// The iPhone album's cover is chosen as the folders choose theirs: the
+// highest score, then the lowest photo id, whichever library comes first.
+func TestIPhoneCoverTieBreak(t *testing.T) {
+	for _, libs := range [][]store.Folder{
+		{{Path: "/a.photoslibrary", Total: 1, CoverID: 9, CoverOverall: 50}, {Path: "/b.photoslibrary", Total: 2, CoverID: 4, CoverOverall: 50}},
+		{{Path: "/a.photoslibrary", Total: 2, CoverID: 4, CoverOverall: 50}, {Path: "/b.photoslibrary", Total: 1, CoverID: 9, CoverOverall: 50}},
+	} {
+		if a := iphoneAlbum(libs); a.CoverID != 4 || a.Total != 3 {
+			t.Errorf("iphoneAlbum(%v) = cover %d, %d photos; want cover 4, 3 photos", libs, a.CoverID, a.Total)
+		}
+	}
+}

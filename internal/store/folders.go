@@ -395,6 +395,10 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 	sort.Strings(keep)
 	at := ""
 	for {
+		if err := ctx.Err(); err != nil {
+			w.rollback()
+			return st, err
+		}
 		if err := w.commit(); err != nil {
 			return st, err
 		}

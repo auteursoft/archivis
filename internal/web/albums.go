@@ -141,7 +141,7 @@ func iphoneAlbum(libs []store.Folder) *store.Folder {
 	a := libs[0]
 	for _, l := range libs[1:] {
 		a.Total += l.Total
-		if l.CoverOverall > a.CoverOverall {
+		if l.CoverOverall > a.CoverOverall || (l.CoverOverall == a.CoverOverall && l.CoverID < a.CoverID) { // as folders choose
 			a.CoverID, a.CoverOverall = l.CoverID, l.CoverOverall
 		}
 	}
