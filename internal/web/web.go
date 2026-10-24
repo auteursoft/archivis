@@ -635,16 +635,11 @@ func (s *Server) searchStacked(text string, f store.Filter, n int, stacking bool
 	if !stacking {
 		return s.cat.SearchText(text, f, n)
 	}
-	for k := n * 2; ; k *= 2 {
-		hits, err := s.cat.SearchText(text, f, k)
-		if err != nil {
-			return nil, err
-		}
-		got := catalog.CollapseStacks(hits)
-		if len(got) >= n || len(hits) < k || k >= n*32 {
-			return got[:min(len(got), n)], nil
-		}
+	e, err := s.cat.TextVector(text) // once, however many passes
+	if err != nil {
+		return nil, err
 	}
+	return catalog.SearchStacks(func(k int) ([]catalog.PhotoHit, error) { return s.cat.SearchVector(e, f, k) }, n)
 }
 
 type faceView struct {

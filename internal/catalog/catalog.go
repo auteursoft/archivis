@@ -405,14 +405,38 @@ func SortHits(hits []PhotoHit, by string) {
 
 // SearchText finds photos matching a natural-language description.
 func (c *Catalog) SearchText(q string, f store.Filter, k int) ([]PhotoHit, error) {
-	if c.Eng.CLIP == nil || !c.Eng.CLIP.HasText() {
-		return nil, errors.New("text search needs the CLIP text model (run `archivis setup`)")
-	}
-	e, err := c.Eng.CLIP.EmbedText(q)
+	e, err := c.TextVector(q)
 	if err != nil {
 		return nil, err
 	}
 	return c.SearchVector(e, f, k)
+}
+
+// TextVector embeds a description for SearchVector (one run of the text
+// model, so a caller searching repeatedly embeds once).
+func (c *Catalog) TextVector(q string) ([]float32, error) {
+	if c.Eng.CLIP == nil || !c.Eng.CLIP.HasText() {
+		return nil, errors.New("text search needs the CLIP text model (run `archivis setup`)")
+	}
+	return c.Eng.CLIP.EmbedText(q)
+}
+
+// SearchStacks returns the first n hits of search with each stack of
+// near-identical frames counted once (see CollapseStacks). search(k)
+// returns the best k hits; it is asked for more until n stacks and photos
+// are found or the matches run out. A stack has at most a few thousand
+// frames, so this ends.
+func SearchStacks(search func(k int) ([]PhotoHit, error), n int) ([]PhotoHit, error) {
+	for k := n * 2; ; k *= 2 {
+		hits, err := search(k)
+		if err != nil {
+			return nil, err
+		}
+		got := CollapseStacks(hits)
+		if len(got) >= n || len(hits) < k {
+			return got[:min(len(got), n)], nil
+		}
+	}
 }
 
 // eligibleMax is the largest filtered set searched directly; broader
