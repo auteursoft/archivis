@@ -23,6 +23,11 @@ var cr3CanonUUID = []byte{0x85, 0xc0, 0xb6, 0x87, 0x82, 0x0f, 0x11, 0xe0, 0x81, 
 // cr3MaxMoov bounds the moov box read into memory; real ones are tens of KB.
 const cr3MaxMoov = 16 << 20
 
+// cr3MaxBoxes bounds the walk over top-level boxes looking for moov
+// (Canon writes it second; each step reads one 16-byte header, so a file
+// edited by another tool may put it further on at little cost).
+const cr3MaxBoxes = 1024
+
 // parseCR3Meta fills m from the CMT boxes of a CR3 file. It reports whether
 // the boxes were found; the caller falls back to an embedded JPEG's EXIF.
 func parseCR3Meta(r io.ReaderAt, size int64, m *Meta) bool {
@@ -71,11 +76,11 @@ func parseCR3Meta(r io.ReaderAt, size int64, m *Meta) bool {
 }
 
 // cr3Moov returns the body of the top-level moov box, or nil when there is
-// none within the first boxes or it is implausibly large.
+// none within the first cr3MaxBoxes boxes or it is implausibly large.
 func cr3Moov(r io.ReaderAt, size int64) []byte {
 	var hdr [16]byte
 	pos := int64(0)
-	for i := 0; i < 16 && pos+8 <= size; i++ {
+	for i := 0; i < cr3MaxBoxes && pos+8 <= size; i++ {
 		if _, err := r.ReadAt(hdr[:], pos); err != nil && pos+16 <= size {
 			return nil
 		}

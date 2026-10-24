@@ -174,4 +174,24 @@ func TestCR3MoovBounded(t *testing.T) {
 	}
 }
 
+// moov is found after many other top-level boxes (a file rewritten by
+// another tool), but not past cr3MaxBoxes.
+func TestCR3MoovAfterOtherBoxes(t *testing.T) {
+	file := func(skip int) []byte {
+		b := mkbox("ftyp", []byte("crx "), u32(1))
+		for i := 0; i < skip; i++ {
+			b = append(b, mkbox("free", []byte("pad"))...)
+		}
+		return append(b, mkbox("moov", []byte("body"))...)
+	}
+	f := file(20)
+	if moov := cr3Moov(bytes.NewReader(f), int64(len(f))); string(moov) != "body" {
+		t.Fatalf("moov after 20 boxes: %q", moov)
+	}
+	f = file(cr3MaxBoxes)
+	if moov := cr3Moov(bytes.NewReader(f), int64(len(f))); moov != nil {
+		t.Fatalf("moov past cr3MaxBoxes read: %q", moov)
+	}
+}
+
 func u16le(v uint16) []byte { return binary.LittleEndian.AppendUint16(nil, v) }
