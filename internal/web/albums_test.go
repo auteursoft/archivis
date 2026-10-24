@@ -25,8 +25,10 @@ func albumsServer(t *testing.T, roots []string) *Server {
 	if err := cat.Store.Save(rs); err != nil {
 		t.Fatal(err)
 	}
-	if err := cat.Store.RecordRoots(roots); err != nil {
-		t.Fatal(err)
+	for _, r := range roots { // as recorded (RecordRoots would add a drive on Windows)
+		if _, err := cat.Store.DB.Exec(`INSERT INTO roots (path) VALUES (?)`, r); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := cat.Store.RebuildFolders(context.Background()); err != nil {
 		t.Fatal(err)

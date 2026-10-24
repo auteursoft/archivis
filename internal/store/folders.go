@@ -73,10 +73,7 @@ func InDir(p, dir string) bool {
 // the top of Albums.
 func (s *Store) RecordRoots(paths []string) error {
 	for _, p := range paths {
-		if abs, err := filepath.Abs(p); err == nil {
-			p = abs
-		}
-		p = TrimDir(p)
+		p = rootPath(p)
 		if _, err := s.DB.Exec(`INSERT OR IGNORE INTO roots (path, added_at) VALUES (?, ?)`, p, time.Now().Unix()); err != nil {
 			return err
 		}
@@ -84,10 +81,18 @@ func (s *Store) RecordRoots(paths []string) error {
 	return nil
 }
 
+// rootPath is how a root is recorded: absolute, no trailing separator.
+func rootPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	return TrimDir(p)
+}
+
 // RemoveRoot forgets a root (its photos stay catalogued). It reports
 // whether it was recorded.
 func (s *Store) RemoveRoot(path string) (bool, error) {
-	r, err := s.DB.Exec(`DELETE FROM roots WHERE path = ?`, TrimDir(path))
+	r, err := s.DB.Exec(`DELETE FROM roots WHERE path = ?`, rootPath(path))
 	if err != nil {
 		return false, err
 	}

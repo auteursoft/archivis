@@ -293,19 +293,25 @@ func TestDirsUsePathIndex(t *testing.T) {
 	}
 }
 
+// Roots are recorded absolute (C:\... on Windows), without a trailing
+// separator, once each; removing one takes the same spellings.
 func TestRoots(t *testing.T) {
 	st := folderStore(t)
-	if err := st.RecordRoots([]string{"/x/y/", "/x/y", "/a"}); err != nil {
+	base := t.TempDir()
+	xy, a := filepath.Join(base, "x", "y"), filepath.Join(base, "a")
+	if err := st.RecordRoots([]string{xy + string(filepath.Separator), xy, a}); err != nil {
 		t.Fatal(err)
 	}
 	rs, err := st.Roots()
-	if err != nil || !reflect.DeepEqual(rs, []string{"/a", "/x/y"}) {
-		t.Fatalf("Roots = %v, %v", rs, err)
+	want := []string{a, xy}
+	sort.Strings(want)
+	if err != nil || !reflect.DeepEqual(rs, want) {
+		t.Fatalf("Roots = %v, %v; want %v", rs, err, want)
 	}
-	if ok, _ := st.RemoveRoot("/x/y/"); !ok {
-		t.Fatal("RemoveRoot(/x/y/) found nothing")
+	if ok, _ := st.RemoveRoot(xy + string(filepath.Separator)); !ok {
+		t.Fatal("RemoveRoot with a trailing separator found nothing")
 	}
-	if ok, _ := st.RemoveRoot("/x/y"); ok {
+	if ok, _ := st.RemoveRoot(xy); ok {
 		t.Fatal("removed twice")
 	}
 }
