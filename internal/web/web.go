@@ -492,6 +492,7 @@ type browseData struct {
 	Page     int
 	HasMore  bool
 	Searched bool
+	Stacked  bool // near-identical burst frames show as one card
 	// Prev and Next are the pager links, with every filter kept. They are
 	// built here: a query string put into the template as text would be
 	// escaped into a single parameter, and the filters lost.
@@ -583,32 +584,34 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	s.filterForm(r, p, "/")
 	d := &browseData{Page: f.Offset / f.Limit}
 	pageURL := func(n int) template.URL { return pageLink(r, "/", n) }
+	stacking := s.cat.Store.GetSettings().StackBursts
 	if text != "" {
 		d.Searched = true
-		hits, err := s.cat.SearchText(text, f, f.Offset+f.Limit)
+		// one hit past the page says whether another page follows
+		want := f.Offset + f.Limit
+		hits, err := s.searchStacked(text, f, want+1, stacking)
 		if err != nil {
 			p.Error = err.Error()
 		} else {
-			catalog.SortHits(hits, f.Sort) // "Best match" (relevance) unless another order is chosen
-			if f.Offset < len(hits) {
-				hits = hits[f.Offset:]
-			} else {
-				hits = nil
-			}
-			d.Photos = hits
-			d.Total = len(hits)
-			d.HasMore = len(hits) == f.Limit
+			d.Photos, d.HasMore = searchPage(hits, f)
+			d.Total = len(d.Photos)
 		}
 	} else {
-		ps, total, err := s.cat.Store.Browse(f)
+		f.Stacked = stacking
+		d.Stacked = stacking
+		ps, total, more, err := s.cat.Store.BrowsePage(f)
 		if err != nil {
 			p.Error = err.Error()
 		}
 		for _, ph := range ps {
-			d.Photos = append(d.Photos, catalog.PhotoHit{Photo: ph})
+			hit := catalog.PhotoHit{Photo: ph}
+			if stacking && ph.StackTop == ph.ID && ph.StackSize > 1 {
+				hit.Stack = ph.StackSize
+			}
+			d.Photos = append(d.Photos, hit)
 		}
 		d.Total = total
-		d.HasMore = f.Offset+len(ps) < total
+		d.HasMore = more
 	}
 	if d.Page > 0 {
 		d.Prev = pageURL(d.Page - 1)
@@ -618,6 +621,34 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 	p.Data = d
 	s.render(w, r, "browse", p)
+}
+
+// searchPage cuts page f out of the best hits of a search, fetched one
+// past the page (offset+limit+1, best first): the extra hit, if there is
+// one, only says that another page follows.
+func searchPage(hits []catalog.PhotoHit, f store.Filter) ([]catalog.PhotoHit, bool) {
+	want := f.Offset + f.Limit
+	more := len(hits) > want
+	hits = hits[:min(len(hits), want)]
+	catalog.SortHits(hits, f.Sort) // "Best match" (relevance) unless another order is chosen
+	if f.Offset >= len(hits) {
+		return nil, more
+	}
+	return hits[f.Offset:], more
+}
+
+// searchStacked returns the best n hits for a text search; with stacking,
+// a stack of near-identical frames counts once (its best-matching frame,
+// marked with the stack's size), widening the search to still fill n.
+func (s *Server) searchStacked(text string, f store.Filter, n int, stacking bool) ([]catalog.PhotoHit, error) {
+	if !stacking {
+		return s.cat.SearchText(text, f, n)
+	}
+	e, err := s.cat.TextVector(text) // once, however many passes
+	if err != nil {
+		return nil, err
+	}
+	return catalog.SearchStacks(func(k int) ([]catalog.PhotoHit, error) { return s.cat.SearchVector(e, f, k) }, n)
 }
 
 type faceView struct {
@@ -633,6 +664,7 @@ type photoData struct {
 	Tags    []store.Tag
 	Similar []catalog.PhotoHit
 	Copies  []catalog.PhotoHit // the other photos with the identical image (its Duplicates set)
+	Stack   []catalog.PhotoHit // the other frames of its stack of near-identical burst frames
 	Metrics []metricRow
 	Cast    string
 	// Feedback is this viewer's latest judgement of the aesthetic score.
@@ -668,6 +700,15 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	d.Similar, err = s.cat.SimilarPhotos(id, store.Filter{}, 12)
 	if _, has := s.cat.PhotoIndex().Vector(id); has { // no embedding is not a failure
 		errs.note("similar photos", err)
+	}
+	if ph.StackTop != 0 {
+		frames, err := s.cat.Store.StackMembers(ph.StackTop)
+		errs.note("stack", err)
+		for _, f := range frames {
+			if f.ID != id {
+				d.Stack = append(d.Stack, catalog.PhotoHit{Photo: f})
+			}
+		}
 	}
 	if ph.DupID != 0 {
 		copies, err := s.cat.Store.GroupMembers(store.GroupDuplicate, ph.DupID)

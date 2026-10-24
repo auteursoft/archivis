@@ -549,3 +549,52 @@ func TestRefreshDuringIndexingDoesNotRebuild(t *testing.T) {
 		t.Fatalf("after a deletion the photo index has %d, want 10", got)
 	}
 }
+
+// Search results keep one hit per stack (the first, best-matching one),
+// marked with the stack's size; photos outside stacks are untouched.
+func TestCollapseStacks(t *testing.T) {
+	hit := func(id, top int64, size int) PhotoHit {
+		return PhotoHit{Photo: store.Photo{ID: id, StackTop: top, StackSize: size}}
+	}
+	got := CollapseStacks([]PhotoHit{hit(3, 1, 3), hit(9, 0, 0), hit(1, 1, 3), hit(5, 5, 2), hit(2, 1, 3), hit(6, 5, 2)})
+	var ids []int64
+	var stacks []int
+	for _, h := range got {
+		ids, stacks = append(ids, h.ID), append(stacks, h.Stack)
+	}
+	if fmt.Sprint(ids) != "[3 9 5]" || fmt.Sprint(stacks) != "[3 0 2]" {
+		t.Fatalf("collapsed to %v (stacks %v)", ids, stacks)
+	}
+}
+
+// A search counted by stacks fills the page however many frames the top
+// stacks hold: four 1,000-frame stacks ranked above 200 single photos still
+// give a full page (the singles are reachable), and a short result set is
+// returned whole.
+func TestSearchStacksFillsThePage(t *testing.T) {
+	var ranked []PhotoHit
+	id := int64(0)
+	for s := 0; s < 4; s++ {
+		top := id + 1
+		for f := 0; f < 1000; f++ {
+			id++
+			ranked = append(ranked, PhotoHit{Photo: store.Photo{ID: id, StackTop: top, StackSize: 1000}})
+		}
+	}
+	for i := 0; i < 200; i++ {
+		id++
+		ranked = append(ranked, PhotoHit{Photo: store.Photo{ID: id}})
+	}
+	calls := 0
+	search := func(k int) ([]PhotoHit, error) {
+		calls++
+		return ranked[:min(k, len(ranked))], nil
+	}
+	got, err := SearchStacks(search, 120)
+	if err != nil || len(got) != 120 || got[4].Stack != 0 || got[0].Stack != 1000 {
+		t.Fatalf("page of %d (calls %d), %v", len(got), calls, err)
+	}
+	if got, _ := SearchStacks(search, 500); len(got) != 204 {
+		t.Fatalf("all matches: %d, want 204", len(got))
+	}
+}

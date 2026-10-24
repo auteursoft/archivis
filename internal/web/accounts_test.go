@@ -534,6 +534,18 @@ func TestSettingsWithoutAccounts(t *testing.T) {
 	if rec := b.do("POST", "/admin/settings", url.Values{"burst_gap": {"4"}}); rec.Code != http.StatusSeeOther || cat.Store.GetSettings().BurstGap != 4 {
 		t.Fatalf("save without accounts: %d", rec.Code)
 	}
+	// the stacking switch: a checked box sends "on" before the hidden "off",
+	// an unchecked one only "off"
+	if rec := b.do("POST", "/admin/settings", url.Values{"stack_bursts": {"off"}, "stack_hamming": {"9"}}); rec.Code != http.StatusSeeOther ||
+		cat.Store.GetSettings().StackBursts || cat.Store.GetSettings().StackHamming != 9 {
+		t.Fatalf("stacking off: %d %+v", rec.Code, cat.Store.GetSettings())
+	}
+	if rec := b.do("POST", "/admin/settings", url.Values{"stack_bursts": {"on", "off"}}); rec.Code != http.StatusSeeOther || !cat.Store.GetSettings().StackBursts {
+		t.Fatalf("stacking on: %d %+v", rec.Code, cat.Store.GetSettings())
+	}
+	if body := b.do("GET", "/admin/settings", nil).Body.String(); !strings.Contains(body, `name="stack_bursts" value="on" checked`) {
+		t.Fatal("settings page does not show stacking on")
+	}
 	// bursts are grouped by it (the Bursts page has no gap of its own)
 	if cat.Store.GroupOptions().Gap != 4 {
 		t.Fatal("grouping does not use the configured gap")

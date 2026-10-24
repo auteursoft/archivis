@@ -303,6 +303,27 @@ func (c *Catalog) PhotoOfFace(faceID int64) int64 {
 type PhotoHit struct {
 	store.Photo
 	Score float32
+	Stack int // frames in the stack this card stands for (0: one photo)
+}
+
+// CollapseStacks keeps the first hit of each stack of near-identical burst
+// frames, marked with the stack's size, and drops the rest.
+func CollapseStacks(hits []PhotoHit) []PhotoHit {
+	seen := map[int64]bool{}
+	out := hits[:0:0]
+	for _, h := range hits {
+		if h.StackTop == 0 || h.StackSize < 2 {
+			out = append(out, h)
+			continue
+		}
+		if seen[h.StackTop] {
+			continue
+		}
+		seen[h.StackTop] = true
+		h.Stack = h.StackSize
+		out = append(out, h)
+	}
+	return out
 }
 
 // filtered runs a vector search and applies the SQL filter to the hits.
@@ -332,7 +353,7 @@ func (c *Catalog) filtered(hits []vindex.Hit, f store.Filter, k int) ([]PhotoHit
 	}
 	out := make([]PhotoHit, len(ps))
 	for i, p := range ps {
-		out[i] = PhotoHit{p, score[p.ID]}
+		out[i] = PhotoHit{Photo: p, Score: score[p.ID]}
 	}
 	return out, nil
 }
@@ -384,14 +405,38 @@ func SortHits(hits []PhotoHit, by string) {
 
 // SearchText finds photos matching a natural-language description.
 func (c *Catalog) SearchText(q string, f store.Filter, k int) ([]PhotoHit, error) {
-	if c.Eng.CLIP == nil || !c.Eng.CLIP.HasText() {
-		return nil, errors.New("text search needs the CLIP text model (run `archivis setup`)")
-	}
-	e, err := c.Eng.CLIP.EmbedText(q)
+	e, err := c.TextVector(q)
 	if err != nil {
 		return nil, err
 	}
 	return c.SearchVector(e, f, k)
+}
+
+// TextVector embeds a description for SearchVector (one run of the text
+// model, so a caller searching repeatedly embeds once).
+func (c *Catalog) TextVector(q string) ([]float32, error) {
+	if c.Eng.CLIP == nil || !c.Eng.CLIP.HasText() {
+		return nil, errors.New("text search needs the CLIP text model (run `archivis setup`)")
+	}
+	return c.Eng.CLIP.EmbedText(q)
+}
+
+// SearchStacks returns the first n hits of search with each stack of
+// near-identical frames counted once (see CollapseStacks). search(k)
+// returns the best k hits; it is asked for more until n stacks and photos
+// are found or the matches run out. A stack has at most a few thousand
+// frames, so this ends.
+func SearchStacks(search func(k int) ([]PhotoHit, error), n int) ([]PhotoHit, error) {
+	for k := n * 2; ; k *= 2 {
+		hits, err := search(k)
+		if err != nil {
+			return nil, err
+		}
+		got := CollapseStacks(hits)
+		if len(got) >= n || len(hits) < k {
+			return got[:min(len(got), n)], nil
+		}
+	}
 }
 
 // eligibleMax is the largest filtered set searched directly; broader
@@ -550,7 +595,7 @@ func (c *Catalog) SearchFacePhotos(q []float32, f store.Filter, k int, minScore 
 			}
 			out := make([]PhotoHit, len(ps))
 			for i, p := range ps {
-				out[i] = PhotoHit{p, best[p.ID]}
+				out[i] = PhotoHit{Photo: p, Score: best[p.ID]}
 			}
 			sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 			return out, nil

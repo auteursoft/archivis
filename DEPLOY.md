@@ -636,7 +636,15 @@ server:
 ```sh
 archivis settings                    # list them
 archivis settings set burst_gap 5    # frames up to 5 s apart form one burst
+archivis settings set stack_bursts off   # show every burst frame on the Photos page
+archivis settings set stack_hamming 4    # stack only frames more alike (0-16, default 6)
 ```
+
+**Stacks.** On the Photos page, near-identical frames of a burst show as
+one card: the best frame, with the number of frames on it. Its page lists
+the others. A filter that leaves out a stack's best frame shows the other
+frames that match. Text search shows each stack once. Turn stacking off on
+the Settings page, or with `stack_bursts off`.
 
 ### Bursts and identical images
 
