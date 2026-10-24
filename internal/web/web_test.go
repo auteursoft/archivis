@@ -983,3 +983,26 @@ func TestPhotosPageStacks(t *testing.T) {
 		t.Fatalf("unstacked page: %d cards", n)
 	}
 }
+
+// A search page offers Next only if a hit lies beyond it: exactly one page
+// of results (after stacks are counted once) has no Next; one more has.
+func TestSearchPageMore(t *testing.T) {
+	hits := func(n int) []catalog.PhotoHit {
+		var out []catalog.PhotoHit
+		for i := 0; i < n; i++ {
+			out = append(out, catalog.PhotoHit{Photo: store.Photo{ID: int64(i + 1)}, Score: float32(n - i)})
+		}
+		return out
+	}
+	f := store.Filter{Limit: 120}
+	if page, more := searchPage(hits(120), f); len(page) != 120 || more {
+		t.Fatalf("exactly a page: %d, more %v", len(page), more)
+	}
+	if page, more := searchPage(hits(121), f); len(page) != 120 || !more || page[119].ID != 120 {
+		t.Fatalf("a page and one: %d, more %v", len(page), more)
+	}
+	f.Offset = 120
+	if page, more := searchPage(hits(200), f); len(page) != 80 || more || page[0].ID != 121 {
+		t.Fatalf("second page: %d, more %v", len(page), more)
+	}
+}

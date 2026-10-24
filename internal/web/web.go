@@ -587,19 +587,14 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	stacking := s.cat.Store.GetSettings().StackBursts
 	if text != "" {
 		d.Searched = true
-		hits, err := s.searchStacked(text, f, f.Offset+f.Limit, stacking)
+		// one hit past the page says whether another page follows
+		want := f.Offset + f.Limit
+		hits, err := s.searchStacked(text, f, want+1, stacking)
 		if err != nil {
 			p.Error = err.Error()
 		} else {
-			catalog.SortHits(hits, f.Sort) // "Best match" (relevance) unless another order is chosen
-			if f.Offset < len(hits) {
-				hits = hits[f.Offset:]
-			} else {
-				hits = nil
-			}
-			d.Photos = hits
-			d.Total = len(hits)
-			d.HasMore = len(hits) == f.Limit
+			d.Photos, d.HasMore = searchPage(hits, f)
+			d.Total = len(d.Photos)
 		}
 	} else {
 		f.Stacked = stacking
@@ -626,6 +621,20 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 	p.Data = d
 	s.render(w, r, "browse", p)
+}
+
+// searchPage cuts page f out of the best hits of a search, fetched one
+// past the page (offset+limit+1, best first): the extra hit, if there is
+// one, only says that another page follows.
+func searchPage(hits []catalog.PhotoHit, f store.Filter) ([]catalog.PhotoHit, bool) {
+	want := f.Offset + f.Limit
+	more := len(hits) > want
+	hits = hits[:min(len(hits), want)]
+	catalog.SortHits(hits, f.Sort) // "Best match" (relevance) unless another order is chosen
+	if f.Offset >= len(hits) {
+		return nil, more
+	}
+	return hits[f.Offset:], more
 }
 
 // searchStacked returns the best n hits for a text search; with stacking,
