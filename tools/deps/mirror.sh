@@ -5,7 +5,8 @@
 # file missing from the release, or there with the wrong SHA-256, is
 # downloaded from its original, checked against its pinned SHA-256 and
 # uploaded. Run by .github/workflows/deps.yml (GH_TOKEN with contents:
-# write); fails if any file could not be mirrored.
+# write); fails if any file could not be mirrored. The release is marked a
+# pre-release so it never shows as the project's latest release.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 repo=${GITHUB_REPOSITORY:-auteursoft/archivis}
@@ -24,9 +25,9 @@ dups=$(cut -d' ' -f2 "$work/entries" | sort | uniq -d)
 [ -z "$dups" ] || { echo "::error::two files would share a mirror name: $dups"; exit 1; }
 
 if gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
-	gh release edit "$tag" -R "$repo" --notes-file "$here/NOTICE.md" >/dev/null
+	gh release edit "$tag" -R "$repo" --notes-file "$here/NOTICE.md" --prerelease >/dev/null
 else
-	gh release create "$tag" -R "$repo" --title "Dependency mirror" --notes-file "$here/NOTICE.md" --latest=false
+	gh release create "$tag" -R "$repo" --title "Dependency mirror" --notes-file "$here/NOTICE.md" --prerelease --latest=false
 fi
 # name and recorded digest ("sha256:...") of each file already there
 gh api "repos/$repo/releases/tags/$tag" --jq '.assets[] | .name + " " + (.digest // "")' >"$work/have"
