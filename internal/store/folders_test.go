@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math"
 	"math/rand"
@@ -37,7 +38,7 @@ func savePaths(t *testing.T, st *Store, overall map[string]float64) {
 // counts in each folder above it.
 func referenceFolders(t *testing.T, st *Store) map[string]Folder {
 	t.Helper()
-	rows, err := st.DB.Query(`SELECT id, path, overall FROM photos`)
+	rows, err := st.DB.Query(`SELECT id, path, overall, taken_at FROM photos`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +47,9 @@ func referenceFolders(t *testing.T, st *Store) map[string]Folder {
 	for rows.Next() {
 		var id int64
 		var p string
-		var o float64
-		if err := rows.Scan(&id, &p, &o); err != nil {
+		var o sql.NullFloat64
+		var at sql.NullInt64
+		if err := rows.Scan(&id, &p, &o, &at); err != nil {
 			t.Fatal(err)
 		}
 		for d := ParentDir(p); d != ""; d = ParentDir(d) {
@@ -56,8 +58,15 @@ func referenceFolders(t *testing.T, st *Store) map[string]Folder {
 				f = Folder{Path: d, Parent: ParentDir(d), CoverOverall: math.Inf(-1)}
 			}
 			f.Total++
-			if o > f.CoverOverall || (o == f.CoverOverall && id < f.CoverID) {
-				f.CoverID, f.CoverOverall = id, o
+			if o.Float64 > f.CoverOverall || (o.Float64 == f.CoverOverall && id < f.CoverID) {
+				f.CoverID, f.CoverOverall = id, o.Float64
+			}
+			if o.Valid {
+				f.Scored++
+				f.ScoreSum += o.Float64
+			}
+			if at.Int64 != 0 && (f.NewestAt == 0 || at.Int64 > f.NewestAt) {
+				f.NewestAt = at.Int64
 			}
 			out[d] = f
 		}
@@ -87,9 +96,22 @@ func rebuildFolders(t *testing.T, st *Store) FolderStats {
 	if st.FoldersStale() {
 		t.Fatal("folders stale right after a rebuild")
 	}
-	if got, want := storedFolders(t, st), referenceFolders(t, st); !reflect.DeepEqual(got, want) {
+	// scores are added up in another order: allow for rounding
+	same := func(a, b Folder) bool {
+		d := a.ScoreSum - b.ScoreSum
+		a.ScoreSum = b.ScoreSum
+		return a == b && math.Abs(d) < 1e-6
+	}
+	if got, want := storedFolders(t, st), referenceFolders(t, st); len(got) != len(want) || !func() bool {
 		for p, w := range want {
-			if got[p] != w {
+			if !same(got[p], w) {
+				return false
+			}
+		}
+		return true
+	}() {
+		for p, w := range want {
+			if !same(got[p], w) {
 				t.Errorf("folder %q: got %+v, want %+v", p, got[p], w)
 			}
 		}
@@ -133,6 +155,17 @@ func TestRebuildFolders(t *testing.T) {
 		ps[b.String()] = float64(rng.Intn(5)) // ties: the lower id is the cover
 	}
 	savePaths(t, st, ps)
+	// dates (undated, before 1970, after) and scores (some never scored)
+	for p := range ps {
+		at := []any{0, nil, -86400 * int64(rng.Intn(9000)), 1_500_000_000 + int64(rng.Intn(1e8))}[rng.Intn(4)]
+		var overall any = ps[p]
+		if rng.Intn(5) == 0 {
+			overall = nil
+		}
+		if _, err := st.DB.Exec(`UPDATE photos SET taken_at = ?, overall = ? WHERE path = ?`, at, overall, p); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if !st.FoldersStale() {
 		t.Fatal("never worked out, yet not stale")
 	}
@@ -471,5 +504,86 @@ func TestWindowsFolderSplitAcrossPaths(t *testing.T) {
 	rebuildFolders(t, st) // compares with the plain reckoning
 	if f, _ := st.Folder("C:"); f == nil || f.Total != 2 {
 		t.Fatalf("Folder(C:) = %+v, want both photos below it", f)
+	}
+}
+
+// Display names: set, read, cleared, tidied to one line, for roots as
+// stored or as typed, and for the iPhone album; unknown albums are not
+// named.
+func TestAlbumNames(t *testing.T) {
+	st := folderStore(t)
+	root := filepath.Join(t.TempDir(), "Sync", "_photo_stage")
+	if err := st.RecordRoots([]string{root}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.SetAlbumName(root+string(filepath.Separator), "  Photo\tstage \n"); !ok || err != nil {
+		t.Fatalf("naming a root: %v, %v", ok, err)
+	}
+	if ok, err := st.SetAlbumName(IPhoneAlbum, "Phones"); !ok || err != nil {
+		t.Fatalf("naming the iPhone album: %v, %v", ok, err)
+	}
+	names, err := st.AlbumNames()
+	if want := map[string]string{root: "Photo stage", IPhoneAlbum: "Phones"}; err != nil || !reflect.DeepEqual(names, want) {
+		t.Fatalf("AlbumNames = %v, %v; want %v", names, err, want)
+	}
+	if ok, _ := st.SetAlbumName(filepath.Join(t.TempDir(), "never"), "x"); ok {
+		t.Fatal("named a folder that is not a root")
+	}
+	if _, err := st.SetAlbumName(root, strings.Repeat("x", MaxAlbumName+1)); err == nil {
+		t.Fatal("an overlong name was taken")
+	}
+	st.SetAlbumName(root, "")
+	st.SetAlbumName(IPhoneAlbum, " ")
+	if names, _ := st.AlbumNames(); len(names) != 0 {
+		t.Fatalf("names left after clearing: %v", names)
+	}
+}
+
+// A catalogue from before display names and folder dates and scores gains
+// the columns on opening, and its folders read as stale until worked out
+// again with them.
+func TestFoldersUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	st := folderStore(t)
+	savePaths(t, st, map[string]float64{"/a/b/x.jpg": 5})
+	if _, err := st.RebuildFolders(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`VACUUM INTO ?`, path); err != nil {
+		t.Fatal(err)
+	}
+	old, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`DROP TABLE roots`, `CREATE TABLE roots (path TEXT PRIMARY KEY, added_at INTEGER NOT NULL DEFAULT 0)`,
+		`INSERT INTO roots (path) VALUES ('/a')`,
+		`DROP TABLE folders`, `CREATE TABLE folders (path TEXT PRIMARY KEY, parent TEXT NOT NULL, total INTEGER NOT NULL,
+			cover_id INTEGER NOT NULL, cover_overall REAL NOT NULL) WITHOUT ROWID`,
+		`INSERT INTO folders VALUES ('/a', '/', 1, 1, 5)`,
+		`UPDATE meta SET value = '2' WHERE key = 'folders_version'`,
+	} {
+		if _, err := old.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	old.Close()
+	up, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer up.Close()
+	if !up.FoldersStale() {
+		t.Fatal("folders from before the scores and dates are not stale")
+	}
+	if ok, err := up.SetAlbumName("/a", "A"); !ok || err != nil {
+		t.Fatalf("naming an upgraded root: %v, %v", ok, err)
+	}
+	if _, err := up.RebuildFolders(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := up.Folder("/a"); f == nil || f.Scored != 1 || f.ScoreSum != 5 {
+		t.Fatalf("upgraded folder: %+v", f)
 	}
 }

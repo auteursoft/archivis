@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
 	"path/filepath"
 	"slices"
@@ -17,7 +19,7 @@ import (
 // RebuildFolders, for the Albums pages. Roots are the folders indexed.
 
 // foldersVersion changes when the rules do, forcing a rebuild.
-const foldersVersion = "2"
+const foldersVersion = "3"
 
 // Folder is a folder holding photos somewhere below it.
 type Folder struct {
@@ -26,6 +28,31 @@ type Folder struct {
 	Total        int    // photos anywhere below
 	CoverID      int64  // the best of them (highest overall, then lowest id)
 	CoverOverall float64
+	NewestAt     int64   // the latest taken_at below (0: none dated, as taken_at)
+	Scored       int     // photos below with an overall score
+	ScoreSum     float64 // their scores added up
+}
+
+// AvgScore is the mean overall score of the photos below that have one
+// (false if none has).
+func (f Folder) AvgScore() (float64, bool) {
+	if f.Scored == 0 {
+		return 0, false
+	}
+	return f.ScoreSum / float64(f.Scored), true
+}
+
+// Add folds another folder's photos into f's figures (keeping f's path).
+func (f *Folder) Add(o Folder) {
+	f.Total += o.Total
+	if o.CoverOverall > f.CoverOverall || (o.CoverOverall == f.CoverOverall && o.CoverID < f.CoverID) {
+		f.CoverID, f.CoverOverall = o.CoverID, o.CoverOverall
+	}
+	if o.NewestAt != 0 && (f.NewestAt == 0 || o.NewestAt > f.NewestAt) { // 0 is undated; before 1970 is not
+		f.NewestAt = o.NewestAt
+	}
+	f.Scored += o.Scored
+	f.ScoreSum += o.ScoreSum
 }
 
 // Name is the folder's last path element.
@@ -114,6 +141,59 @@ func (s *Store) Roots() ([]string, error) {
 	return s.strings(`SELECT path FROM roots ORDER BY path`)
 }
 
+// IPhoneAlbum is the album SetAlbumName and AlbumNames call the Apple
+// Photos libraries' (a root's path is absolute, so never this).
+const IPhoneAlbum = "iphone"
+
+// MaxAlbumName is the longest display name, in bytes.
+const MaxAlbumName = 200
+
+// AlbumNames returns the display names set for the top-level albums: by
+// root path, and the iPhone album's under IPhoneAlbum.
+func (s *Store) AlbumNames() (map[string]string, error) {
+	rows, err := s.DB.Query(`SELECT path, name FROM roots WHERE name != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var p, n string
+		if err := rows.Scan(&p, &n); err != nil {
+			return nil, err
+		}
+		out[p] = n
+	}
+	if n := s.GetMeta("album_name_iphone"); n != "" {
+		out[IPhoneAlbum] = n
+	}
+	return out, rows.Err()
+}
+
+// SetAlbumName gives a top-level album (a recorded root, or IPhoneAlbum)
+// a display name; "" goes back to the folder's own. It reports whether the
+// album exists.
+func (s *Store) SetAlbumName(album, name string) (bool, error) {
+	name = strings.Join(strings.Fields(name), " ") // one line, no stray spaces
+	if len(name) > MaxAlbumName {
+		return false, fmt.Errorf("an album name may be at most %d bytes", MaxAlbumName)
+	}
+	if album == IPhoneAlbum {
+		return true, s.SetMeta("album_name_iphone", name)
+	}
+	// as recorded (the web pages send the stored path), else as typed
+	for _, p := range []string{TrimDir(album), rootPath(album)} {
+		r, err := s.DB.Exec(`UPDATE roots SET name = ? WHERE path = ?`, name, p)
+		if err != nil {
+			return false, err
+		}
+		if n, _ := r.RowsAffected(); n > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Store) strings(q string, args ...any) ([]string, error) {
 	rows, err := s.DB.Query(q, args...)
 	if err != nil {
@@ -132,7 +212,7 @@ func (s *Store) strings(q string, args ...any) ([]string, error) {
 }
 
 func (s *Store) folders(q string, args ...any) ([]Folder, error) {
-	rows, err := s.DB.Query(`SELECT path, parent, total, cover_id, cover_overall FROM folders `+q, args...)
+	rows, err := s.DB.Query(`SELECT path, parent, total, cover_id, cover_overall, newest_at, scored, score_sum FROM folders `+q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +220,7 @@ func (s *Store) folders(q string, args ...any) ([]Folder, error) {
 	var out []Folder
 	for rows.Next() {
 		var f Folder
-		if err := rows.Scan(&f.Path, &f.Parent, &f.Total, &f.CoverID, &f.CoverOverall); err != nil {
+		if err := rows.Scan(&f.Path, &f.Parent, &f.Total, &f.CoverID, &f.CoverOverall, &f.NewestAt, &f.Scored, &f.ScoreSum); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -238,7 +318,8 @@ type FolderStats struct {
 	Took            time.Duration
 }
 
-// RebuildFolders works out every folder's count and best photo from the
+// RebuildFolders works out every folder's count, best photo, newest date
+// and scores from the
 // catalogue's paths, writing only what changed, in short transactions.
 // Photos are read in path order, where everything below a folder comes
 // together, so each folder is finished as the scan leaves it; memory holds
@@ -317,8 +398,8 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 			if o, ok := old[f.Path]; ok && o == f {
 				continue
 			}
-			if err := w.exec(`INSERT OR REPLACE INTO folders (path, parent, total, cover_id, cover_overall) VALUES (?,?,?,?,?)`,
-				f.Path, f.Parent, f.Total, f.CoverID, f.CoverOverall); err != nil {
+			if err := w.exec(`INSERT OR REPLACE INTO folders (path, parent, total, cover_id, cover_overall, newest_at, scored, score_sum)
+				VALUES (?,?,?,?,?,?,?,?)`, f.Path, f.Parent, f.Total, f.CoverID, f.CoverOverall, f.NewestAt, f.Scored, f.ScoreSum); err != nil {
 				return err
 			}
 			st.Writes++
@@ -344,10 +425,7 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 			}
 			if isSplit {
 				if o, ok := win[f.Path]; ok {
-					f.Total += o.Total
-					if o.CoverOverall > f.CoverOverall || (o.CoverOverall == f.CoverOverall && o.CoverID < f.CoverID) {
-						f.CoverID, f.CoverOverall = o.CoverID, o.CoverOverall
-					}
+					f.Add(o)
 				}
 				win[f.Path] = f
 				held()
@@ -372,19 +450,20 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 		if err := w.commit(); err != nil {
 			return st, err
 		}
-		rows, err := s.DB.Query(`SELECT path, id, COALESCE(overall, 0) FROM photos WHERE path > ? ORDER BY path LIMIT ?`, after, scanPage)
+		rows, err := s.DB.Query(`SELECT path, id, overall, COALESCE(taken_at, 0) FROM photos WHERE path > ? ORDER BY path LIMIT ?`, after, scanPage)
 		if err != nil {
 			return st, err
 		}
 		type ph struct {
 			path    string
 			id      int64
-			overall float64
+			overall sql.NullFloat64
+			at      int64
 		}
 		var batch []ph
 		for rows.Next() {
 			var p ph
-			if err := rows.Scan(&p.path, &p.id, &p.overall); err != nil {
+			if err := rows.Scan(&p.path, &p.id, &p.overall, &p.at); err != nil {
 				rows.Close()
 				return st, err
 			}
@@ -416,12 +495,12 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 				chain = append(chain, open{Folder{Path: d, Parent: ParentDir(d), CoverOverall: math.Inf(-1)}})
 			}
 			held()
+			one := Folder{Total: 1, CoverID: p.id, CoverOverall: p.overall.Float64, NewestAt: p.at} // unscored counts as 0 for the cover, as before
+			if p.overall.Valid {
+				one.Scored, one.ScoreSum = 1, p.overall.Float64
+			}
 			for i := range chain {
-				f := &chain[i].f
-				f.Total++
-				if p.overall > f.CoverOverall || (p.overall == f.CoverOverall && p.id < f.CoverID) {
-					f.CoverID, f.CoverOverall = p.id, p.overall
-				}
+				chain[i].f.Add(one)
 			}
 		}
 		if len(batch) < scanPage {

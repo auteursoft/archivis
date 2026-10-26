@@ -695,6 +695,31 @@ archivis roots                       # the folders Albums starts from
 archivis roots remove /Volumes/Old   # stop showing one; its photos stay catalogued
 ```
 
+Quote a path that has spaces (`"/Volumes/G-RAID Shuttle XL/Sync"`). Without
+quotes, the shell splits it into several folders.
+
+**Names.** A top-level album can show a name of your choosing instead of
+its folder's name. Admins set it under **Album names** on the Albums page.
+Without accounts, anyone the server admits can. From the command line:
+
+```sh
+archivis roots name "/Volumes/G-RAID Shuttle XL/Sync/_photo_stage" "Photo stage"
+archivis roots name iphone "Phones"                    # the iPhone album
+archivis roots name "/Volumes/G-RAID Shuttle XL/Sync/_photo_stage" ""   # back to the folder's name
+```
+
+The folder's path stays visible on the album's page and when you hover over the card.
+
+**Order.** Album cards sort by name (the default), by **newest photo**, or
+by **average score**. Newest photo uses the latest date of any photo in the
+folder or its subfolders. Average score is the mean overall score of the
+photos below that have one. Undated and unscored albums go last. Each card
+shows both figures. The chosen order carries into subfolders, and it is
+separate from the sort of the photos below.
+
+After upgrading, the folders are worked out once more in the background,
+to add those dates and scores.
+
 ## Teaching it your taste
 
 Rate photos on their pages in the web interface (or say the aesthetic score
