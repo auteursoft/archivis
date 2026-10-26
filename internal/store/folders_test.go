@@ -400,3 +400,34 @@ func TestCancelledFolderRebuildStaysStale(t *testing.T) {
 		t.Fatal("a cancelled rebuild left the folders current")
 	}
 }
+
+// Writing a photo's path unchanged (as every re-save does) is no move: it
+// leaves the folders' move counter alone; a real move bumps it. A catalogue
+// with the earlier trigger (firing on any path write) gets the new one.
+func TestUnchangedPathIsNoMove(t *testing.T) {
+	st := folderStore(t)
+	savePaths(t, st, map[string]float64{"/a/1.jpg": 1})
+	moves := func() string { return st.GetMeta("folders_dirty") }
+	before := moves()
+	if _, err := st.DB.Exec(`UPDATE photos SET path = path, mtime = mtime + 1`); err != nil {
+		t.Fatal(err)
+	}
+	savePaths(t, st, map[string]float64{"/a/1.jpg": 2}) // re-indexed: same path, new score
+	if got := moves(); got != before {
+		t.Fatalf("unchanged paths counted as moves: folders_dirty %q -> %q", before, got)
+	}
+	var id int64
+	if err := st.DB.QueryRow(`SELECT id FROM photos`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MovePath(id, "/b/1.jpg", 3); err != nil {
+		t.Fatal(err)
+	}
+	if moves() == before {
+		t.Fatal("a real move was not counted")
+	}
+	var old int
+	if err := st.DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'photos_moved'`).Scan(&old); err != nil || old != 0 {
+		t.Fatalf("the earlier photos_moved trigger is still there (%d, %v)", old, err)
+	}
+}

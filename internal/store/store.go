@@ -139,8 +139,11 @@ BEGIN
 		VALUES ('groups_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'groups_dirty'), 0) + 1);
 END;
 
--- A photo moved (a file recognised at a new path) changes the folders.
-CREATE TRIGGER IF NOT EXISTS photos_moved AFTER UPDATE OF path ON photos
+-- A photo moved (a file recognised at a new path) changes the folders. Only
+-- a real change counts: re-saving a photo writes its path unchanged.
+DROP TRIGGER IF EXISTS photos_moved;
+CREATE TRIGGER IF NOT EXISTS photos_moved2 AFTER UPDATE OF path ON photos
+WHEN OLD.path IS NOT NEW.path
 BEGIN
 	INSERT OR REPLACE INTO meta (key, value)
 		VALUES ('folders_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'folders_dirty'), 0) + 1);

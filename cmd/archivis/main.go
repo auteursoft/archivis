@@ -287,6 +287,24 @@ func signalContext() (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
+// recordOfflineRoots records folders for Albums when none of them could be
+// indexed (drives not mounted), so they show once mounted; only into a
+// catalogue that already exists, never creating one for it.
+func recordOfflineRoots(data string, roots []string) {
+	db := indexer.Layout{Dir: data}.DB()
+	if _, err := os.Stat(db); err != nil {
+		return
+	}
+	st, err := store.Open(db)
+	if err == nil {
+		err = st.RecordRoots(roots)
+		st.Close()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: recording the folders for Albums: %v\n", err)
+	}
+}
+
 func runIndex(g *globals, args []string) error {
 	fs := newFlagSet("index", "Catalogue photos under the given folders.")
 	workers := fs.Int("workers", runtime.NumCPU(), "parallel photos in flight")
@@ -314,6 +332,7 @@ func runIndex(g *globals, args []string) error {
 		avail = append(avail, r)
 	}
 	if len(avail) == 0 {
+		recordOfflineRoots(g.data, roots)
 		return fmt.Errorf("none of the folders to index exist: %s", strings.Join(roots, ", "))
 	}
 	asked := roots // recorded for Albums, mounted or not
