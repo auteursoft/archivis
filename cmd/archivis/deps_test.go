@@ -157,3 +157,36 @@ func zipOf(t *testing.T, files map[string][]byte) []byte {
 	}
 	return b.Bytes()
 }
+
+// Two members of one archive whose original is down: the original is asked
+// once, not once per member (each failure can be a long timeout), and both
+// come from the mirror's archive, downloaded once.
+func TestFailedArchiveSourceTriedOnce(t *testing.T) {
+	a, b := []byte(strings.Repeat("first ", 200)), []byte(strings.Repeat("second ", 200))
+	zipped := zipOf(t, map[string][]byte{"a.onnx": a, "b.onnx": b})
+	zipSum := sha256.Sum256(zipped)
+	downs, mirrors := 0, 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/down.zip", func(w http.ResponseWriter, r *http.Request) { downs++; http.Error(w, "down", 503) })
+	mux.HandleFunc("/mirror/x.zip", func(w http.ResponseWriter, r *http.Request) { mirrors++; w.Write(zipped) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	dir := t.TempDir()
+	zc := map[string]string{}
+	for name, data := range map[string][]byte{"a.onnx": a, "b.onnx": b} {
+		sum := sha256.Sum256(data)
+		m := modelFile{urls: []string{srv.URL + "/down.zip", srv.URL + "/mirror/x.zip"}, zipMember: name,
+			sha256: hex.EncodeToString(sum[:]), zipSHA256: hex.EncodeToString(zipSum[:])}
+		if err := fetchModel(m, filepath.Join(dir, name), zc); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if downs != 1 || mirrors != 1 {
+		t.Fatalf("original asked %d times, mirror %d; want once each", downs, mirrors)
+	}
+	for _, p := range zc {
+		if p != "" {
+			os.Remove(p)
+		}
+	}
+}

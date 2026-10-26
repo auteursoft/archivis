@@ -25,6 +25,9 @@ concurrency:
 jobs:
   mirror:
     name: mirror files
+    # only reviewed code writes to the release: main, its schedule, or a
+    # dispatch of main; other branches run the read-only checks below
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write # the "deps" release

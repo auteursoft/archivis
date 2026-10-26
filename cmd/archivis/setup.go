@@ -120,10 +120,12 @@ func runSetup(g *globals, args []string) error {
 			return err
 		}
 	}
-	zipCache := map[string]string{}
+	zipCache := map[string]string{} // archive URL -> its download ("" failed: not tried again)
 	defer func() {
 		for _, p := range zipCache {
-			os.Remove(p)
+			if p != "" {
+				os.Remove(p)
+			}
 		}
 	}()
 	for _, m := range modelFiles {
@@ -152,15 +154,21 @@ func fetchModel(m modelFile, dest string, zipCache map[string]string) error {
 	for _, u := range m.urls {
 		if m.zipMember != "" {
 			zp, ok := zipCache[u]
+			if ok && zp == "" {
+				err = fmt.Errorf("%s failed earlier in this run", u)
+				continue // one outage or bad archive costs one wait, not one per member
+			}
 			if !ok {
 				zp = dest + ".zip.part" + fmt.Sprint(len(zipCache))
 				if err = download(u, zp); err != nil {
+					zipCache[u] = ""
 					fmt.Fprintf(os.Stderr, "  %v; trying the next source\n", err)
 					continue
 				}
 				if m.zipSHA256 != "" {
 					if ok, verr := verify(zp, m.zipSHA256); !ok {
 						os.Remove(zp)
+						zipCache[u] = ""
 						err = fmt.Errorf("checksum mismatch from %s (%v)", u, verr)
 						fmt.Fprintf(os.Stderr, "  %v; trying the next source\n", err)
 						continue
