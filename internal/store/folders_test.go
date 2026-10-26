@@ -451,9 +451,25 @@ func TestFolderRebuildHoldsABatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	rebuildFolders(t, st) // compares with the plain reckoning: the emptied folders are gone
-	// with mixed separators, Windows folders are held to the end (and merged)
+	// one path with "/" splits one folder (C:\archive\00001): only it is
+	// held to be merged, not every Windows folder, and the counts still match
 	savePaths(t, st, map[string]float64{`C:\archive\00001/b.jpg`: 2})
-	if fst := rebuildFolders(t, st); fst.Held < 2500 {
-		t.Fatalf("mixed separators: %d held; the Windows folders must be held to be merged", fst.Held)
+	if fst := rebuildFolders(t, st); fst.Held > 2100 {
+		t.Fatalf("one split folder: %d held at once; only it should be held beyond a batch", fst.Held)
+	}
+	if f, _ := st.Folder(`C:\archive\00001`); f == nil || f.Total != 2 {
+		t.Fatalf(`Folder(C:\archive\00001) = %+v, want its 2 photos merged`, f)
+	}
+}
+
+// Windows paths spelt with "/" beside ones with "\" split a folder in path
+// order even when no single path holds both (C:/x/…, C:Z…, C:\y/…): its
+// parts must still be added up.
+func TestWindowsFolderSplitAcrossPaths(t *testing.T) {
+	st := folderStore(t)
+	savePaths(t, st, map[string]float64{`C:/x/a.jpg`: 1, `C:Z\c.jpg`: 2, `C:\y\b.jpg`: 3})
+	rebuildFolders(t, st) // compares with the plain reckoning
+	if f, _ := st.Folder("C:"); f == nil || f.Total != 2 {
+		t.Fatalf("Folder(C:) = %+v, want both photos below it", f)
 	}
 }

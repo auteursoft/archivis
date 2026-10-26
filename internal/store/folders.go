@@ -207,12 +207,13 @@ func outermost(libs []string) []string {
 	return out
 }
 
-// mixedSeparators reports whether any Windows-style path holds both
-// separators (looking only at paths not starting with "/", by the index).
-func (s *Store) mixedSeparators() (bool, error) {
-	var mixed bool
-	err := s.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM photos WHERE (path < '/' OR path >= '0') AND instr(path, '/') > 0 AND instr(path, char(92)) > 0)`).Scan(&mixed)
-	return mixed, err
+// windowsSlashes reports whether any Windows-style path (not starting with
+// "/"; looked up by the index) holds a "/". The indexer writes only "\"
+// there, so this is normally false.
+func (s *Store) windowsSlashes() (bool, error) {
+	var any bool
+	err := s.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM photos WHERE (path < '/' OR path >= '0') AND instr(path, '/') > 0)`).Scan(&any)
+	return any, err
 }
 
 // foldersDirty changes whenever photos are deleted or moved.
@@ -251,12 +252,37 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 		return st, err
 	}
 	w := &batchWriter{s: s}
-	// Windows paths mixing separators (C:\a\x, C:\a2\y, C:\a/z) can split
-	// a folder's photos apart in path order; only then are Windows folders
-	// held to the end and their parts added up
-	mixed, err := s.mixedSeparators()
+	// whether any photo lies in a path range: one indexed look
+	holds, err := s.DB.PrepareContext(ctx, `SELECT EXISTS(SELECT 1 FROM photos WHERE path >= ? AND path < ?)`)
 	if err != nil {
 		return st, err
+	}
+	defer holds.Close()
+	has := func(r [2]string) (bool, error) {
+		var any bool
+		err := holds.QueryRowContext(ctx, r[0], r[1]).Scan(&any)
+		return any, err
+	}
+	// A Windows folder with photos below it through both separators
+	// (C:\a\x and C:\a/z, with C:\a2\y sorting between) is split apart in
+	// path order: only such folders are held to the end, their parts added
+	// up. Without a "/" in any Windows path (as the indexer writes them)
+	// there are none, and no folder is looked at.
+	slashes, err := s.windowsSlashes()
+	if err != nil {
+		return st, err
+	}
+	split := func(dir string) (bool, error) {
+		r := dirRanges(dir) // "/" range, then "\" range
+		if !slashes || len(r) < 2 {
+			return false, nil
+		}
+		for _, x := range r {
+			if any, err := has(x); err != nil || !any {
+				return false, err
+			}
+		}
+		return true, nil
 	}
 
 	// the open folders: the chain of the current photo's folders, top first
@@ -300,7 +326,7 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 		pending = pending[:0]
 		return nil
 	}
-	win := map[string]Folder{} // Windows folders held to the end (mixed)
+	win := map[string]Folder{} // split Windows folders, held to the end
 	held := func() {
 		st.Held = max(st.Held, len(chain)+len(pending)+len(win))
 	}
@@ -312,7 +338,11 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 			if isLibrary(f.Path) && (len(libs) == 0 || libs[len(libs)-1] != f.Path) {
 				libs = append(libs, f.Path)
 			}
-			if mixed && seps(f.Path) != "/" {
+			isSplit, err := split(f.Path)
+			if err != nil {
+				return err
+			}
+			if isSplit {
 				if o, ok := win[f.Path]; ok {
 					f.Total += o.Total
 					if o.CoverOverall > f.CoverOverall || (o.CoverOverall == f.CoverOverall && o.CoverID < f.CoverID) {
@@ -408,16 +438,10 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 	if err := flushPending(); err != nil {
 		return st, err
 	}
-	// folders no longer holding photos: one indexed look below each
-	holds, err := s.DB.PrepareContext(ctx, `SELECT EXISTS(SELECT 1 FROM photos WHERE path >= ? AND path < ?)`)
-	if err != nil {
-		return st, err
-	}
-	defer holds.Close()
+	// folders no longer holding photos: an indexed look below each
 	empty := func(dir string) (bool, error) {
 		for _, r := range dirRanges(dir) {
-			var any bool
-			if err := holds.QueryRowContext(ctx, r[0], r[1]).Scan(&any); err != nil || any {
+			if any, err := has(r); err != nil || any {
 				return false, err
 			}
 		}
