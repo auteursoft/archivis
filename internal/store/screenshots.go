@@ -130,7 +130,11 @@ func LibraryScreenshots(lib string) ([]string, error) {
 // log; if that cannot be done, the database file alone is read (what
 // Photos last checkpointed).
 func openReadOnly(path string) (*sql.DB, error) {
-	u := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p // C:/… becomes file:///C:/… (file://C:/… would make C: an authority)
+	}
+	u := (&url.URL{Scheme: "file", Path: p}).String()
 	var err error
 	for _, opts := range []string{"?mode=ro", "?mode=ro&immutable=1"} {
 		var db *sql.DB

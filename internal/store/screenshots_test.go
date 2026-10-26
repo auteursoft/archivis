@@ -47,6 +47,9 @@ func fakePhotosDB(t *testing.T, lib, table string, detected bool, rows [][4]any)
 // catalogued library, whatever their analysis said; the rest keep theirs.
 // A library whose database cannot be read is reported, the others still
 // marked. Marking again changes nothing.
+//
+// The database URI: a Windows path must become file:///C:/…, not
+// file://C:/… (see TestReadOnlyURI).
 func TestMarkLibraryScreenshots(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
@@ -83,8 +86,8 @@ func TestMarkLibraryScreenshots(t *testing.T) {
 	}
 	dirty := st.GetMeta("folders_dirty")
 	n, err := st.MarkLibraryScreenshots(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "Gone.photoslibrary") {
-		t.Fatalf("the library with no database: err %v", err)
+	if err == nil || !strings.Contains(err.Error(), "Gone.photoslibrary") || strings.Contains(err.Error(), "Photos Library") || strings.Contains(err.Error(), "Old #1") {
+		t.Fatalf("only the library with no database should fail: err %v", err)
 	}
 	if n != 3 {
 		t.Fatalf("marked %d, want 3", n)
@@ -101,5 +104,31 @@ func TestMarkLibraryScreenshots(t *testing.T) {
 	}
 	if n, _ := st.MarkLibraryScreenshots(context.Background()); n != 0 {
 		t.Errorf("marking again changed %d", n)
+	}
+}
+
+// openReadOnly's URI keeps the whole path as a path, on Windows too, with
+// spaces and '#' escaped.
+func TestReadOnlyURI(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "a #b c")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "x.sqlite")
+	w, err := sql.Open("sqlite3", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if _, err := w.Exec(`CREATE TABLE t (x)`); err != nil {
+		t.Fatal(err)
+	}
+	db, err := openReadOnly(p)
+	if err != nil {
+		t.Fatalf("opening %s: %v", p, err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO t VALUES (1)`); err == nil {
+		t.Fatal("a read-only database accepted a write")
 	}
 }
