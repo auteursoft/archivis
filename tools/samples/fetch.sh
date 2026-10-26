@@ -23,6 +23,9 @@ mirror=https://github.com/auteursoft/archivis/releases/download/deps
 rawpy=https://raw.githubusercontent.com/letmaik/rawpy/a39c2e7a44911889c3360891012f862f904ba551/test
 pp=https://raw.githubusercontent.com/photoprism/photoprism/fd375b3ca7ddd4d58e6f46f895a64a27734dc1b2/assets/samples
 px=https://raw.pixls.us/data
+# the mirror's name for a file: GitHub rewrites other characters in release
+# file names (a "(" becomes "."), so they are made "_" here, as mirror.sh does
+mirrorname() { printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'; }
 sha() { # sha256sum on Linux, shasum on macOS
 	if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
 }
@@ -55,6 +58,10 @@ c294c388ad9bccbee169f87b9ceb661001515fb039d63f587dcabba76df5636d $px/Sony/ILCE-7
 e47981d90142291a2bd7ba5a3dea51a25fff72ad3dad83dd2d2698f3ef5f59a8 $px/Canon/EOS%2090D/Canon-90D-RAW-ISO-100.CR3
 LIST
 }
+if [ "${1:-}" = --mirror-name ]; then # for mirror.sh: one name, as the mirror holds it
+	mirrorname "${2:?}"
+	exit 0
+fi
 if [ "${1:-}" = --list ]; then
 	list
 	exit 0
@@ -68,7 +75,7 @@ list | while read -r sum url; do
 		continue
 	fi
 	echo "$(basename "$url"): from the auteursoft mirror" >&2
-	curl -fsSL --retry 3 -o "$f" "$mirror/$(basename "$url")" || true
+	curl -fsSL --retry 3 -o "$f" "$mirror/$(mirrorname "$(basename "$url")")" || true
 	[ -f "$f" ] && [ "$(sha "$f")" = "$sum" ] || { echo "checksum mismatch or missing: $f" >&2; exit 1; }
 done
 echo "samples ready in $dir"
