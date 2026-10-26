@@ -9,7 +9,7 @@ import (
 // Settings are catalogue-wide options an admin can change (in the web
 // interface or with `archivis settings`). They live in the meta table.
 type Settings struct {
-	// StackBursts collapses near-identical frames of a burst into one card
+	// StackBursts collapses alike shots of one scene into one card
 	// on the Photos page.
 	StackBursts bool
 	// BurstGap is the most seconds between frames of one burst.
@@ -17,20 +17,25 @@ type Settings struct {
 	// StackHamming is how many bits two frames' perceptual hashes may
 	// differ by and still count as the same picture.
 	StackHamming int
+	// SceneGap is the most minutes between one camera's shots for them to
+	// count as one scene, whose alike shots stack even when they are not
+	// one burst (0: stack only within bursts).
+	SceneGap int
 }
 
 // DefaultSettings are used for any setting never changed.
-var DefaultSettings = Settings{StackBursts: true, BurstGap: 3, StackHamming: 6}
+var DefaultSettings = Settings{StackBursts: true, BurstGap: 3, StackHamming: 10, SceneGap: 10}
 
 // Setting limits.
 const (
 	MinBurstGap, MaxBurstGap         = 1, 60
 	MinStackHamming, MaxStackHamming = 0, 16
+	MinSceneGap, MaxSceneGap         = 0, 120
 )
 
 // settingKeys are the settings' names, as `archivis settings` and the meta
 // table use them.
-var settingKeys = []string{"burst_gap", "stack_bursts", "stack_hamming"}
+var settingKeys = []string{"burst_gap", "scene_gap", "stack_bursts", "stack_hamming"}
 
 // SettingNames lists the settings' names.
 func SettingNames() []string { return append([]string(nil), settingKeys...) }
@@ -39,8 +44,12 @@ func SettingNames() []string { return append([]string(nil), settingKeys...) }
 // unreadable.
 func (s *Store) GetSettings() Settings {
 	out := DefaultSettings
+	// Settings saved before scenes stacked (no scene_gap stored) hold the
+	// old default similarity, 6, which suited frames of one burst; they get
+	// the new default, which suits shots minutes apart, until saved again.
+	before := s.GetMeta("setting_scene_gap") == ""
 	for _, k := range settingKeys {
-		if v := s.GetMeta("setting_" + k); v != "" {
+		if v := s.GetMeta("setting_" + k); v != "" && !(before && k == "stack_hamming" && v == "6") {
 			_ = out.Set(k, v) // a bad stored value keeps the default
 		}
 	}
@@ -68,6 +77,9 @@ func (v Settings) Validate() error {
 	if v.StackHamming < MinStackHamming || v.StackHamming > MaxStackHamming {
 		return fmt.Errorf("stack similarity must be %d-%d bits", MinStackHamming, MaxStackHamming)
 	}
+	if v.SceneGap < MinSceneGap || v.SceneGap > MaxSceneGap {
+		return fmt.Errorf("scene gap must be %d-%d minutes", MinSceneGap, MaxSceneGap)
+	}
 	return nil
 }
 
@@ -80,6 +92,8 @@ func (v Settings) Get(name string) string {
 		return strconv.Itoa(v.BurstGap)
 	case "stack_hamming":
 		return strconv.Itoa(v.StackHamming)
+	case "scene_gap":
+		return strconv.Itoa(v.SceneGap)
 	}
 	return ""
 }
@@ -99,16 +113,19 @@ func (v *Settings) Set(name, value string) error {
 			return fmt.Errorf("stack_bursts must be on or off")
 		}
 		return nil
-	case "burst_gap", "stack_hamming":
+	case "burst_gap", "stack_hamming", "scene_gap":
 		n, err := strconv.Atoi(value)
 		if err != nil {
 			return fmt.Errorf("%s must be a whole number", name)
 		}
 		next := *v
-		if name == "burst_gap" {
+		switch name {
+		case "burst_gap":
 			next.BurstGap = n
-		} else {
+		case "stack_hamming":
 			next.StackHamming = n
+		default:
+			next.SceneGap = n
 		}
 		if err := next.Validate(); err != nil {
 			return err

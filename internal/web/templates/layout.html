@@ -42,11 +42,11 @@
 {{define "photogrid"}}
 <div class="grid">
 {{range .}}
-  <a class="card{{if .Stack}} stack{{end}}" href="/photo/{{.ID}}" title="{{.Path}}{{if .Stack}} (one of {{.Stack}} near-identical frames){{end}}">
+  <a class="card{{if .Stack}} stack{{end}}" href="/photo/{{.ID}}" title="{{.Path}}{{if .Stack}} (one of {{.Stack}} alike shots){{end}}">
     <img loading="lazy" src="/t/{{.Fingerprint}}.jpg" alt="{{base .Path}}">
     <span class="badge {{scoreClass .Overall}}">{{f0 .Overall}}</span>
     {{if .Score}}<span class="sim">{{f3 .Score}}</span>{{end}}
-    {{if .Stack}}<span class="count" title="{{.Stack}} near-identical frames">{{.Stack}}</span>{{end}}
+    {{if .Stack}}<span class="count" title="{{.Stack}} alike shots">{{.Stack}}</span>{{end}}
     <span class="flags">{{if lt .FocusScore 0.3}}<i title="out of focus or blurred">soft</i>{{end}}{{if lt .ExposureScore 0.5}}<i title="badly over- or under-exposed">exposure</i>{{end}}{{if and (lt .ColorScore 0.1) (not .Monochrome)}}<i title="strong colour cast">cast</i>{{end}}{{if gt .Blockiness 1.5}}<i title="heavy JPEG compression">JPEG</i>{{end}}</span>
     <span class="meta">
       <b class="{{unitClass .FocusScore}}">focus {{pct .FocusScore}}</b>

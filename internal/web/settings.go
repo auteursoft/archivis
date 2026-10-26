@@ -16,6 +16,7 @@ type settingsData struct {
 	Settings               store.Settings
 	MinGap, MaxGap         int
 	MinHamming, MaxHamming int
+	MinScene, MaxScene     int
 	Saved                  bool
 }
 
@@ -27,7 +28,8 @@ func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, v store.
 	}
 	s.renderStatus(w, r, "settings", &page{Title: "Settings", Nav: "settings", Error: errMsg,
 		Data: &settingsData{Settings: v, MinGap: store.MinBurstGap, MaxGap: store.MaxBurstGap,
-			MinHamming: store.MinStackHamming, MaxHamming: store.MaxStackHamming, Saved: saved}}, status)
+			MinHamming: store.MinStackHamming, MaxHamming: store.MaxStackHamming,
+			MinScene: store.MinSceneGap, MaxScene: store.MaxSceneGap, Saved: saved}}, status)
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +55,8 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, v, false, err.Error())
 		return
 	}
-	s.regroupInBackground(true)                                                                                                                          // by the new rules
-	log.Printf("%s changed settings: burst gap %ds, stacking %s, stack similarity %d bits", rater(r), v.BurstGap, v.Get("stack_bursts"), v.StackHamming) // account, --auth user or "local"
+	s.regroupInBackground(true)                                                                              // by the new rules
+	log.Printf("%s changed settings: burst gap %ds, scene gap %dmin, stacking %s, stack similarity %d bits", // account, --auth user or "local"
+		rater(r), v.BurstGap, v.SceneGap, v.Get("stack_bursts"), v.StackHamming)
 	http.Redirect(w, r, "/admin/settings?saved=1", http.StatusSeeOther)
 }

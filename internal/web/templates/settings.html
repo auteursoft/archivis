@@ -11,13 +11,17 @@
   <p class="note">Frames from one camera taken this many seconds apart or closer count as one burst.</p>
   <h2>Stacks</h2>
   <label><input type="checkbox" name="stack_bursts" value="on" {{if .Settings.StackBursts}}checked{{end}}><input type="hidden" name="stack_bursts" value="off">
-    Show near-identical frames of a burst as one card on the Photos page</label>
-  <label>How alike frames must be to stack
+    Show alike shots of one scene as one card on the Photos page</label>
+  <label>Scene gap (minutes)
+    <input type="number" name="scene_gap" min="{{.MinScene}}" max="{{.MaxScene}}" value="{{.Settings.SceneGap}}" required>
+  </label>
+  <p class="note">Shots from one camera, each taken within this many minutes of the last, are one scene: its alike shots stack (a RAW and its JPEG too) even when they are not one burst. 0 stacks only frames of one burst.</p>
+  <label>How alike shots must be to stack
     <input type="number" name="stack_hamming" min="{{.MinHamming}}" max="{{.MaxHamming}}" value="{{.Settings.StackHamming}}" required>
   </label>
-  <p class="note">The most bits two frames' perceptual hashes may differ by: 0 stacks only frames that look the same, higher values stack more. The card shows the best frame; its page lists the others.</p>
+  <p class="note">The most bits a shot's perceptual hash may differ from the stack's best shot by: 0 stacks only shots that look the same, higher values stack more (6 suits frames of one burst; 10, the default, shots of one view minutes apart). The card shows the best shot; its page lists the others.</p>
   <button class="btn primary">Save</button>
-  <p class="note">Bursts and stacks are worked out again, in the background, when the gap or similarity changes.</p>
+  <p class="note">Bursts and stacks are worked out again, in the background, when a gap or the similarity changes.</p>
 </form>
 </div>
 {{end}}
