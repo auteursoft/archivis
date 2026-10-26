@@ -207,6 +207,14 @@ func outermost(libs []string) []string {
 	return out
 }
 
+// mixedSeparators reports whether any Windows-style path holds both
+// separators (looking only at paths not starting with "/", by the index).
+func (s *Store) mixedSeparators() (bool, error) {
+	var mixed bool
+	err := s.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM photos WHERE (path < '/' OR path >= '0') AND instr(path, '/') > 0 AND instr(path, char(92)) > 0)`).Scan(&mixed)
+	return mixed, err
+}
+
 // foldersDirty changes whenever photos are deleted or moved.
 func (s *Store) foldersDirty() string {
 	return s.GetMeta("groups_dirty") + "/" + s.GetMeta("folders_dirty")
@@ -225,13 +233,15 @@ func (s *Store) FoldersStale() bool {
 // FolderStats reports what RebuildFolders did.
 type FolderStats struct {
 	Folders, Writes int
+	Held            int // the most folders held in memory at once
 	Took            time.Duration
 }
 
 // RebuildFolders works out every folder's count and best photo from the
 // catalogue's paths, writing only what changed, in short transactions.
 // Photos are read in path order, where everything below a folder comes
-// together, so each folder is finished as the scan leaves it.
+// together, so each folder is finished as the scan leaves it; memory holds
+// only the open folders and a batch of finished ones, however many there are.
 func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 	start := time.Now()
 	var st FolderStats
@@ -241,7 +251,13 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 		return st, err
 	}
 	w := &batchWriter{s: s}
-	var keep []string // every folder found, in path order
+	// Windows paths mixing separators (C:\a\x, C:\a2\y, C:\a/z) can split
+	// a folder's photos apart in path order; only then are Windows folders
+	// held to the end and their parts added up
+	mixed, err := s.mixedSeparators()
+	if err != nil {
+		return st, err
+	}
 
 	// the open folders: the chain of the current photo's folders, top first
 	type open struct {
@@ -284,10 +300,10 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 		pending = pending[:0]
 		return nil
 	}
-	// Windows folders, kept to the end: with both separators allowed, a
-	// folder's photos needn't come together (C:\a\x, C:\a2\y, C:\a/z), so
-	// its parts are added up here.
-	win := map[string]Folder{}
+	win := map[string]Folder{} // Windows folders held to the end (mixed)
+	held := func() {
+		st.Held = max(st.Held, len(chain)+len(pending)+len(win))
+	}
 	var libs []string             // Apple Photos libraries
 	finish := func(n int) error { // close the deepest n open folders
 		for ; n > 0; n-- {
@@ -296,7 +312,7 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 			if isLibrary(f.Path) && (len(libs) == 0 || libs[len(libs)-1] != f.Path) {
 				libs = append(libs, f.Path)
 			}
-			if seps(f.Path) != "/" {
+			if mixed && seps(f.Path) != "/" {
 				if o, ok := win[f.Path]; ok {
 					f.Total += o.Total
 					if o.CoverOverall > f.CoverOverall || (o.CoverOverall == f.CoverOverall && o.CoverID < f.CoverID) {
@@ -304,12 +320,13 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 					}
 				}
 				win[f.Path] = f
+				held()
 				continue
 			}
 			pending = append(pending, f)
-			keep = append(keep, f.Path)
 			st.Folders++
 		}
+		held()
 		if len(pending) >= 2000 {
 			return flushPending()
 		}
@@ -368,6 +385,7 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 			for _, d := range dirs[same:] {
 				chain = append(chain, open{Folder{Path: d, Parent: ParentDir(d), CoverOverall: math.Inf(-1)}})
 			}
+			held()
 			for i := range chain {
 				f := &chain[i].f
 				f.Total++
@@ -385,14 +403,26 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 	}
 	for _, f := range win {
 		pending = append(pending, f)
-		keep = append(keep, f.Path)
 		st.Folders++
 	}
 	if err := flushPending(); err != nil {
 		return st, err
 	}
-	// folders no longer holding photos
-	sort.Strings(keep)
+	// folders no longer holding photos: one indexed look below each
+	holds, err := s.DB.PrepareContext(ctx, `SELECT EXISTS(SELECT 1 FROM photos WHERE path >= ? AND path < ?)`)
+	if err != nil {
+		return st, err
+	}
+	defer holds.Close()
+	empty := func(dir string) (bool, error) {
+		for _, r := range dirRanges(dir) {
+			var any bool
+			if err := holds.QueryRowContext(ctx, r[0], r[1]).Scan(&any); err != nil || any {
+				return false, err
+			}
+		}
+		return true, nil
+	}
 	at := ""
 	for {
 		if err := ctx.Err(); err != nil {
@@ -408,7 +438,9 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 		}
 		for _, p := range paths {
 			at = p
-			if i := sort.SearchStrings(keep, p); i < len(keep) && keep[i] == p {
+			if gone, err := empty(p); err != nil {
+				return st, err
+			} else if !gone {
 				continue
 			}
 			if err := w.exec(`DELETE FROM folders WHERE path = ?`, p); err != nil {

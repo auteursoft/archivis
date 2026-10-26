@@ -431,3 +431,29 @@ func TestUnchangedPathIsNoMove(t *testing.T) {
 		t.Fatalf("the earlier photos_moved trigger is still there (%d, %v)", old, err)
 	}
 }
+
+// Memory holds the open folders and a batch of finished ones, not every
+// folder: 5,000 one-photo folders (Unix and Windows alike) never have more
+// than a batch held at once, and stale ones are still removed.
+func TestFolderRebuildHoldsABatch(t *testing.T) {
+	st := folderStore(t)
+	ps := map[string]float64{}
+	for i := 0; i < 2500; i++ {
+		ps[fmt.Sprintf("/archive/%05d/a.jpg", i)] = 1
+		ps[fmt.Sprintf(`C:\archive\%05d\a.jpg`, i)] = 1
+	}
+	savePaths(t, st, ps)
+	fst := rebuildFolders(t, st)
+	if fst.Folders != 5004 || fst.Held > 2100 {
+		t.Fatalf("%d folders, %d held at once; want 5004, at most a batch (2000) plus the open chain", fst.Folders, fst.Held)
+	}
+	if _, err := st.DB.Exec(`DELETE FROM photos WHERE path LIKE '/archive/0000%'`); err != nil {
+		t.Fatal(err)
+	}
+	rebuildFolders(t, st) // compares with the plain reckoning: the emptied folders are gone
+	// with mixed separators, Windows folders are held to the end (and merged)
+	savePaths(t, st, map[string]float64{`C:\archive\00001/b.jpg`: 2})
+	if fst := rebuildFolders(t, st); fst.Held < 2500 {
+		t.Fatalf("mixed separators: %d held; the Windows folders must be held to be merged", fst.Held)
+	}
+}
