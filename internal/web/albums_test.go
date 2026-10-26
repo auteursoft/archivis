@@ -2,17 +2,30 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"html"
+	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/auteursoft/archivis/internal/catalog"
 	"github.com/auteursoft/archivis/internal/store"
 )
 
 func albumsServer(t *testing.T, roots []string) *Server {
 	t.Helper()
 	s, cat, _ := newTestServer(t)
+	seedAlbums(t, cat, roots)
+	return s
+}
+
+// seedAlbums catalogues photos in a few folders and two Apple Photos
+// libraries, records roots and works the folders out. Only /pics/2020 and
+// /pics2 have dated photos (2020 and 2023).
+func seedAlbums(t *testing.T, cat *catalog.Catalog, roots []string) {
+	t.Helper()
 	var rs []*store.Result
 	for p, o := range map[string]float64{
 		"/pics/2019/trip/a.jpg": 50, "/pics/2019/trip/b.jpg": 70, "/pics/2019/c.jpg": 60, "/pics/2020/d.jpg": 40,
@@ -30,10 +43,14 @@ func albumsServer(t *testing.T, roots []string) *Server {
 			t.Fatal(err)
 		}
 	}
+	for p, at := range map[string]int64{"/pics/2020/d.jpg": 1590000000, "/pics2/e.jpg": 1690000000} {
+		if _, err := cat.Store.DB.Exec(`UPDATE photos SET taken_at = ? WHERE path = ?`, at, p); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := cat.Store.RebuildFolders(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	return s
 }
 
 func TestAlbumsTop(t *testing.T) {
@@ -62,8 +79,8 @@ func TestAlbumFolder(t *testing.T) {
 	h := s.Handler()
 	body := html.UnescapeString(get(t, h, "/albums?dir="+url.QueryEscape("/pics/2019")))
 	mustContain(t, "folder", body,
-		`<a href="/albums">Albums</a> › <a href="/albums?dir=%2Fpics">pics</a> › <b>2019</b>`, // the way up, from the root
-		`href="/albums?dir=%2Fpics%2F2019%2Ftrip"`, ">trip<",                                  // the subfolder
+		`<a href="/albums">Albums</a> › <a href="/albums?dir=%2Fpics" title="/pics">pics</a> › <b>2019</b>`, // the way up, from the root
+		`href="/albums?dir=%2Fpics%2F2019%2Ftrip"`, ">trip<",                                                // the subfolder
 		"3 photos", "/pics/2019/trip/a.jpg", "/pics/2019/trip/b.jpg", "/pics/2019/c.jpg", // everything below
 		`<input type="hidden" name="dir" value="/pics/2019">`, `action="/albums"`)
 	if strings.Contains(body, "/pics/2020/d.jpg") || strings.Contains(body, "/pics2/e.jpg") {
@@ -117,5 +134,135 @@ func TestIPhoneCoverTieBreak(t *testing.T) {
 		if a := iphoneAlbum(libs); a.CoverID != 4 || a.Total != 3 {
 			t.Errorf("iphoneAlbum(%v) = cover %d, %d photos; want cover 4, 3 photos", libs, a.CoverID, a.Total)
 		}
+	}
+}
+
+// order returns where each of the strings first appears in body, failing
+// if one is missing.
+func order(t *testing.T, body string, want ...string) []int {
+	t.Helper()
+	var out []int
+	for _, w := range want {
+		i := strings.Index(body, w)
+		if i < 0 {
+			t.Fatalf("missing %q", w)
+		}
+		out = append(out, i)
+	}
+	return out
+}
+
+// Album cards sort by name, newest photo (undated last) or average score
+// (unscored last), and the order is kept in the links down and back up.
+func TestAlbumSort(t *testing.T) {
+	s := albumsServer(t, []string{"/pics", "/pics2", "/gone"})
+	h := s.Handler()
+	cards := []string{`href="/albums?dir=%2Fgone`, `href="/albums?iphone=1`, `href="/albums?dir=%2Fpics"`, `href="/albums?dir=%2Fpics2`}
+	cardsSorted := []string{`href="/albums?asort=%s&amp;dir=%%2Fgone"`, `href="/albums?asort=%s&amp;iphone=1"`, `href="/albums?asort=%s&amp;dir=%%2Fpics"`, `href="/albums?asort=%s&amp;dir=%%2Fpics2"`}
+	for _, c := range []struct {
+		sort string
+		want []int // the cards above, in the order expected
+	}{
+		{"", []int{0, 1, 2, 3}},
+		{"name", []int{0, 1, 2, 3}},
+		{"newest", []int{3, 2, 0, 1}}, // 2023, 2020, then the undated by name
+		{"score", []int{3, 1, 2, 0}},  // 99, 55 and 55 (by name), unscored
+		{"bogus", []int{0, 1, 2, 3}},
+	} {
+		body := get(t, h, "/albums?asort="+c.sort)
+		var want []string
+		for _, i := range c.want {
+			if c.sort == "newest" || c.sort == "score" {
+				want = append(want, fmt.Sprintf(cardsSorted[i], c.sort))
+			} else {
+				want = append(want, cards[i])
+			}
+		}
+		at := order(t, body, want...)
+		if !sort.IntsAreSorted(at) {
+			t.Errorf("asort=%s: cards out of order: %v", c.sort, at)
+		}
+		if c.sort == "newest" || c.sort == "score" {
+			mustContain(t, "sorted albums", body, fmt.Sprintf(`<option value="%s" selected>`, c.sort))
+		}
+	}
+	// cards show the newest month and the average
+	body := html.UnescapeString(get(t, h, "/albums"))
+	mustContain(t, "card details", body, "Jul 2023 · avg 99", "May 2020 · avg 55", "undated · avg 55")
+	// a folder keeps the order for its subfolders, the crumbs and the photos' filter form
+	body = get(t, h, "/albums?dir=%2Fpics&asort=newest")
+	at := order(t, body, `href="/albums?asort=newest&amp;dir=%2Fpics%2F2020"`, `href="/albums?asort=newest&amp;dir=%2Fpics%2F2019"`)
+	if at[0] > at[1] {
+		t.Error("subfolders not newest first")
+	}
+	mustContain(t, "folder keeps the order", body, `<a href="/albums?asort=newest">Albums</a>`, `<input type="hidden" name="asort" value="newest">`)
+	// the photos' sort leaves the albums' alone, and the album sort form keeps the photos' filters
+	body = get(t, h, "/albums?dir=%2Fpics&sort=newest&min_overall=10")
+	i := strings.Index(body, `<form class="albumsort"`)
+	if i < 0 {
+		t.Fatal("no album sort form")
+	}
+	form := body[i : i+strings.Index(body[i:], "</form>")]
+	mustContain(t, "album sort form", form, `name="dir" value="/pics"`, `name="sort" value="newest"`, `name="min_overall" value="10"`, `<option value="name" selected>`)
+}
+
+// Display names: admins (anyone, without accounts) name the top-level
+// albums; the cards, the album's title and the way back show the name, with
+// the folder still to be seen.
+func TestAlbumNamesWithoutAccounts(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	seedAlbums(t, cat, []string{"/pics", "/pics2"})
+	b := &browser{t: t, h: s.Handler()}
+	if body := b.do("GET", "/albums", nil).Body.String(); !strings.Contains(body, `action="/admin/albums/name"`) {
+		t.Fatal("no naming form without accounts")
+	}
+	if rec := b.do("POST", "/admin/albums/name", url.Values{"album": {"/pics"}, "name": {"Photo stage"}, "asort": {"score"}}); rec.Code != http.StatusSeeOther ||
+		rec.Header().Get("Location") != "/albums?asort=score" {
+		t.Fatalf("naming: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := b.do("POST", "/admin/albums/name", url.Values{"album": {store.IPhoneAlbum}, "name": {"Phones"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("naming iPhone: %d", rec.Code)
+	}
+	if rec := b.do("POST", "/admin/albums/name", url.Values{"album": {"/elsewhere"}, "name": {"x"}}); rec.Code != http.StatusNotFound {
+		t.Fatalf("naming an unknown album: %d", rec.Code)
+	}
+	body := html.UnescapeString(b.do("GET", "/albums", nil).Body.String())
+	mustContain(t, "named albums", body, ">Photo stage<small>", ">Phones<small>", ">pics2<small>", `title="/pics"`, `placeholder="pics"`, `value="Photo stage"`)
+	body = html.UnescapeString(b.do("GET", "/albums?dir=%2Fpics%2F2019", nil).Body.String())
+	mustContain(t, "named crumbs", body, `<a href="/albums?dir=%2Fpics" title="/pics">Photo stage</a>`)
+	body = html.UnescapeString(b.do("GET", "/albums?dir=%2Fpics", nil).Body.String())
+	mustContain(t, "named album", body, "<title>Photo stage · Albums", `<b title="/pics">Photo stage</b> <small class="path">/pics</small>`)
+	body = html.UnescapeString(b.do("GET", "/albums?iphone=1", nil).Body.String())
+	mustContain(t, "named iPhone", body, "<title>Phones · Albums")
+}
+
+func TestAlbumNamesAdminOnly(t *testing.T) {
+	s, cat, _ := accountsServer(t)
+	seedAlbums(t, cat, []string{"/pics"})
+	h := s.Handler()
+	admin := &browser{t: t, h: h}
+	admin.login("root", testPassword)
+	newUser(t, cat, "eve", store.RoleEditor)
+	editor := &browser{t: t, h: h}
+	editor.login("eve", testPassword)
+	if body := editor.do("GET", "/albums", nil).Body.String(); strings.Contains(body, "/admin/albums/name") {
+		t.Fatal("an editor sees the naming form")
+	}
+	if rec := editor.do("POST", "/admin/albums/name", url.Values{"album": {"/pics"}, "name": {"Mine"}}); rec.Code != http.StatusForbidden {
+		t.Fatalf("editor naming: %d", rec.Code)
+	}
+	if body := admin.do("GET", "/albums", nil).Body.String(); !strings.Contains(body, `action="/admin/albums/name"`) {
+		t.Fatal("an admin lacks the naming form")
+	}
+	admin.hdr = map[string]string{"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+	if rec := admin.do("POST", "/admin/albums/name", url.Values{"album": {"/pics"}, "name": {"Theirs"}}); rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-site naming: %d", rec.Code)
+	}
+	admin.hdr = nil
+	if rec := admin.do("POST", "/admin/albums/name", url.Values{"album": {"/pics"}, "name": {"Ours"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("admin naming: %d", rec.Code)
+	}
+	if names, _ := cat.Store.AlbumNames(); names["/pics"] != "Ours" {
+		t.Fatalf("names = %v", names)
 	}
 }

@@ -70,3 +70,32 @@ func TestIndexRecordsOfflineRoots(t *testing.T) {
 		t.Fatal("a catalogue was created for offline folders")
 	}
 }
+
+// roots name gives a recorded folder (or the iPhone album) a display name,
+// as typed or with a trailing separator, and refuses unknown folders.
+func TestRootsName(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ARCHIVIS_DATA", dir)
+	g := &globals{data: dir}
+	root := filepath.Join(t.TempDir(), "Photo Stage")
+	if err := runRoots(g, []string{"add", root}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runRoots(g, []string{"name", root + string(filepath.Separator), "Stage"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runRoots(g, []string{"name", "iPhone", "Phones"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runRoots(g, []string{"name", filepath.Join(t.TempDir(), "elsewhere"), "x"}); err == nil {
+		t.Fatal("named a folder never recorded")
+	}
+	st, err := store.Open(indexer.Layout{Dir: dir}.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if names, _ := st.AlbumNames(); names[root] != "Stage" || names[store.IPhoneAlbum] != "Phones" {
+		t.Fatalf("names = %v", names)
+	}
+}

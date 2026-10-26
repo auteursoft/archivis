@@ -20,7 +20,7 @@
   </nav>
   {{/* in an album, search within it */}}{{$album := or .Params.dir .Params.iphone}}
   <form class="search" action="{{if $album}}/albums{{else}}/{{end}}" method="get">
-    {{with .Params.dir}}<input type="hidden" name="dir" value="{{.}}">{{end}}{{with .Params.iphone}}<input type="hidden" name="iphone" value="{{.}}">{{end}}
+    {{with .Params.dir}}<input type="hidden" name="dir" value="{{.}}">{{end}}{{with .Params.iphone}}<input type="hidden" name="iphone" value="{{.}}">{{end}}{{with .Params.asort}}<input type="hidden" name="asort" value="{{.}}">{{end}}
     <input type="search" name="q" value="{{.Query}}" placeholder="{{if $album}}Search this album… e.g. “sunset on the beach”{{else}}Describe a photo… e.g. “protest at night in the rain”{{end}}">
   </form>
   <form class="upload" action="/query" method="post" enctype="multipart/form-data" title="Search with a photo: finds the people in it and similar scenes">
@@ -111,6 +111,7 @@
   {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
   {{with $p.dir}}<input type="hidden" name="dir" value="{{.}}">{{end}}
   {{with $p.iphone}}<input type="hidden" name="iphone" value="{{.}}">{{end}}
+  {{with $p.asort}}<input type="hidden" name="asort" value="{{.}}">{{end}}
   <label>Sort
     <select name="sort">
       {{$sort := index $p "sort"}}{{if $.Query}}<option value="relevance" {{if or (eq $sort "") (eq $sort "relevance")}}selected{{end}}>Best match</option>{{end}}

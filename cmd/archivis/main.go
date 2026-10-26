@@ -45,7 +45,7 @@ Commands:
   prune        drop catalogue entries for files that no longer exist
   stats        catalogue summary
   groups       bursts, stacks, identical images and folders: status | rebuild
-  roots        the indexed folders Albums starts from: list | add | remove
+  roots        the indexed folders Albums starts from: list | add | remove | name
   errors       show files that failed to index
   inspect      show what Archivis reads from photo files (camera, lens, preview, rotation)
   users        web accounts: list | add-admin | invite | reset | password | role | disable | enable | signout

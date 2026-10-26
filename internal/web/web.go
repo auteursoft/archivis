@@ -134,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/users/{id}", s.adminUser)
 	mux.HandleFunc("GET /admin/settings", s.handleSettings)
 	mux.HandleFunc("POST /admin/settings", s.saveSettings)
+	mux.HandleFunc("POST /admin/albums/name", s.renameAlbum)
 	var h http.Handler = mux
 	h = s.authenticate(h)
 	h = sameOrigin(h)

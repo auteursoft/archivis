@@ -201,18 +201,25 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 -- the top level of Albums.
 CREATE TABLE IF NOT EXISTS roots (
 	path     TEXT PRIMARY KEY,
-	added_at INTEGER NOT NULL DEFAULT 0
+	added_at INTEGER NOT NULL DEFAULT 0,
+	-- shown instead of the folder's own name ('' for that)
+	name     TEXT NOT NULL DEFAULT ''
 );
 
--- Every folder holding photos (at any depth below it), with its count and
--- best photo: worked out with the groups (RebuildFolders), so Albums pages
--- read an index.
+-- Every folder holding photos (at any depth below it), with its count,
+-- best photo, newest date and scores: worked out with the groups
+-- (RebuildFolders), so Albums pages read an index.
 CREATE TABLE IF NOT EXISTS folders (
 	path          TEXT PRIMARY KEY,
 	parent        TEXT NOT NULL,
 	total         INTEGER NOT NULL,
 	cover_id      INTEGER NOT NULL,
-	cover_overall REAL NOT NULL
+	cover_overall REAL NOT NULL,
+	-- the latest taken_at below (0: none dated), and how many photos below
+	-- have an overall score and their sum (for the average)
+	newest_at     INTEGER NOT NULL DEFAULT 0,
+	scored        INTEGER NOT NULL DEFAULT 0,
+	score_sum     REAL NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent, path);
 

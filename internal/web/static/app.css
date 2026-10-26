@@ -140,7 +140,20 @@ table.users form { margin: 0; display: inline; }
 .filters .yearrange { display: flex; align-items: center; gap: 6px; }
 
 /* Albums: folder cards, named across the bottom, and the way up */
-.card.album .name { position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 8px 6px; font-size: 13px; font-weight: 600; color: #fff;
-  background: linear-gradient(transparent, rgba(0,0,0,.7)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.grid.albums { margin-bottom: 16px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+/* twice the width of a photo card's old size: four times the area, so the
+   cover and name read easily; one column on a phone */
+.grid.albums { margin-bottom: 16px; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; }
+.card.album .name { position: absolute; left: 0; right: 0; bottom: 0; padding: 32px 12px 10px; font-size: 18px; font-weight: 600; line-height: 1.25; color: #fff;
+  background: linear-gradient(transparent, rgba(0,0,0,.75)); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.card.album .name small { display: block; font-size: 13px; font-weight: 400; color: #fff; opacity: .85; margin-top: 2px; }
+.card.album .count { font-size: 13px; top: 8px; right: 8px; }
+.albumsort { margin: 0 0 10px; font-size: 14px; }
+.albumsort select { margin-left: 6px; }
+.crumbs .path { color: var(--muted); margin-left: 6px; font-size: 12px; }
+.albumnames { margin: 8px 0 20px; font-size: 14px; }
+.albumnames summary { cursor: pointer; color: var(--muted); }
+.albumnames form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 8px 0; }
+.albumnames label { display: flex; flex-direction: column; gap: 3px; flex: 1 1 260px; min-width: 0; }
+.albumnames label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
 .crumbs { margin: 8px 0 12px; font-size: 14px; overflow-wrap: anywhere; }
