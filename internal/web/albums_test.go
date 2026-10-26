@@ -227,7 +227,7 @@ func TestAlbumNamesWithoutAccounts(t *testing.T) {
 		t.Fatalf("naming an unknown album: %d", rec.Code)
 	}
 	body := html.UnescapeString(b.do("GET", "/albums", nil).Body.String())
-	mustContain(t, "named albums", body, ">Photo stage<small>", ">Phones<small>", ">pics2<small>", `title="/pics"`, `placeholder="pics"`, `value="Photo stage"`)
+	mustContain(t, "named albums", body, ">Photo stage</span><small>", ">Phones</span><small>", ">pics2</span><small>", `title="/pics"`, `placeholder="pics"`, `value="Photo stage"`)
 	body = html.UnescapeString(b.do("GET", "/albums?dir=%2Fpics%2F2019", nil).Body.String())
 	mustContain(t, "named crumbs", body, `<a href="/albums?dir=%2Fpics" title="/pics">Photo stage</a>`)
 	body = html.UnescapeString(b.do("GET", "/albums?dir=%2Fpics", nil).Body.String())
@@ -264,5 +264,22 @@ func TestAlbumNamesAdminOnly(t *testing.T) {
 	}
 	if names, _ := cat.Store.AlbumNames(); names["/pics"] != "Ours" {
 		t.Fatalf("names = %v", names)
+	}
+}
+
+// A root inside another root is named the same in its parent's list as at
+// the top, and sorts there by that name.
+func TestNamedNestedRootInParent(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	seedAlbums(t, cat, []string{"/pics", "/pics/2019"})
+	b := &browser{t: t, h: s.Handler()}
+	if rec := b.do("POST", "/admin/albums/name", url.Values{"album": {"/pics/2019"}, "name": {"Zebra trip"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("naming: %d", rec.Code)
+	}
+	body := html.UnescapeString(b.do("GET", "/albums?dir=%2Fpics", nil).Body.String())
+	mustContain(t, "named subfolder", body, ">Zebra trip</span><small>")
+	at := order(t, body, `>2020</span>`, `>Zebra trip</span>`) // by name: 2020 before Zebra (it was 2019, first)
+	if at[0] > at[1] {
+		t.Error("the named subfolder sorts by its folder name, not its display name")
 	}
 }

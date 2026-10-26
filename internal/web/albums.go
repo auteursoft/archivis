@@ -209,6 +209,11 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 		subs, err := st.Subfolders(dir)
 		fail(err)
 		d.Folders = s.albumCards(subs, d.Sort, fail)
+		for i := range d.Folders { // a subfolder that is a named root too: by its name here as well
+			if c := &d.Folders[i]; names[c.Path] != "" && slices.Contains(roots, c.Path) {
+				c.Name = names[c.Path]
+			}
+		}
 		sortCards(d.Folders, d.Sort)
 		d.Crumbs = crumbs(dir, roots, names, d.Sort)
 	}

@@ -57,7 +57,7 @@
   <a class="card album" href="{{.Href}}" title="{{.Path}}">
     {{with .Cover}}<img loading="lazy" src="/t/{{.Fingerprint}}.jpg" alt="">{{end}}
     <span class="count">{{.Total}}</span>
-    <span class="name">{{.Name}}<small>{{with .Newest}}{{.}}{{else}}undated{{end}}{{if .Scored}} · avg {{f0 .Avg}}{{end}}</small></span>
+    <span class="name"><span class="title">{{.Name}}</span><small>{{with .Newest}}{{.}}{{else}}undated{{end}}{{if .Scored}} · avg {{f0 .Avg}}{{end}}</small></span>
   </a>
 {{end}}
 </div>
