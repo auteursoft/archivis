@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -121,10 +122,16 @@ func TestSetSources(t *testing.T) {
 	if page, _ := st.SourceInputs(in[2].ID, true, 3); len(page) != 3 || page[0].ID != in[2].ID+1 {
 		t.Fatalf("a page of all after %d: %+v", in[2].ID, page)
 	}
-	seq := st.MaxSeq()
-	set := map[int64]int{}
+	// one photo is re-indexed after it was read: its new analysis stands
+	again := ps[in[0].ID-ps[0].ID]
+	again.Source = SourceCamera
+	if err := st.Save([]*Result{{Photo: again}}); err != nil {
+		t.Fatal(err)
+	}
+	seq, dirty := st.MaxSeq(), st.GetMeta("folders_dirty")
+	var set []SourceSet
 	for _, x := range in {
-		set[x.ID] = SourceMeme
+		set = append(set, SourceSet{ID: x.ID, Seq: x.Seq, Source: SourceMeme})
 	}
 	if err := st.SetSources(set); err != nil {
 		t.Fatal(err)
@@ -132,10 +139,81 @@ func TestSetSources(t *testing.T) {
 	if st.MaxSeq() != seq {
 		t.Fatal("setting sources changed seq")
 	}
-	if n, _ := st.MemeCount(nil); n != 20 {
-		t.Fatalf("memes after setting: %d, want 20", n)
+	if st.GetMeta("folders_dirty") == dirty {
+		t.Fatal("changed sources did not mark the folders (their covers) for working out again")
+	}
+	if n, _ := st.MemeCount(nil); n != 19 {
+		t.Fatalf("memes after setting: %d, want 19 (the re-indexed photo kept its new source)", n)
+	}
+	if got, _ := st.Photos([]int64{again.ID}); len(got) != 1 || got[0].Source != SourceCamera {
+		t.Fatalf("re-indexed photo overwritten by a stale source: %+v", got)
 	}
 	if left, _ := st.SourceInputs(0, false, 100); len(left) != 0 {
 		t.Fatalf("%d still not worked out", len(left))
+	}
+	// nothing changed: the folders stay as they are
+	dirty = st.GetMeta("folders_dirty")
+	if err := st.SetSources(set[1:]); err != nil || st.GetMeta("folders_dirty") != dirty {
+		t.Fatalf("an unchanged write marked the folders (%v)", err)
+	}
+}
+
+// An album's cover is never a meme or screenshot when anything else is
+// below (pages leave them out); a folder of only memes still gets one.
+// Telling memes apart later makes the folders stale, so covers follow.
+func TestFolderCoversLeaveMemesOut(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "f.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*Result
+	for _, x := range []struct {
+		path    string
+		overall float64
+	}{{"/a/meme.png", 95}, {"/a/photo.jpg", 40}, {"/b/meme1.png", 80}, {"/b/meme2.png", 90}} {
+		rs = append(rs, &Result{Photo: Photo{Path: x.path, Size: 1, MTime: 1, Fingerprint: x.path, Overall: x.overall, Version: SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	cover := func(dir string) int64 {
+		t.Helper()
+		f, err := st.Folder(dir)
+		if err != nil || f == nil {
+			t.Fatalf("%s: %v %v", dir, f, err)
+		}
+		return f.CoverID
+	}
+	if _, err := st.RebuildFolders(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if cover("/a") != rs[0].Photo.ID {
+		t.Fatal("before sources are known, the best photo is the cover")
+	}
+	var set []SourceSet
+	in, _ := st.SourceInputs(0, true, 10)
+	for _, x := range in {
+		if x.ID != rs[1].Photo.ID {
+			set = append(set, SourceSet{ID: x.ID, Seq: x.Seq, Source: SourceMeme})
+		}
+	}
+	if err := st.SetSources(set); err != nil {
+		t.Fatal(err)
+	}
+	if !st.FoldersStale() {
+		t.Fatal("new memes left the folders current")
+	}
+	if _, err := st.RebuildFolders(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := cover("/a"); got != rs[1].Photo.ID {
+		t.Fatalf("/a: cover %d, want the photo %d, not the better-scored meme", got, rs[1].Photo.ID)
+	}
+	if got := cover("/b"); got != rs[3].Photo.ID {
+		t.Fatalf("/b (only memes): cover %d, want the best meme %d", got, rs[3].Photo.ID)
+	}
+	if got := cover("/"); got != rs[1].Photo.ID {
+		t.Fatalf("/: cover %d, want the one photo %d", got, rs[1].Photo.ID)
 	}
 }

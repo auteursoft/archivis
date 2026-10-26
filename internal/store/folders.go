@@ -18,15 +18,19 @@ import (
 // many and the best of them, worked out from the catalogue's paths by
 // RebuildFolders, for the Albums pages. Roots are the folders indexed.
 
+// memeCover is taken off a meme's or screenshot's score as a cover, below
+// any photo's (scores are 0-100).
+const memeCover = 1000
+
 // foldersVersion changes when the rules do, forcing a rebuild.
-const foldersVersion = "3"
+const foldersVersion = "4"
 
 // Folder is a folder holding photos somewhere below it.
 type Folder struct {
 	Path         string
 	Parent       string // "" at the top
 	Total        int    // photos anywhere below
-	CoverID      int64  // the best of them (highest overall, then lowest id)
+	CoverID      int64  // the best of them (highest overall, then lowest id; a meme only if all are)
 	CoverOverall float64
 	NewestAt     int64   // the latest taken_at below (0: none dated, as taken_at)
 	Scored       int     // photos below with an overall score
@@ -450,7 +454,7 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 		if err := w.commit(); err != nil {
 			return st, err
 		}
-		rows, err := s.DB.Query(`SELECT path, id, overall, COALESCE(taken_at, 0) FROM photos WHERE path > ? ORDER BY path LIMIT ?`, after, scanPage)
+		rows, err := s.DB.Query(`SELECT path, id, overall, COALESCE(taken_at, 0), source FROM photos WHERE path > ? ORDER BY path LIMIT ?`, after, scanPage)
 		if err != nil {
 			return st, err
 		}
@@ -459,11 +463,12 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 			id      int64
 			overall sql.NullFloat64
 			at      int64
+			source  int
 		}
 		var batch []ph
 		for rows.Next() {
 			var p ph
-			if err := rows.Scan(&p.path, &p.id, &p.overall, &p.at); err != nil {
+			if err := rows.Scan(&p.path, &p.id, &p.overall, &p.at, &p.source); err != nil {
 				rows.Close()
 				return st, err
 			}
@@ -496,6 +501,9 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 			}
 			held()
 			one := Folder{Total: 1, CoverID: p.id, CoverOverall: p.overall.Float64, NewestAt: p.at} // unscored counts as 0 for the cover, as before
+			if p.source == SourceMeme {
+				one.CoverOverall -= memeCover // pages leave memes out: one is a cover only when nothing else is below
+			}
 			if p.overall.Valid {
 				one.Scored, one.ScoreSum = 1, p.overall.Float64
 			}

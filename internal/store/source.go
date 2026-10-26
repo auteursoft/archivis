@@ -17,6 +17,7 @@ const (
 // SourceInput is what working out a photo's source needs.
 type SourceInput struct {
 	ID     int64
+	Seq    int64  // the photo's seq when read: its source is set only if unchanged since
 	Camera bool   // its metadata names a camera
 	CLIP   []byte // float16 image embedding (nil: none)
 }
@@ -28,7 +29,7 @@ func (s *Store) SourceInputs(after int64, all bool, n int) ([]SourceInput, error
 	if all {
 		cond = ``
 	}
-	rows, err := s.DB.Query(`SELECT p.id, COALESCE(p.camera_make, '') != '' OR COALESCE(p.camera_model, '') != '', c.clip
+	rows, err := s.DB.Query(`SELECT p.id, p.seq, COALESCE(p.camera_make, '') != '' OR COALESCE(p.camera_model, '') != '', c.clip
 		FROM photos p LEFT JOIN photo_clip c ON c.photo_id = p.id WHERE `+cond+`p.id > ? ORDER BY p.id LIMIT ?`, after, n)
 	if err != nil {
 		return nil, err
@@ -37,7 +38,7 @@ func (s *Store) SourceInputs(after int64, all bool, n int) ([]SourceInput, error
 	var out []SourceInput
 	for rows.Next() {
 		var in SourceInput
-		if err := rows.Scan(&in.ID, &in.Camera, &in.CLIP); err != nil {
+		if err := rows.Scan(&in.ID, &in.Seq, &in.Camera, &in.CLIP); err != nil {
 			return nil, err
 		}
 		out = append(out, in)
@@ -45,21 +46,40 @@ func (s *Store) SourceInputs(after int64, all bool, n int) ([]SourceInput, error
 	return out, rows.Err()
 }
 
-// SetSources records photos' sources, in one short transaction. It does
-// not change their seq: nothing else about them changed.
-func (s *Store) SetSources(src map[int64]int) error {
+// SourceSet is a photo's worked-out source, from what it was at Seq.
+type SourceSet struct {
+	ID, Seq int64
+	Source  int
+}
+
+// SetSources records photos' sources, in one short transaction: each only
+// if the photo is unchanged since it was read (a photo re-indexed meanwhile
+// already has its source from that analysis). It does not change their
+// seq, as nothing else about them changed; a change marks the folders for
+// working out again, as their covers leave memes out.
+func (s *Store) SetSources(src []SourceSet) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	st, err := tx.Prepare(`UPDATE photos SET source = ? WHERE id = ? AND source != ?`)
+	st, err := tx.Prepare(`UPDATE photos SET source = ? WHERE id = ? AND seq = ? AND source != ?`)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	for id, v := range src {
-		if _, err := st.Exec(v, id, v); err != nil {
+	changed := int64(0)
+	for _, x := range src {
+		res, err := st.Exec(x.Source, x.ID, x.Seq, x.Source)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		changed += n
+	}
+	if changed > 0 {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value)
+			VALUES ('folders_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'folders_dirty'), 0) + 1)`); err != nil {
 			return err
 		}
 	}

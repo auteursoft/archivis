@@ -870,12 +870,10 @@ func runRetag(g *globals, args []string) error {
 }
 
 // classifySources works out which photos are memes or screenshots, from
-// their stored embeddings (all of them, or those not worked out yet). A
-// failure is only reported: the photos stay shown, and the next run retries.
+// their stored embeddings (all of them, or those not worked out yet); with
+// no classifier (no CLIP text model), which are camera photos. A failure is
+// only reported: the photos stay shown, and the next run retries.
 func classifySources(ctx context.Context, st *store.Store, s *indexer.Sources, all bool) {
-	if s == nil {
-		return // no CLIP text model: they stay as they are
-	}
 	n, err := indexer.ClassifySources(ctx, st, s, all)
 	if err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "warning: telling memes and screenshots from photos: %v (retried on the next run)\n", err)

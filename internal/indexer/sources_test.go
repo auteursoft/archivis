@@ -133,3 +133,28 @@ func TestAnalyzeSourceFromMetadata(t *testing.T) {
 		}
 	}
 }
+
+// Without a classifier (no CLIP text model), camera photos are still worked
+// out; the rest wait for one.
+func TestClassifySourcesWithoutClassifier(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*store.Result
+	for i, cam := range []string{"Z 8", ""} {
+		p := fmt.Sprintf("/p/%d.jpg", i)
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, CameraModel: cam,
+			CLIP: vindex.EncodeF16(axis(0)), Version: store.SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ClassifySources(context.Background(), st, nil, false); err != nil || n != 1 {
+		t.Fatalf("worked out %d (%v), want the camera photo", n, err)
+	}
+	if left, _ := st.SourceInputs(0, false, 10); len(left) != 1 || left[0].ID != rs[1].Photo.ID {
+		t.Fatalf("left to work out: %+v", left)
+	}
+}

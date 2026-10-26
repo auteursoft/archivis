@@ -113,8 +113,9 @@ func (s *Sources) Of(camera bool, emb []float32) int {
 
 // ClassifySources works out the source of every photo not yet worked out
 // (or, with all, of every photo, as after the rules change), from what is
-// stored: nothing is read from the photos' files. It returns how many
-// photos it worked out.
+// stored: nothing is read from the photos' files. Without a classifier
+// (no CLIP text model) only camera photos are worked out. It returns how
+// many photos it worked out.
 func ClassifySources(ctx context.Context, st *store.Store, s *Sources, all bool) (int, error) {
 	n := 0
 	for after := int64(0); ; {
@@ -125,14 +126,14 @@ func ClassifySources(ctx context.Context, st *store.Store, s *Sources, all bool)
 		if err != nil || len(batch) == 0 {
 			return n, err
 		}
-		got := map[int64]int{}
+		var got []store.SourceSet
 		for _, in := range batch {
 			var emb []float32
 			if in.CLIP != nil {
 				emb = vindex.DecodeF16(in.CLIP)
 			}
 			if v := s.Of(in.Camera, emb); v != store.SourceUnknown {
-				got[in.ID] = v
+				got = append(got, store.SourceSet{ID: in.ID, Seq: in.Seq, Source: v})
 			}
 			after = in.ID
 		}
