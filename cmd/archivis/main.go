@@ -871,12 +871,21 @@ func runRetag(g *globals, args []string) error {
 
 // classifySources works out which photos are memes or screenshots, from
 // their stored embeddings (all of them, or those not worked out yet); with
-// no classifier (no CLIP text model), which are camera photos. A failure is
-// only reported: the photos stay shown, and the next run retries.
+// no classifier (no CLIP text model), which are camera photos. Then the
+// photos Apple Photos itself calls screenshots are marked so, whatever
+// their analysis said. A failure is only reported: the photos stay shown,
+// and the next run retries.
 func classifySources(ctx context.Context, st *store.Store, s *indexer.Sources, all bool) {
 	n, err := indexer.ClassifySources(ctx, st, s, all)
 	if err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "warning: telling memes and screenshots from photos: %v (retried on the next run)\n", err)
+	}
+	if ctx.Err() == nil {
+		shots, err := st.MarkLibraryScreenshots(ctx)
+		if err != nil && ctx.Err() == nil {
+			fmt.Fprintf(os.Stderr, "warning: reading Apple Photos' screenshots: %v (retried on the next run)\n", err)
+		}
+		n += shots
 	}
 	if n > 0 {
 		memes, _ := st.MemeCount(nil)

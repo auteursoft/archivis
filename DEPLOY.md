@@ -742,6 +742,13 @@ everything.
   social media post, a news or sports graphic, a quote card or a screenshot.
   Then it is a **meme or screenshot**.
 
+**Apple Photos libraries.** Inside an Apple Photos library, Archivis also
+reads which photos Photos itself calls screenshots. It reads them from the
+library's `database/Photos.sqlite`, opened read-only, and needs macOS 10.15
+or later. Those photos are memes and screenshots whatever they look like.
+Archivis checks this after each index run, when `archivis serve` starts,
+and after `archivis retag`.
+
 In a test with 126 made-up memes and screenshots and 80 real phone photos
 stripped of their metadata, 115 of the memes were hidden and 2 of the photos
 were. Hidden photos are never lost: choose "everything" or "saved images" to
