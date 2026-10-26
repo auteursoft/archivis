@@ -996,10 +996,19 @@ func TestStartupRunsOnStartAfterRegroup(t *testing.T) {
 	s.OnStart = func(context.Context) {
 		libs, _ = cat.Store.PhotosLibraries()
 		stale = cat.Store.FoldersStale()
+		// then it finds the photo is a screenshot, which makes the folders
+		// (their covers) stale
+		in, _ := cat.Store.SourceInputs(0, true, 10)
+		if err := cat.Store.SetSources([]store.SourceSet{{ID: in[0].ID, Seq: in[0].Seq, Source: store.SourceMeme}}); err != nil {
+			t.Error(err)
+		}
 	}
 	s.startup(ctx)
 	if stale || len(libs) != 1 || libs[0].Path != "/m/New.photoslibrary" {
 		t.Fatalf("OnStart saw folders stale=%v, libraries %+v; want them worked out first", stale, libs)
+	}
+	if cat.Store.FoldersStale() {
+		t.Fatal("folders left stale after OnStart changed sources: covers wait for the next periodic regroup")
 	}
 }
 
