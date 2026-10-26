@@ -941,6 +941,41 @@ func TestListenAndServeStopsBackgroundWork(t *testing.T) {
 	s.regroup(true) // after shutdown: does nothing
 }
 
+// OnStart work (the startup backfill of sources) is part of the background
+// work: when serving stops, its context ends and ListenAndServe waits for
+// it, so the catalogue is not closed under it.
+func TestOnStartStopsWithServer(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	started, finished := make(chan struct{}), make(chan error, 1)
+	s.OnStart = func(ctx context.Context) {
+		close(started)
+		<-ctx.Done() // a long backfill, until told to stop
+		time.Sleep(50 * time.Millisecond)
+		finished <- ctx.Err()
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err := s.ListenAndServe(l.Addr().String()); err == nil { // the address is taken: serving stops at once
+		t.Fatal("served on a taken address")
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("OnStart never ran")
+	}
+	select {
+	case err := <-finished:
+		if err == nil {
+			t.Fatal("OnStart's context was not cancelled")
+		}
+	default:
+		t.Fatal("ListenAndServe returned while OnStart was still running")
+	}
+}
+
 // The Photos page shows a stack of near-identical burst frames as one card,
 // its best frame with the count; with stacking off, every frame. A frame's
 // page lists the rest of its stack.

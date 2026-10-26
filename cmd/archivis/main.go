@@ -404,7 +404,7 @@ func runIndex(g *globals, args []string) error {
 	}
 	if ctx.Err() == nil {
 		release() // indexing is done: another index run may start while this regroups
-		regroup(ctx, g.data, cat.Store)
+		regroupAndMark(ctx, g.data, cat.Store)
 	}
 	st, _ := cat.Store.Stats()
 	fmt.Fprintf(os.Stderr, "catalogue: %d photos, %d faces, %d people\n", st.Photos, st.Faces, st.People)
@@ -434,8 +434,12 @@ func runServe(g *globals, args []string) error {
 	srv := web.New(cat)
 	srv.Auth = *auth
 	// photos catalogued before memes were told apart: worked out from their
-	// stored embeddings, in the background (until then they show)
-	go classifySources(context.Background(), cat.Store, eng.Sources, false)
+	// stored embeddings, in the server's background work (until then they
+	// show), which stops before the catalogue closes
+	srv.OnStart = func(ctx context.Context) {
+		classifySources(ctx, cat.Store, eng.Sources, false)
+		markScreenshots(ctx, cat.Store)
+	}
 	accounts, err := cat.Store.HasUsers()
 	if err != nil {
 		return err
@@ -866,30 +870,48 @@ func runRetag(g *globals, args []string) error {
 	ctx, cancel := signalContext()
 	defer cancel()
 	classifySources(ctx, cat.Store, eng.Sources, true) // the rules may have changed too
+	markScreenshots(ctx, cat.Store)
 	return nil
 }
 
 // classifySources works out which photos are memes or screenshots, from
 // their stored embeddings (all of them, or those not worked out yet); with
-// no classifier (no CLIP text model), which are camera photos. Then the
-// photos Apple Photos itself calls screenshots are marked so, whatever
-// their analysis said. A failure is only reported: the photos stay shown,
-// and the next run retries.
+// no classifier (no CLIP text model), which are camera photos. A failure is
+// only reported: the photos stay shown, and the next run retries.
 func classifySources(ctx context.Context, st *store.Store, s *indexer.Sources, all bool) {
 	n, err := indexer.ClassifySources(ctx, st, s, all)
 	if err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "warning: telling memes and screenshots from photos: %v (retried on the next run)\n", err)
 	}
-	if ctx.Err() == nil {
-		shots, err := st.MarkLibraryScreenshots(ctx)
-		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "warning: reading Apple Photos' screenshots: %v (retried on the next run)\n", err)
-		}
-		n += shots
-	}
 	if n > 0 {
 		memes, _ := st.MemeCount(nil)
 		fmt.Fprintf(os.Stderr, "sources: worked out %d photos; %d memes and screenshots in all\n", n, memes)
+	}
+}
+
+// markScreenshots marks the photos Apple Photos itself calls screenshots,
+// in the Photos libraries the folders last found, whatever their analysis
+// said; it returns how many changed. A failure is only reported.
+func markScreenshots(ctx context.Context, st *store.Store) int {
+	n, err := st.MarkLibraryScreenshots(ctx)
+	if err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "warning: reading Apple Photos' screenshots: %v (retried on the next run)\n", err)
+	}
+	if n > 0 {
+		fmt.Fprintf(os.Stderr, "sources: %d photos are screenshots by Apple Photos\n", n)
+	}
+	return n
+}
+
+// regroupAndMark works out the groups and folders, then marks Apple
+// Photos' screenshots in the libraries those folders found (a library new
+// in this run included); covers then leave the screenshots out, so if any
+// changed the folders are worked out again (only they: nothing else is
+// stale).
+func regroupAndMark(ctx context.Context, dir string, st *store.Store) {
+	regroup(ctx, dir, st)
+	if ctx.Err() == nil && markScreenshots(ctx, st) > 0 && ctx.Err() == nil {
+		regroup(ctx, dir, st)
 	}
 }
 

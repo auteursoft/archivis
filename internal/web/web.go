@@ -48,6 +48,10 @@ var staticFS embed.FS
 type Server struct {
 	cat  *catalog.Catalog
 	Auth string // "user:password" for basic auth until the first account exists; empty = none
+	// OnStart, if set, runs once in the background when ListenAndServe
+	// starts, as part of its background work: its context ends, and it is
+	// waited for, before ListenAndServe returns.
+	OnStart func(ctx context.Context)
 
 	hasUsers           atomic.Bool
 	ipLimit, nameLimit *auth.Limiter
@@ -205,6 +209,13 @@ func (s *Server) ListenAndServe(addr string) error {
 		s.background.Wait()
 	}()
 	s.regroupInBackground(false)
+	if s.OnStart != nil {
+		s.background.Add(1)
+		go func() {
+			defer s.background.Done()
+			s.OnStart(ctx)
+		}()
+	}
 	s.background.Add(1)
 	go func() {
 		defer s.background.Done()

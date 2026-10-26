@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -64,6 +66,13 @@ func TestSourceFilterPages(t *testing.T) {
 				t.Errorf("%s%s: 'hidden' note shown %v", page, c.query, hidden)
 			}
 		}
+	}
+	// searches leave memes out too, and say so (no text model here: the
+	// heading shows all the same)
+	for _, page := range []string{"/?q=dock", "/albums?dir=%2Fpics&q=dock"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, page, nil))
+		mustContain(t, page, html.UnescapeString(rec.Body.String()), "Best matches for", "memes & screenshots hidden")
 	}
 	body := get(t, h, "/?source=memes")
 	mustContain(t, "source select", body, `<option value="memes" selected>`)
