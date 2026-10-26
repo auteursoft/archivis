@@ -976,6 +976,33 @@ func TestOnStartStopsWithServer(t *testing.T) {
 	}
 }
 
+// OnStart runs after the startup regroup: a Photos library catalogued by an
+// index run that stopped before regrouping is listed by the time OnStart
+// (which marks Apple's screenshots in the listed libraries) looks.
+func TestStartupRunsOnStartAfterRegroup(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	p := "/m/New.photoslibrary/originals/A/SHOT.PNG"
+	if err := cat.Store.Save([]*store.Result{{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, Version: store.SchemaVersion}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !cat.Store.FoldersStale() {
+		t.Fatal("folders current before any regroup")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.ctx.Store(&ctx)
+	var libs []store.Folder
+	stale := true
+	s.OnStart = func(context.Context) {
+		libs, _ = cat.Store.PhotosLibraries()
+		stale = cat.Store.FoldersStale()
+	}
+	s.startup(ctx)
+	if stale || len(libs) != 1 || libs[0].Path != "/m/New.photoslibrary" {
+		t.Fatalf("OnStart saw folders stale=%v, libraries %+v; want them worked out first", stale, libs)
+	}
+}
+
 // The Photos page shows a stack of near-identical burst frames as one card,
 // its best frame with the count; with stacking off, every frame. A frame's
 // page lists the rest of its stack.

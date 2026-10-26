@@ -49,8 +49,9 @@ type Server struct {
 	cat  *catalog.Catalog
 	Auth string // "user:password" for basic auth until the first account exists; empty = none
 	// OnStart, if set, runs once in the background when ListenAndServe
-	// starts, as part of its background work: its context ends, and it is
-	// waited for, before ListenAndServe returns.
+	// starts, after the startup regroup (so the folders, and the Photos
+	// libraries they list, are current), as part of its background work:
+	// its context ends, and it is waited for, before ListenAndServe returns.
 	OnStart func(ctx context.Context)
 
 	hasUsers           atomic.Bool
@@ -197,6 +198,15 @@ func sameOrigin(next http.Handler) http.Handler {
 	})
 }
 
+// startup is the background work ListenAndServe starts with: the groups and
+// folders worked out if stale, then OnStart.
+func (s *Server) startup(ctx context.Context) {
+	s.regroup(false)
+	if s.OnStart != nil {
+		s.OnStart(ctx)
+	}
+}
+
 // ListenAndServe serves until the process exits, refreshing the in-memory
 // indexes periodically so photos indexed meanwhile become searchable.
 // The background work (refreshes, regroups) stops, and is waited for, before
@@ -208,14 +218,11 @@ func (s *Server) ListenAndServe(addr string) error {
 		stop() // a regroup in progress stops at its next step
 		s.background.Wait()
 	}()
-	s.regroupInBackground(false)
-	if s.OnStart != nil {
-		s.background.Add(1)
-		go func() {
-			defer s.background.Done()
-			s.OnStart(ctx)
-		}()
-	}
+	s.background.Add(1)
+	go func() {
+		defer s.background.Done()
+		s.startup(ctx)
+	}()
 	s.background.Add(1)
 	go func() {
 		defer s.background.Done()
