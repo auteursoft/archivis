@@ -365,7 +365,12 @@ func (r *rebuild) sceneDetails(scenes []*scene) error {
 			b := sc.ids[i:j]
 			i = j
 			if len(b) > maxStackRun {
-				if err := r.hugeBurst(b); err != nil { // not stacked: read in chunks
+				// not stacked, and it ends the chunk: chunks are consecutive
+				if err := add(cur, curN); err != nil {
+					return err
+				}
+				cur, curN = nil, 0
+				if err := r.hugeBurst(b); err != nil { // read in chunks
 					return err
 				}
 				continue

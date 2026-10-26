@@ -87,7 +87,8 @@ func referenceGroups(ps []Photo, gap int64, hamming int) groupState {
 // camera's dated shots in time order are cut into scenes at gaps over the
 // scene gap, scenes into bursts at gaps over the burst gap, and a scene's
 // bursts packed in order into chunks of at most maxStackRun shots, each
-// stacked on its own (a burst over maxStackRun alone, unstacked).
+// stacked on its own (a burst over maxStackRun alone, unstacked, ending the
+// chunk before it).
 func referenceScenes(ps []Photo, o GroupOptions) groupState {
 	gap, hamming, sceneGap := o.Gap, o.Hamming, max(o.Scene, o.Gap)
 	out := groupState{photos: map[int64][5]int64{}, groups: map[[2]int64][]int64{}}
@@ -147,7 +148,9 @@ func referenceScenes(ps []Photo, o GroupOptions) groupState {
 					out.photos[id] = x
 				}
 			}
-			if len(b) > maxStackRun {
+			if len(b) > maxStackRun { // alone, unstacked, ending the chunk
+				stack(chunk)
+				chunk = nil
 				continue
 			}
 			if len(chunk)+len(b) > maxStackRun {
@@ -921,6 +924,28 @@ func TestLongSceneChunks(t *testing.T) {
 		}
 		if strings.HasPrefix(r.Photo.Path, "/l/4-") && got.photos[r.Photo.ID][2] != 0 {
 			t.Fatalf("%s: a burst over maxStackRun was stacked", r.Photo.Path)
+		}
+	}
+	// chunks are consecutive: none reaches across the oversized burst (4),
+	// so the shots before it (bursts 0-3) and after it (5-7) stack apart
+	burstOf := map[int64]int{}
+	for _, r := range rs {
+		var b, k int
+		fmt.Sscanf(r.Photo.Path, "/l/%d-%d", &b, &k)
+		burstOf[r.Photo.ID] = b
+	}
+	for _, r := range rs {
+		x := got.photos[r.Photo.ID]
+		if x[1] != 0 && (burstOf[r.Photo.ID] < 4) != (burstOf[x[1]] < 4) {
+			t.Fatalf("%s is stacked under a shot across the oversized burst", r.Photo.Path)
+		}
+	}
+	// and the chunks are as packed: [0 1] [2 3] | [5 6 7]
+	for _, r := range rs {
+		x := got.photos[r.Photo.ID]
+		chunk := map[int]int{0: 0, 1: 0, 2: 1, 3: 1, 5: 2, 6: 2, 7: 2}[burstOf[r.Photo.ID]]
+		if x[1] != 0 && map[int]int{0: 0, 1: 0, 2: 1, 3: 1, 5: 2, 6: 2, 7: 2}[burstOf[x[1]]] != chunk {
+			t.Fatalf("%s: stacked outside its chunk", r.Photo.Path)
 		}
 	}
 }
