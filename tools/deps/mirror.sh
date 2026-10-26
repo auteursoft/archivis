@@ -19,12 +19,19 @@ sha() {
 	if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
 }
 
-{
-	grep -v '^#' "$here/assets.txt" | awk 'NF == 3'
-	"$here/../samples/fetch.sh" --list | while read -r sum url; do
-		echo "$sum $("$here/../samples/fetch.sh" --mirror-name "${url##*/}") $url"
-	done
-} >"$work/entries"
+# The list is built one step at a time, with no pipelines (whose failures
+# set -e cannot see): an incomplete list must stop the script, never lead
+# to files being pruned from the mirror.
+awk '!/^#/ && NF == 3' "$here/assets.txt" >"$work/assets"
+"$here/../samples/fetch.sh" --list >"$work/samples"
+[ -s "$work/assets" ] && [ -s "$work/samples" ] || { echo "::error::the list of files to mirror came out empty"; exit 1; }
+cp "$work/assets" "$work/entries"
+while read -r sum url; do
+	name=$("$here/../samples/fetch.sh" --mirror-name "${url##*/}")
+	echo "$sum $name $url" >>"$work/entries"
+done <"$work/samples"
+want=$(($(wc -l <"$work/assets") + $(wc -l <"$work/samples")))
+[ "$(wc -l <"$work/entries")" -eq "$want" ] || { echo "::error::the list of files to mirror is incomplete"; exit 1; }
 # GitHub rewrites other characters in release file names: none may be used
 bad=$(cut -d' ' -f2 "$work/entries" | grep '[^A-Za-z0-9._-]' || true)
 [ -z "$bad" ] || { echo "::error::mirror names GitHub would rewrite (use A-Z a-z 0-9 . _ -): $bad"; exit 1; }
@@ -79,12 +86,22 @@ while read -r sum name url; do
 	fi
 	rm -f "$work/$name"
 done <"$work/entries"
-# after a clean run, remove files no longer listed (renamed or dropped)
+# After a clean run, remove files no longer listed (renamed or dropped);
+# but never a quarter or more of the mirror at once, which would mean a
+# list gone wrong rather than a few renames.
 if [ $failed = 0 ]; then
-	cut -d' ' -f1 "$work/have" | while read -r name; do
-		cut -d' ' -f2 "$work/entries" | grep -qxF "$name" && continue
+	cut -d' ' -f2 "$work/entries" | sort >"$work/listed"
+	cut -d' ' -f1 "$work/have" | sort >"$work/held"
+	comm -23 "$work/held" "$work/listed" >"$work/stale"
+	stale=$(wc -l <"$work/stale")
+	held=$(wc -l <"$work/held")
+	if [ "$stale" -gt 0 ] && [ $((stale * 4)) -ge "$held" ]; then
+		echo "::error::$stale of the $held files in the mirror are no longer listed; not removing so many at once (remove them by hand if meant)"
+		exit 1
+	fi
+	while read -r name; do
 		echo "::notice::$name is no longer listed: removing it from the mirror"
 		gh release delete-asset "$tag" "$name" -R "$repo" --yes </dev/null
-	done
+	done <"$work/stale"
 fi
 exit $failed
