@@ -30,6 +30,7 @@ type Filter struct {
 	PersonID      int64
 	Faces         string // "", "any", "none", "1", "group" (3+)
 	Mono          string // "", "only", "exclude"
+	Source        string // "" (any), "photos" (no memes or screenshots), "camera", "saved", "memes"
 	From, To      int64  // unix seconds (taken_at); 0 = no bound
 	Year          int    // one year; shorthand for YearFrom = YearTo = Year
 	YearFrom      int    // first year taken (inclusive); 0 = no bound
@@ -112,6 +113,16 @@ func (f Filter) where() (string, []any) {
 		add("monochrome = 1")
 	case "exclude":
 		add("monochrome = 0")
+	}
+	switch f.Source {
+	case "photos":
+		add("source != ?", SourceMeme)
+	case "camera":
+		add("source = ?", SourceCamera)
+	case "saved":
+		add("source = ?", SourceSaved)
+	case "memes":
+		add("source = ?", SourceMeme)
 	}
 	if f.From != 0 {
 		add("taken_at >= ?", f.From)
@@ -257,7 +268,8 @@ func (s *Store) BrowsePage(f Filter) ([]Photo, int, bool, error) {
 	where, args := f.where()
 	total := -1
 	if !f.SkipCount {
-		if err := s.DB.QueryRow(`SELECT COUNT(*) FROM photos`+where, args...).Scan(&total); err != nil {
+		var err error
+		if total, err = s.FilterCount(f); err != nil {
 			return nil, 0, false, err
 		}
 	}
@@ -617,10 +629,34 @@ func (f Filter) Restricts() bool {
 	return w != ""
 }
 
-// FilterCount counts the photos matching f.
+// Narrows reports whether f has a condition beyond leaving out memes and
+// screenshots, which leaves nearly every photo: such a filter is applied to
+// candidates found without it, never by listing everything it matches.
+func (f Filter) Narrows() bool {
+	if f.Source == "photos" {
+		f.Source = ""
+	}
+	return f.Restricts()
+}
+
+// FilterCount counts the photos matching f. Leaving out memes, alone or
+// with folders, is counted as all the photos (there) less the memes (an
+// index of memes alone), not by reading every photo.
 func (s *Store) FilterCount(f Filter) (int, error) {
-	where, args := f.where()
 	var n int
+	if g := f; f.Source == "photos" {
+		g.Source, g.Dirs = "", nil
+		if !g.Restricts() {
+			g.Dirs, g.DirsByPath = f.Dirs, true
+			all, err := s.FilterCount(g)
+			if err != nil {
+				return 0, err
+			}
+			memes, err := s.MemeCount(f.Dirs)
+			return all - memes, err
+		}
+	}
+	where, args := f.where()
 	err := s.DB.QueryRow(`SELECT COUNT(*) FROM photos`+where, args...).Scan(&n)
 	return n, err
 }

@@ -222,8 +222,13 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 	known := -1
 	plain := f
 	plain.Dirs = nil
-	if !plain.Restricts() && !d.Stale {
+	if !plain.Narrows() && !d.Stale {
 		known = total // the folders say how many: no count
+		if plain.Source == "photos" {
+			memes, err := st.MemeCount(f.Dirs) // less the memes left out (an index of them alone)
+			fail(err)
+			known = max(0, total-memes)
+		}
 	}
 	s.filterForm(r, p, "/albums")
 	if text != "" {

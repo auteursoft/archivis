@@ -106,7 +106,7 @@ func (s *Server) handleGroups(gp groupPage) http.HandlerFunc {
 		f.Offset, f.Limit = pg*gp.perPage, gp.perPage
 		st := s.cat.Store
 		gs, info, err := st.GroupPage(gp.kind, f, gp.minSize, gp.summary)
-		d := &groupsData{Page: pg, Filtered: f.Restricts(), Regrouping: st.GroupsRebuilding(), Partial: info.Partial}
+		d := &groupsData{Page: pg, Filtered: f.Narrows(), Regrouping: st.GroupsRebuilding(), Partial: info.Partial}
 		if !d.Regrouping {
 			// never grouped, or the rules changed: say so, and group at once
 			// (new photos only wait for the next regroup)

@@ -457,12 +457,25 @@ func parseFilter(r *http.Request) store.Filter {
 		Limit:         120,
 	}
 	f.YearFrom, f.YearTo = yearRange(q)
+	f.Source = sourceFilter(q.Get("source"))
 	f.PersonID, _ = strconv.ParseInt(q.Get("person"), 10, 64)
 	pg, _ := strconv.Atoi(q.Get("page"))
 	if pg > 0 {
 		f.Offset = min(pg, maxPage) * f.Limit // bounded: no overflow, no huge result buffers
 	}
 	return f
+}
+
+// sourceFilter maps the form's source choice to the filter's: memes and
+// screenshots are left out unless asked for ("all", or "memes").
+func sourceFilter(v string) string {
+	switch v {
+	case "all":
+		return ""
+	case "camera", "saved", "memes":
+		return v
+	}
+	return "photos"
 }
 
 // maxPage bounds paging (120 photos a page): far beyond what anyone pages
@@ -495,6 +508,7 @@ type browseData struct {
 	HasMore  bool
 	Searched bool
 	Stacked  bool // near-identical burst frames show as one card
+	NoMemes  bool // memes and screenshots are left out (the default)
 	// Prev and Next are the pager links, with every filter kept. They are
 	// built here: a query string put into the template as text would be
 	// escaped into a single parameter, and the filters lost.
@@ -592,7 +606,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 // any), with stacking as set, for the Photos page and album pages at path.
 // total, if not -1, is the photos matching f, known without counting.
 func (s *Server) browse(r *http.Request, p *page, f store.Filter, text, path string, total int) *browseData {
-	d := &browseData{Page: f.Offset / f.Limit}
+	d := &browseData{Page: f.Offset / f.Limit, NoMemes: f.Source == "photos"}
 	pageURL := func(n int) template.URL { return pageLink(r, path, n) }
 	stacking := s.cat.Store.GetSettings().StackBursts
 	if text != "" {

@@ -206,6 +206,9 @@ func (g *globals) engines(n need, workers int) (*indexer.Engines, error) {
 			if eng.Tagger, err = indexer.NewTagger(eng.CLIP, cats); err != nil {
 				return nil, err
 			}
+			if eng.Sources, err = indexer.NewSources(eng.CLIP); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return eng, nil
@@ -397,6 +400,9 @@ func runIndex(g *globals, args []string) error {
 		}
 	}
 	if ctx.Err() == nil {
+		classifySources(ctx, cat.Store, eng.Sources, false)
+	}
+	if ctx.Err() == nil {
 		release() // indexing is done: another index run may start while this regroups
 		regroup(ctx, g.data, cat.Store)
 	}
@@ -427,6 +433,9 @@ func runServe(g *globals, args []string) error {
 	defer cat.Close()
 	srv := web.New(cat)
 	srv.Auth = *auth
+	// photos catalogued before memes were told apart: worked out from their
+	// stored embeddings, in the background (until then they show)
+	go classifySources(context.Background(), cat.Store, eng.Sources, false)
 	accounts, err := cat.Store.HasUsers()
 	if err != nil {
 		return err
@@ -501,6 +510,7 @@ func filterFlags(fs *flag.FlagSet) *store.Filter {
 	fs.StringVar(&f.Tag, "tag", "", "category tag (see `archivis stats`)")
 	fs.StringVar(&f.Faces, "faces", "", "any | none | 1 | group")
 	fs.StringVar(&f.Mono, "mono", "", "only | exclude black & white")
+	fs.StringVar(&f.Source, "source", "", "photos (no memes or screenshots) | camera | saved | memes")
 	fs.IntVar(&f.Year, "year", 0, "year taken")
 	fs.IntVar(&f.YearFrom, "year-from", 0, "taken in this year or later")
 	fs.IntVar(&f.YearTo, "year-to", 0, "taken in this year or earlier")
@@ -853,7 +863,27 @@ func runRetag(g *globals, args []string) error {
 	}
 	n += len(tags)
 	fmt.Printf("retagged %d photos\n", n)
+	ctx, cancel := signalContext()
+	defer cancel()
+	classifySources(ctx, cat.Store, eng.Sources, true) // the rules may have changed too
 	return nil
+}
+
+// classifySources works out which photos are memes or screenshots, from
+// their stored embeddings (all of them, or those not worked out yet). A
+// failure is only reported: the photos stay shown, and the next run retries.
+func classifySources(ctx context.Context, st *store.Store, s *indexer.Sources, all bool) {
+	if s == nil {
+		return // no CLIP text model: they stay as they are
+	}
+	n, err := indexer.ClassifySources(ctx, st, s, all)
+	if err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "warning: telling memes and screenshots from photos: %v (retried on the next run)\n", err)
+	}
+	if n > 0 {
+		memes, _ := st.MemeCount(nil)
+		fmt.Fprintf(os.Stderr, "sources: worked out %d photos; %d memes and screenshots in all\n", n, memes)
+	}
 }
 
 func runPrune(g *globals, args []string) error {
