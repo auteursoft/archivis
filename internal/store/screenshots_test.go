@@ -132,3 +132,62 @@ func TestReadOnlyURI(t *testing.T) {
 		t.Fatal("a read-only database accepted a write")
 	}
 }
+
+// Apple's flag outranks a re-analysis: a screenshot re-indexed (its
+// analysis calls it a saved image) or reclassified stays a screenshot;
+// any other photo still takes its new source.
+func TestAppleScreenshotSurvivesReindex(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*Result
+	for _, p := range []string{"/L.photoslibrary/originals/A/SHOT.PNG", "/L.photoslibrary/originals/B/PHOTO.HEIC"} {
+		rs = append(rs, &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, Source: SourceSaved, Version: SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.markScreenshots([]string{rs[0].Photo.Path}); err != nil || n != 1 {
+		t.Fatalf("marked %d (%v)", n, err)
+	}
+	source := func(r *Result) int {
+		t.Helper()
+		got, err := st.Photos([]int64{r.Photo.ID})
+		if err != nil || len(got) != 1 {
+			t.Fatalf("%s: %v %v", r.Photo.Path, got, err)
+		}
+		return got[0].Source
+	}
+	// an index run re-analyses both (the files changed): analysis says saved, camera
+	rs[0].Photo.MTime, rs[0].Photo.Source = 2, SourceSaved
+	rs[1].Photo.MTime, rs[1].Photo.Source = 2, SourceCamera
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if got := source(rs[0]); got != SourceMeme {
+		t.Fatalf("re-indexed screenshot: source %d, want it to stay a screenshot", got)
+	}
+	if got := source(rs[1]); got != SourceCamera {
+		t.Fatalf("re-indexed photo: source %d, want its new source", got)
+	}
+	// a full reclassify (retag) leaves it a screenshot too
+	in, err := st.SourceInputs(0, true, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var set []SourceSet
+	for _, x := range in {
+		set = append(set, SourceSet{ID: x.ID, Seq: x.Seq, Source: SourceSaved})
+	}
+	if err := st.SetSources(set); err != nil {
+		t.Fatal(err)
+	}
+	if got := source(rs[0]); got != SourceMeme {
+		t.Fatalf("reclassified screenshot: source %d", got)
+	}
+	if got := source(rs[1]); got != SourceSaved {
+		t.Fatalf("reclassified photo: source %d, want saved", got)
+	}
+}

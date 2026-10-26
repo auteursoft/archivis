@@ -54,7 +54,8 @@ type SourceSet struct {
 
 // SetSources records photos' sources, in one short transaction: each only
 // if the photo is unchanged since it was read (a photo re-indexed meanwhile
-// already has its source from that analysis). It does not change their
+// already has its source from that analysis), and never one Apple Photos
+// calls a screenshot. It does not change their
 // seq, as nothing else about them changed; a change marks the folders for
 // working out again, as their covers leave memes out.
 func (s *Store) SetSources(src []SourceSet) error {
@@ -63,7 +64,7 @@ func (s *Store) SetSources(src []SourceSet) error {
 		return err
 	}
 	defer tx.Rollback()
-	st, err := tx.Prepare(`UPDATE photos SET source = ? WHERE id = ? AND seq = ? AND source != ?`)
+	st, err := tx.Prepare(`UPDATE photos SET source = ? WHERE id = ? AND seq = ? AND source != ? AND apple_shot = 0`)
 	if err != nil {
 		return err
 	}

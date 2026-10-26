@@ -74,6 +74,13 @@ func TestSourceFilterPages(t *testing.T) {
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, page, nil))
 		mustContain(t, page, html.UnescapeString(rec.Body.String()), "Best matches for", "memes & screenshots hidden")
 	}
+	// so do Bursts and Duplicates
+	for _, page := range []string{"/bursts", "/duplicates"} {
+		mustContain(t, page, html.UnescapeString(get(t, h, page)), "memes & screenshots hidden")
+		if strings.Contains(html.UnescapeString(get(t, h, page+"?source=all")), "memes & screenshots hidden") {
+			t.Errorf("%s?source=all: says memes are hidden", page)
+		}
+	}
 	body := get(t, h, "/?source=memes")
 	mustContain(t, "source select", body, `<option value="memes" selected>`)
 	if strings.Contains(get(t, h, "/"), `" selected>memes`) {

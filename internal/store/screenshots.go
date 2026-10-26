@@ -152,7 +152,8 @@ func openReadOnly(path string) (*sql.DB, error) {
 }
 
 // markScreenshots marks the catalogued photos at these paths as memes and
-// screenshots, in short transactions, marking the folders for working out
+// screenshots, and as Apple's (apple_shot), so a re-index or a reclassify
+// keeps them so; in short transactions, marking the folders for working out
 // again (their covers) if any changed.
 func (s *Store) markScreenshots(paths []string) (int, error) {
 	n := 0
@@ -166,7 +167,7 @@ func (s *Store) markScreenshots(paths []string) (int, error) {
 		if err != nil {
 			return n, err
 		}
-		res, err := tx.Exec(`UPDATE photos SET source = ? WHERE source != ? AND path IN (`+placeholders(len(chunk))+`)`, args...)
+		res, err := tx.Exec(`UPDATE photos SET source = ?, apple_shot = 1 WHERE (source != ? OR apple_shot = 0) AND path IN (`+placeholders(len(chunk))+`)`, args...)
 		if err != nil {
 			tx.Rollback()
 			return n, err

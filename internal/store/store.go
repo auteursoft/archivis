@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS photos (
 	-- where the photo came from (source.go): 0 not yet worked out, 1 a
 	-- camera (its metadata names one), 2 a saved image, 3 a meme or screenshot
 	source           INTEGER NOT NULL DEFAULT 0,
+	-- 1: Apple Photos calls it a screenshot (screenshots.go). Never written
+	-- by Save, and while set, Save keeps source 3 whatever analysis says.
+	apple_shot       INTEGER NOT NULL DEFAULT 0,
 	indexed_at       INTEGER NOT NULL,
 	version          INTEGER NOT NULL,
 	-- change counter: each Save takes the next value (see nextSeq), so a
@@ -638,6 +641,9 @@ var updatePhotoSQL = func() string {
 	cols := strings.Split(strings.TrimPrefix(photoCols, "id, "), ",")
 	for i, c := range cols {
 		cols[i] = strings.TrimSpace(c) + " = ?"
+		if cols[i] == "source = ?" { // Apple's screenshot flag outranks a re-analysis
+			cols[i] = "source = CASE WHEN apple_shot = 1 THEN 3 ELSE ? END"
+		}
 	}
 	return "UPDATE photos SET " + strings.Join(cols, ", ") + " WHERE id = ?"
 }()
