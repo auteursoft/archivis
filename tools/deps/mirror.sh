@@ -4,9 +4,11 @@
 # fetches) and tools/samples/fetch.sh --list (the camera test files). A
 # file missing from the release, or there with the wrong SHA-256, is
 # downloaded from its original, checked against its pinned SHA-256 and
-# uploaded. Run by .github/workflows/deps.yml (GH_TOKEN with contents:
-# write); fails if any file could not be mirrored. The release is marked a
-# pre-release so it never shows as the project's latest release.
+# uploaded, under a name GitHub keeps as it is (fetch.sh --mirror-name).
+# Files no longer listed are removed after a clean run. Run by
+# .github/workflows/deps.yml (GH_TOKEN with contents: write); fails if any
+# file could not be mirrored. The release is marked a pre-release so it
+# never shows as the project's latest release.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 repo=${GITHUB_REPOSITORY:-auteursoft/archivis}
@@ -19,8 +21,13 @@ sha() {
 
 {
 	grep -v '^#' "$here/assets.txt" | awk 'NF == 3'
-	"$here/../samples/fetch.sh" --list | while read -r sum url; do echo "$sum ${url##*/} $url"; done
+	"$here/../samples/fetch.sh" --list | while read -r sum url; do
+		echo "$sum $("$here/../samples/fetch.sh" --mirror-name "${url##*/}") $url"
+	done
 } >"$work/entries"
+# GitHub rewrites other characters in release file names: none may be used
+bad=$(cut -d' ' -f2 "$work/entries" | grep '[^A-Za-z0-9._-]' || true)
+[ -z "$bad" ] || { echo "::error::mirror names GitHub would rewrite (use A-Z a-z 0-9 . _ -): $bad"; exit 1; }
 dups=$(cut -d' ' -f2 "$work/entries" | sort | uniq -d)
 [ -z "$dups" ] || { echo "::error::two files would share a mirror name: $dups"; exit 1; }
 
@@ -72,4 +79,12 @@ while read -r sum name url; do
 	fi
 	rm -f "$work/$name"
 done <"$work/entries"
+# after a clean run, remove files no longer listed (renamed or dropped)
+if [ $failed = 0 ]; then
+	cut -d' ' -f1 "$work/have" | while read -r name; do
+		cut -d' ' -f2 "$work/entries" | grep -qxF "$name" && continue
+		echo "::notice::$name is no longer listed: removing it from the mirror"
+		gh release delete-asset "$tag" "$name" -R "$repo" --yes </dev/null
+	done
+fi
 exit $failed

@@ -33,6 +33,9 @@ func manifest(t *testing.T) map[string][2]string {
 		if len(fs) != 3 || len(fs[0]) != 64 {
 			t.Fatalf("assets.txt: bad line %q", line)
 		}
+		if strings.Trim(fs[1], "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") != "" {
+			t.Fatalf("assets.txt: mirror name %q has characters GitHub rewrites in release file names", fs[1])
+		}
 		if _, dup := out[fs[1]]; dup {
 			t.Fatalf("assets.txt: %s listed twice", fs[1])
 		}
