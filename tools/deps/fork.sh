@@ -16,34 +16,50 @@ org=${ARCHIVIS_FORK_ORG:-auteursoft}
 here=$(cd "$(dirname "$0")" && pwd)
 check=false
 [ "${1:-}" = --check ] && check=true
-status=0
-tags() { gh api --paginate "repos/$1/git/matching-refs/tags" --jq '.[] | .ref + " " + .object.sha'; }
+status=0 # any fork missing (--check), or failing to sync or take a tag: 1
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+# gh reads from /dev/null: the loop's input is repos.txt
+tags() { gh api --paginate "repos/$1/git/matching-refs/tags" --jq '.[] | .ref + " " + .object.sha' </dev/null; }
 while read -r repo module _; do
 	case $repo in '' | '#'*) continue ;; esac
 	name=${repo#*/}
-	if gh repo view "$org/$name" --json name >/dev/null 2>&1; then
+	if gh repo view "$org/$name" --json name </dev/null >/dev/null 2>&1; then
 		if $check; then
 			echo "ok       $org/$name"
 			continue
 		fi
 		echo "sync     $org/$name"
-		gh repo sync "$org/$name" --source "$repo" >/dev/null || echo "  sync failed; the fork stays as it was" >&2
+		if ! gh repo sync "$org/$name" --source "$repo" </dev/null >/dev/null; then
+			echo "  sync failed: $org/$name is behind $repo" >&2
+			status=1
+		fi
 	elif $check; then
 		echo "MISSING  $org/$name (fork of $repo)"
 		status=1
 		continue
 	else
 		echo "fork     $repo -> $org/$name"
-		gh repo fork "$repo" --org "$org" --clone=false
+		gh repo fork "$repo" --org "$org" --clone=false </dev/null
 		sleep 5 # the fork is created asynchronously
 	fi
 	if [ "$module" != - ]; then
-		have=$(tags "$org/$name" 2>/dev/null | cut -d' ' -f1)
-		tags "$repo" | while read -r ref sha; do
-			echo "$have" | grep -qxF "$ref" && continue
-			gh api "repos/$org/$name/git/refs" -f ref="$ref" -f sha="$sha" >/dev/null &&
-				echo "  tag    ${ref#refs/tags/}" || echo "  could not copy ${ref#refs/tags/}" >&2
-		done
+		if ! tags "$repo" >"$work/upstream" || ! tags "$org/$name" >"$work/fork"; then
+			echo "  could not list the tags of $repo or $org/$name" >&2
+			status=1
+			continue
+		fi
+		cut -d' ' -f1 "$work/fork" >"$work/have"
+		while read -r ref sha; do
+			grep -qxF "$ref" "$work/have" && continue
+			if gh api "repos/$org/$name/git/refs" -f ref="$ref" -f sha="$sha" </dev/null >/dev/null; then
+				echo "  tag    ${ref#refs/tags/}"
+			else
+				echo "  could not copy tag ${ref#refs/tags/} to $org/$name" >&2
+				status=1
+			fi
+		done <"$work/upstream"
 	fi
 done <"$here/repos.txt"
+[ $status = 0 ] || echo "some forks are missing or behind (see above); run again once fixed" >&2
 exit $status

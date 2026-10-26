@@ -70,6 +70,8 @@ func TestDepsManifestMatchesSetup(t *testing.T) {
 			t.Errorf("%s: original %s, manifest has %s", mf.dest, mf.urls[0], e[1])
 		case mf.zipMember == "" && e[0] != mf.sha256:
 			t.Errorf("%s: setup pins %s, manifest %s", mf.dest, mf.sha256, e[0])
+		case mf.zipMember != "" && e[0] != mf.zipSHA256:
+			t.Errorf("%s: setup pins the zip as %q, manifest %s", mf.dest, mf.zipSHA256, e[0])
 		}
 	}
 }
@@ -86,8 +88,14 @@ func TestSetupFallsBackToMirror(t *testing.T) {
 	mux.HandleFunc("/changed.zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Write(zipOf(t, map[string][]byte{"m.onnx": []byte(strings.Repeat("other ", 300))}))
 	})
+	// a different zip whose member still matches: not the pinned zip
+	mux.HandleFunc("/repacked.zip", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(zipOf(t, map[string][]byte{"m.onnx": good, "extra.txt": []byte("x")}))
+	})
 	mux.HandleFunc("/mirror/m.onnx", func(w http.ResponseWriter, r *http.Request) { w.Write(good) })
-	mux.HandleFunc("/mirror/b.zip", func(w http.ResponseWriter, r *http.Request) { w.Write(zipped) })
+	mirrorZips := 0
+	mux.HandleFunc("/mirror/b.zip", func(w http.ResponseWriter, r *http.Request) { mirrorZips++; w.Write(zipped) })
+	zipSum := sha256.Sum256(zipped)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	dir := t.TempDir()
@@ -99,14 +107,22 @@ func TestSetupFallsBackToMirror(t *testing.T) {
 		{"changed", modelFile{urls: []string{srv.URL + "/changed", srv.URL + "/mirror/m.onnx"}}},
 		{"zip gone", modelFile{urls: []string{srv.URL + "/gone", srv.URL + "/mirror/b.zip"}, zipMember: "m.onnx"}},
 		{"zip changed", modelFile{urls: []string{srv.URL + "/changed.zip", srv.URL + "/mirror/b.zip"}, zipMember: "m.onnx"}},
+		{"zip repacked", modelFile{urls: []string{srv.URL + "/repacked.zip", srv.URL + "/mirror/b.zip"}, zipMember: "m.onnx"}},
 	} {
 		c.m.sha256 = hex.EncodeToString(sum[:])
+		if c.m.zipMember != "" {
+			c.m.zipSHA256 = hex.EncodeToString(zipSum[:])
+		}
+		before := mirrorZips
 		dest := filepath.Join(dir, strings.ReplaceAll(c.name, " ", "_"))
 		zc := map[string]string{}
 		if err := fetchModel(c.m, dest, zc); err != nil {
 			t.Errorf("%s: %v", c.name, err)
 		} else if b, _ := os.ReadFile(dest); string(b) != string(good) {
 			t.Errorf("%s: wrong file", c.name)
+		}
+		if c.m.zipMember != "" && mirrorZips != before+1 {
+			t.Errorf("%s: the mirror's zip was not used", c.name)
 		}
 		for _, p := range zc {
 			os.Remove(p)

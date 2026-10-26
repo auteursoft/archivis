@@ -33,21 +33,33 @@ fi
 gh api "repos/$repo/releases/tags/$tag" --jq '.assets[] | .name + " " + (.digest // "")' >"$work/have"
 
 failed=0
+# gh reads from /dev/null: the loop's input is the list of files
 while read -r sum name url; do
+	there=$(awk -v n="$name" '$1 == n { print "yes" }' "$work/have")
 	got=$(awk -v n="$name" '$1 == n { print $2 }' "$work/have")
 	if [ "$got" = "sha256:$sum" ]; then
 		echo "ok        $name"
 		continue
 	fi
-	if [ -n "$got" ] && [ "${got#sha256:}" != "$got" ]; then
-		echo "::warning::$name in the mirror has SHA-256 ${got#sha256:}, not $sum: replacing it"
-		gh release delete-asset "$tag" "$name" -R "$repo" --yes
-	elif [ -n "$got" ] || grep -q "^$name \$" "$work/have"; then
-		echo "ok        $name (no digest recorded)"
-		continue
+	if [ -n "$there" ] && [ -z "$got" ]; then
+		# no digest recorded: check the mirrored copy itself
+		if curl -fsSL --retry 3 -o "$work/$name" "https://github.com/$repo/releases/download/$tag/$name" &&
+			[ "$(sha "$work/$name")" = "$sum" ]; then
+			echo "ok        $name (checked: no digest recorded)"
+			rm -f "$work/$name"
+			continue
+		fi
+		got="unreadable or different"
 	fi
+	[ -n "$there" ] && echo "::warning::$name in the mirror is $got, not sha256:$sum"
+	# the replacement is fetched and checked before anything in the mirror
+	# changes: if the original is gone too, the copy there stays
 	if ! curl -fsSL --retry 3 -o "$work/$name" "$url"; then
-		echo "::error::$name: the original ($url) cannot be downloaded, and the mirror has no copy"
+		if [ -n "$there" ]; then
+			echo "::error::$name: the original ($url) cannot be downloaded to replace it; the mirror keeps the copy it has"
+		else
+			echo "::error::$name: the original ($url) cannot be downloaded, and the mirror has no copy"
+		fi
 		failed=1
 		continue
 	fi
@@ -55,7 +67,7 @@ while read -r sum name url; do
 		echo "::error::$name: the original ($url) no longer matches its pinned SHA-256"
 		failed=1
 	else
-		gh release upload "$tag" "$work/$name" -R "$repo" --clobber
+		gh release upload "$tag" "$work/$name" -R "$repo" --clobber </dev/null # replaces in one step
 		echo "mirrored  $name"
 	fi
 	rm -f "$work/$name"

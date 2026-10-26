@@ -46,19 +46,24 @@ type modelFile struct {
 	sha256 string // required: every download is verified
 	// fromZip extracts this member from a zip download instead of saving it.
 	zipMember string
+	zipSHA256 string // the zip's own pin: a source serving another zip is skipped
 }
+
+const buffaloZipSHA256 = "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f"
 
 var modelFiles = []modelFile{
 	{
 		dest:      "buffalo_l/det_10g.onnx",
 		urls:      []string{"https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip", mirrorBase + "buffalo_l.zip"},
 		zipMember: "det_10g.onnx",
+		zipSHA256: buffaloZipSHA256,
 		sha256:    "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
 	},
 	{
 		dest:      "buffalo_l/w600k_r50.onnx",
 		urls:      []string{"https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip", mirrorBase + "buffalo_l.zip"},
 		zipMember: "w600k_r50.onnx",
+		zipSHA256: buffaloZipSHA256,
 		sha256:    "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
 	},
 	{
@@ -150,7 +155,16 @@ func fetchModel(m modelFile, dest string, zipCache map[string]string) error {
 			if !ok {
 				zp = dest + ".zip.part" + fmt.Sprint(len(zipCache))
 				if err = download(u, zp); err != nil {
+					fmt.Fprintf(os.Stderr, "  %v; trying the next source\n", err)
 					continue
+				}
+				if m.zipSHA256 != "" {
+					if ok, verr := verify(zp, m.zipSHA256); !ok {
+						os.Remove(zp)
+						err = fmt.Errorf("checksum mismatch from %s (%v)", u, verr)
+						fmt.Fprintf(os.Stderr, "  %v; trying the next source\n", err)
+						continue
+					}
 				}
 				zipCache[u] = zp
 			}
