@@ -74,7 +74,7 @@
   </aside>
 </div>
 {{with .Stack}}<h2>Other shots in this stack ({{len .}})</h2>
-<p class="hint">Near-identical frames of the same burst. On the Photos page they show as one card, the best frame.</p>
+<p class="hint">Alike shots of the same scene (one camera, minutes apart at most). On the Photos page they show as one card, the best shot.</p>
 {{template "photogrid" .}}{{end}}
 {{with .Copies}}<h2>Identical copies ({{len .}} more)</h2>
 <ul class="copies">{{range .}}<li><a href="/photo/{{.ID}}">{{.Path}}</a></li>{{end}}</ul>
