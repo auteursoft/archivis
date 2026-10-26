@@ -2,9 +2,12 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/store"
 )
 
 // groups rebuild works out the groups, and is refused (not queued) while
@@ -34,5 +37,36 @@ func TestGroupsCommand(t *testing.T) {
 	unlock()
 	if err := runGroups(g, []string{"nonsense"}); err == nil {
 		t.Fatal("unknown subcommand accepted")
+	}
+}
+
+// An index run whose folders are all offline still records them for Albums
+// (in an existing catalogue), and still fails.
+func TestIndexRecordsOfflineRoots(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ARCHIVIS_DATA", dir)
+	t.Setenv("HOME", t.TempDir())
+	st, err := store.Open(indexer.Layout{Dir: dir}.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	gone := filepath.Join(t.TempDir(), "unmounted-drive")
+	if err := runIndex(&globals{data: dir}, []string{gone}); err == nil {
+		t.Fatal("indexing only missing folders succeeded")
+	}
+	st, err = store.Open(indexer.Layout{Dir: dir}.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if roots, _ := st.Roots(); len(roots) != 1 || roots[0] != gone {
+		t.Fatalf("Roots = %v, want [%s]", roots, gone)
+	}
+	// no catalogue: none is created just to record them
+	empty := t.TempDir()
+	runIndex(&globals{data: empty}, []string{gone})
+	if _, err := os.Stat(indexer.Layout{Dir: empty}.DB()); err == nil {
+		t.Fatal("a catalogue was created for offline folders")
 	}
 }

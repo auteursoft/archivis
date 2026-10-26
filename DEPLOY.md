@@ -662,6 +662,28 @@ archivis groups              # up to date, or not
 archivis groups rebuild      # work them out now
 ```
 
+### Albums
+
+**Albums** browses your photos by folder. It starts from the folders you
+index, plus one **iPhone** album that holds every Apple Photos library.
+Open a folder to see its subfolders at the top. Below them is every photo
+in that folder and in all its subfolders. These photos have the Photos
+page's filters, sorts and search.
+
+Folder counts and covers (each folder's best photo) are worked out along
+with the bursts, at the same times. That takes about 5 s per million
+photos, and a run with nothing changed writes nothing. Until the first run
+finishes, the page says so.
+
+Each index run records its folders. For folders indexed before Albums
+existed, add them once:
+
+```sh
+archivis roots add /Volumes/Archive ~/Pictures
+archivis roots                       # the folders Albums starts from
+archivis roots remove /Volumes/Old   # stop showing one; its photos stay catalogued
+```
+
 ## Teaching it your taste
 
 Rate photos on their pages in the web interface (or say the aesthetic score

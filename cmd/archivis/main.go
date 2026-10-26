@@ -44,7 +44,8 @@ Commands:
   retag        recompute category tags from stored embeddings
   prune        drop catalogue entries for files that no longer exist
   stats        catalogue summary
-  groups       bursts, stacks and identical images: status | rebuild
+  groups       bursts, stacks, identical images and folders: status | rebuild
+  roots        the indexed folders Albums starts from: list | add | remove
   errors       show files that failed to index
   inspect      show what Archivis reads from photo files (camera, lens, preview, rotation)
   users        web accounts: list | add-admin | invite | reset | password | role | disable | enable | signout
@@ -228,6 +229,7 @@ func main() {
 		"list": runList, "export": runExport, "people": runPeople, "retag": runRetag,
 		"prune": runPrune, "stats": runStats, "errors": runErrors, "aesthetic": runAesthetic, "inspect": runInspect,
 		"users": runUsers, "version": runVersion, "settings": runSettings, "groups": runGroups,
+		"roots": runRoots,
 	}
 	fn, ok := cmds[cmd]
 	if cmd == "" {
@@ -285,6 +287,24 @@ func signalContext() (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
+// recordOfflineRoots records folders for Albums when none of them could be
+// indexed (drives not mounted), so they show once mounted; only into a
+// catalogue that already exists, never creating one for it.
+func recordOfflineRoots(data string, roots []string) {
+	db := indexer.Layout{Dir: data}.DB()
+	if _, err := os.Stat(db); err != nil {
+		return
+	}
+	st, err := store.Open(db)
+	if err == nil {
+		err = st.RecordRoots(roots)
+		st.Close()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: recording the folders for Albums: %v\n", err)
+	}
+}
+
 func runIndex(g *globals, args []string) error {
 	fs := newFlagSet("index", "Catalogue photos under the given folders.")
 	workers := fs.Int("workers", runtime.NumCPU(), "parallel photos in flight")
@@ -312,8 +332,10 @@ func runIndex(g *globals, args []string) error {
 		avail = append(avail, r)
 	}
 	if len(avail) == 0 {
+		recordOfflineRoots(g.data, roots)
 		return fmt.Errorf("none of the folders to index exist: %s", strings.Join(roots, ", "))
 	}
+	asked := roots // recorded for Albums, mounted or not
 	roots = avail
 	if err := os.MkdirAll(g.data, 0o755); err != nil {
 		return err
@@ -333,6 +355,9 @@ func runIndex(g *globals, args []string) error {
 		return err
 	}
 	defer cat.Close()
+	if err := cat.Store.RecordRoots(asked); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: recording the indexed folders for Albums: %v\n", err)
+	}
 	ctx, cancel := signalContext()
 	defer cancel()
 	ix := indexer.New(indexer.Config{
