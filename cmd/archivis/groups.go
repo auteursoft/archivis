@@ -11,7 +11,7 @@ import (
 )
 
 func runGroups(g *globals, args []string) error {
-	fs := newFlagSet("groups", `Bursts, stacks of near-identical frames, identical images, and the
+	fs := newFlagSet("groups", `Bursts, stacks of alike shots, identical images, and the
 folders Albums shows:
   groups status     whether they are up to date
   groups rebuild    work them out again now (index runs and the web

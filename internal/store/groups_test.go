@@ -80,6 +80,16 @@ type groupState struct {
 
 // referenceGroups groups the photos the simple way: all in memory.
 func referenceGroups(ps []Photo, gap int64, hamming int) groupState {
+	return referenceScenes(ps, GroupOptions{Gap: gap, Hamming: hamming})
+}
+
+// referenceScenes groups the photos the simple way, with scenes: each
+// camera's dated shots in time order are cut into scenes at gaps over the
+// scene gap, scenes into bursts at gaps over the burst gap, and a scene's
+// bursts packed in order into chunks of at most maxStackRun shots, each
+// stacked on its own (a burst over maxStackRun alone, unstacked).
+func referenceScenes(ps []Photo, o GroupOptions) groupState {
+	gap, hamming, sceneGap := o.Gap, o.Hamming, max(o.Scene, o.Gap)
 	out := groupState{photos: map[int64][5]int64{}, groups: map[[2]int64][]int64{}}
 	for _, p := range ps {
 		out.photos[p.ID] = [5]int64{}
@@ -95,7 +105,7 @@ func referenceGroups(ps []Photo, gap int64, hamming int) groupState {
 			continue
 		}
 		cam := p.CameraMake + "\x00" + p.CameraModel
-		if r := open[cam]; len(r) > 0 && p.TakenAt-r[len(r)-1].TakenAt > gap {
+		if r := open[cam]; len(r) > 0 && p.TakenAt-r[len(r)-1].TakenAt > sceneGap {
 			runs = append(runs, r)
 			open[cam] = nil
 		}
@@ -104,26 +114,49 @@ func referenceGroups(ps []Photo, gap int64, hamming int) groupState {
 	for _, r := range open {
 		runs = append(runs, r)
 	}
-	for _, r := range runs {
-		if len(r) < 2 {
-			continue
-		}
+	stack := func(shots []Photo) {
 		var gs []*gphoto
-		var ids []int64
-		for _, p := range r {
+		for _, p := range shots {
 			gs = append(gs, &gphoto{id: p.ID, phash: p.PHash, overall: p.Overall})
-			ids = append(ids, p.ID)
 		}
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-		out.groups[[2]int64{GroupBurst, ids[0]}] = ids
-		var stacks map[int64][3]int64
-		if len(gs) <= maxStackRun {
-			stacks = stackFrames(gs, hamming)
+		for id, w := range stackFrames(gs, hamming) {
+			x := out.photos[id]
+			x[1], x[2], x[3] = w[0], w[1], w[2]
+			out.photos[id] = x
 		}
-		for _, id := range ids {
-			w := stacks[id]
-			out.photos[id] = [5]int64{ids[0], w[0], w[1], w[2], 0}
+	}
+	for _, r := range runs {
+		var chunk []Photo
+		for i := 0; i < len(r); {
+			j := i + 1
+			for j < len(r) && r[j].TakenAt-r[j-1].TakenAt <= gap {
+				j++
+			}
+			b := r[i:j]
+			i = j
+			if len(b) >= 2 {
+				var ids []int64
+				for _, p := range b {
+					ids = append(ids, p.ID)
+				}
+				sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+				out.groups[[2]int64{GroupBurst, ids[0]}] = ids
+				for _, id := range ids {
+					x := out.photos[id]
+					x[0] = ids[0]
+					out.photos[id] = x
+				}
+			}
+			if len(b) > maxStackRun {
+				continue
+			}
+			if len(chunk)+len(b) > maxStackRun {
+				stack(chunk)
+				chunk = nil
+			}
+			chunk = append(chunk, b...)
 		}
+		stack(chunk)
 	}
 	byHash := map[uint64][]int64{}
 	for _, p := range ps {
@@ -231,14 +264,15 @@ func TestRebuildGroups(t *testing.T) {
 		t.Fatalf("second rebuild wrote: %s", again)
 	}
 
-	for _, o := range []GroupOptions{{Gap: 1, Hamming: 2}, {Gap: 20, Hamming: 10}, {Gap: 3, Hamming: 6}} {
+	for _, o := range []GroupOptions{{Gap: 1, Hamming: 2}, {Gap: 20, Hamming: 10}, {Gap: 3, Hamming: 10, Scene: 600},
+		{Gap: 3, Hamming: 6, Scene: 60}, {Gap: 3, Hamming: 6}} {
 		if !st.GroupsStale(o) {
 			t.Fatalf("%+v: not stale", o)
 		}
 		if _, err := st.RebuildGroups(ctx, o); err != nil {
 			t.Fatal(err)
 		}
-		compareGroups(t, storedGroups(t, st), referenceGroups(ps, o.Gap, o.Hamming))
+		compareGroups(t, storedGroups(t, st), referenceScenes(ps, o))
 	}
 
 	// a new photo makes the groups stale
@@ -763,4 +797,130 @@ func TestInterruptedRebuildLeavesGroupsStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	compareGroups(t, storedGroups(t, st), referenceGroups(ps, o.Gap, o.Hamming))
+}
+
+// Shots of one scene minutes apart stack into one card, its best shot on
+// top, the RAW and JPEG of each shot with it; a shot of something else in
+// the scene stays apart, as does the same view after a longer pause, or
+// from another camera. Without a scene gap only bursts stack, as before.
+func TestSceneStacks(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	const sunset, dock = uint64(0xF0F0_3C3C_AA55_1234), uint64(0x0F0F_C3C3_55AA_EDCB)
+	var rs []*Result
+	add := func(name, cam string, at int64, hash uint64, overall float64) {
+		rs = append(rs, &Result{Photo: Photo{Path: "/s/" + name, Size: 1, MTime: 1, Fingerprint: name, CameraModel: cam,
+			TakenAt: at, PHash: hash, Overall: overall, Version: SchemaVersion}})
+	}
+	t0 := int64(1_700_000_000)
+	for i := 0; i < 6; i++ { // a shot every 2 minutes, RAW and JPEG alike but for a few bits
+		at := t0 + int64(i)*120
+		h := sunset ^ uint64(1)<<(i*7) ^ uint64(1)<<(i*7+3) // the light changes a little
+		add(fmt.Sprintf("DSC_%d.NEF", i), "Z 8", at, h, float64(10+i))
+		add(fmt.Sprintf("DSC_%d.JPG", i), "Z 8", at, h^1<<60, float64(10+i)-0.5)
+	}
+	add("dock.NEF", "Z 8", t0+300, dock, 30)                 // something else, mid-scene
+	add("later.NEF", "Z 8", t0+5*120+11*60, sunset, 5)       // the same view after an 11-minute pause
+	add("phone.HEIC", "iPhone 15 Pro", t0+60, sunset, 40)    // another camera
+	add("phone2.HEIC", "iPhone 15 Pro", t0+61, sunset^3, 39) // and its burst
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	id := map[string]int64{}
+	for _, r := range rs {
+		id[strings.TrimPrefix(r.Photo.Path, "/s/")] = r.Photo.ID
+	}
+	ctx := context.Background()
+	if _, err := st.RebuildGroups(ctx, GroupOptions{Gap: 3, Hamming: 10, Scene: 600}); err != nil {
+		t.Fatal(err)
+	}
+	got := storedGroups(t, st)
+	top := id["DSC_5.NEF"] // the best of the scene
+	for i := 0; i < 6; i++ {
+		for _, ext := range []string{"NEF", "JPG"} {
+			name := fmt.Sprintf("DSC_%d.%s", i, ext)
+			x := got.photos[id[name]]
+			hidden := int64(1)
+			if id[name] == top {
+				hidden = 0
+			}
+			if x[1] != top || x[2] != 12 || x[3] != hidden {
+				t.Fatalf("%s: stack %v, want top %d of 12", name, x, top)
+			}
+			if want := min(id[fmt.Sprintf("DSC_%d.NEF", i)], id[fmt.Sprintf("DSC_%d.JPG", i)]); x[0] != want {
+				t.Fatalf("%s: burst %d, want its RAW+JPEG pair's %d", name, x[0], want)
+			}
+		}
+	}
+	for _, name := range []string{"dock.NEF", "later.NEF"} {
+		if x := got.photos[id[name]]; x[0] != 0 || x[1] != 0 { // in no burst or stack (later.NEF is a copy of phone.HEIC)
+			t.Fatalf("%s grouped: %v", name, x)
+		}
+	}
+	if x := got.photos[id["phone2.HEIC"]]; x[1] != id["phone.HEIC"] || x[2] != 2 {
+		t.Fatalf("the phone's burst: %v", x)
+	}
+	compareGroups(t, got, referenceScenes(photosOf(rs), GroupOptions{Gap: 3, Hamming: 10, Scene: 600}))
+
+	// without scenes, only each RAW+JPEG pair stacks; the scene's lone top
+	// (in no burst) is cleared
+	if _, err := st.RebuildGroups(ctx, GroupOptions{Gap: 3, Hamming: 10}); err != nil {
+		t.Fatal(err)
+	}
+	got = storedGroups(t, st)
+	if x := got.photos[top]; x[1] != top || x[2] != 2 {
+		t.Fatalf("without scenes the best shot's stack is %v, want its pair", x)
+	}
+	compareGroups(t, got, referenceScenes(photosOf(rs), GroupOptions{Gap: 3, Hamming: 10}))
+}
+
+func photosOf(rs []*Result) []Photo {
+	var ps []Photo
+	for _, r := range rs {
+		ps = append(ps, r.Photo)
+	}
+	return ps
+}
+
+// A scene longer than maxStackRun is stacked in chunks cut between bursts,
+// never through one; a burst over maxStackRun is not stacked.
+func TestLongSceneChunks(t *testing.T) {
+	defer func(n int) { maxStackRun = n }(maxStackRun)
+	maxStackRun = 5
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*Result
+	at := int64(1_700_000_000)
+	for i, n := range []int{2, 3, 2, 1, 7, 2, 2, 1} { // bursts, a lone shot, a burst too big to stack
+		for k := 0; k < n; k++ {
+			p := fmt.Sprintf("/l/%d-%d", i, k)
+			rs = append(rs, &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, CameraModel: "Z 9",
+				TakenAt: at, PHash: 0xABCD, Overall: float64(len(rs) % 7), Version: SchemaVersion}})
+			at++
+		}
+		at += 60
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	o := GroupOptions{Gap: 3, Hamming: 4, Scene: 600}
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	got := storedGroups(t, st)
+	compareGroups(t, got, referenceScenes(photosOf(rs), o))
+	for _, r := range rs {
+		if x := got.photos[r.Photo.ID]; x[2] > int64(maxStackRun) {
+			t.Fatalf("%s: a stack of %d, over the chunk size", r.Photo.Path, x[2])
+		}
+		if strings.HasPrefix(r.Photo.Path, "/l/4-") && got.photos[r.Photo.ID][2] != 0 {
+			t.Fatalf("%s: a burst over maxStackRun was stacked", r.Photo.Path)
+		}
+	}
 }

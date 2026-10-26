@@ -128,6 +128,7 @@ CREATE INDEX IF NOT EXISTS photo_groups_faces2    ON photo_groups(kind, max_face
 -- interrupted one (small: only photos in a group).
 CREATE INDEX IF NOT EXISTS photos_in_burst ON photos(burst_id) WHERE burst_id != 0;
 CREATE INDEX IF NOT EXISTS photos_in_dup   ON photos(dup_id) WHERE dup_id != 0;
+CREATE INDEX IF NOT EXISTS photos_in_stack ON photos(stack_top) WHERE stack_size != 0; -- tops too, which need not be in a burst
 
 -- Deleting a stack's top shows its other frames again; any delete marks
 -- the groups for rebuilding (prune, cleanups), even of a photo not yet

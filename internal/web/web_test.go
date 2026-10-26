@@ -961,7 +961,7 @@ func TestPhotosPageStacks(t *testing.T) {
 	h := s.Handler()
 	body := get(t, h, "/")
 	if n := strings.Count(body, `href="/photo/`); n != 2 || strings.Count(body, `class="card stack"`) != 1 ||
-		!strings.Contains(body, `title="4 near-identical frames">4</span>`) || !strings.Contains(body, "5 photos <small") {
+		!strings.Contains(body, `title="4 alike shots">4</span>`) || !strings.Contains(body, "5 photos <small") {
 		t.Fatalf("stacked page: %d cards: %.400s", n, body[strings.Index(body, `<h1 class="summary"`):])
 	}
 	if !strings.Contains(body, fmt.Sprintf(`href="/photo/%d"`, rs[1].Photo.ID)) {
@@ -969,7 +969,7 @@ func TestPhotosPageStacks(t *testing.T) {
 	}
 	// a frame's page lists the others
 	page := get(t, h, fmt.Sprintf("/photo/%d", rs[2].Photo.ID))
-	if !strings.Contains(page, "Other frames in this stack (3)") || !strings.Contains(page, fmt.Sprintf(`href="/photo/%d"`, rs[1].Photo.ID)) {
+	if !strings.Contains(page, "Other shots in this stack (3)") || !strings.Contains(page, fmt.Sprintf(`href="/photo/%d"`, rs[1].Photo.ID)) {
 		t.Fatal("photo page lacks its stack")
 	}
 	// stacking off: every frame, no stack cards

@@ -15,8 +15,8 @@ import (
 )
 
 // Groups: bursts (frames one camera shot within a few seconds of each
-// other), stacks (near-identical frames within a burst, shown as one card)
-// and sets of identical images (same perceptual hash). RebuildGroups works
+// other), stacks (alike shots of one scene, shown as one card: a scene is
+// one camera's shots each within minutes of the last) and sets of identical images (same perceptual hash). RebuildGroups works
 // them out after indexing and stores them, so pages only read an index:
 // per photo in the photos table's group columns, per group in photo_groups.
 
@@ -27,18 +27,22 @@ const (
 )
 
 // groupsVersion changes when the grouping rules do, forcing a rebuild.
-const groupsVersion = "4"
+const groupsVersion = "5"
 
 // GroupOptions are the rules RebuildGroups groups by.
 type GroupOptions struct {
 	Gap     int64 // most seconds between frames of one burst
 	Hamming int   // most differing perceptual-hash bits for frames to stack
+	Scene   int64 // most seconds between shots of one scene, whose alike shots stack (below Gap: Gap)
 }
+
+// sceneGap is the most seconds between shots of one scene.
+func (o GroupOptions) sceneGap() int64 { return max(o.Scene, o.Gap) }
 
 // GroupOptions are the catalogue's grouping rules (from its Settings).
 func (s *Store) GroupOptions() GroupOptions {
 	v := s.GetSettings()
-	return GroupOptions{Gap: int64(v.BurstGap), Hamming: v.StackHamming}
+	return GroupOptions{Gap: int64(v.BurstGap), Hamming: v.StackHamming, Scene: int64(v.SceneGap) * 60}
 }
 
 // RebuildStats reports what RebuildGroups found and wrote.
@@ -87,7 +91,8 @@ func markGroupsDirty(tx *sql.Tx) error {
 func (s *Store) GroupRulesChanged(o GroupOptions) bool {
 	return s.GetMeta("groups_version") != groupsVersion ||
 		s.GetMeta("groups_gap") != strconv.FormatInt(o.Gap, 10) ||
-		s.GetMeta("groups_hamming") != strconv.Itoa(o.Hamming)
+		s.GetMeta("groups_hamming") != strconv.Itoa(o.Hamming) ||
+		s.GetMeta("groups_scene") != strconv.FormatInt(o.sceneGap(), 10)
 }
 
 // GroupsRebuilding reports whether a rebuild is in progress (for a note on
@@ -167,7 +172,8 @@ func (s *Store) RebuildGroups(ctx context.Context, o GroupOptions) (RebuildStats
 	}
 	for k, v := range map[string]string{
 		"groups_seq": strconv.FormatInt(seq, 10), "groups_gap": strconv.FormatInt(o.Gap, 10),
-		"groups_hamming": strconv.Itoa(o.Hamming), "groups_clean": dirty, "groups_version": groupsVersion,
+		"groups_hamming": strconv.Itoa(o.Hamming), "groups_scene": strconv.FormatInt(o.sceneGap(), 10),
+		"groups_clean": dirty, "groups_version": groupsVersion,
 	} {
 		if err := s.SetMeta(k, v); err != nil {
 			return r.st, err
@@ -178,27 +184,25 @@ func (s *Store) RebuildGroups(ctx context.Context, o GroupOptions) (RebuildStats
 }
 
 // bursts scans dated photos in time order (the photos_burst index covers
-// the scan), keeping one open run per camera; a run ends when its camera's
-// next frame is more than the gap later.
+// the scan), keeping one open scene per camera; a scene ends when its
+// camera's next shot is more than the scene gap later. Each scene is then
+// cut into bursts where shots are more than the burst gap apart.
 func (r *rebuild) bursts() error {
-	type run struct {
-		ids  []int64
-		last int64
-	}
-	open := map[string]*run{}
-	var pending [][]int64 // ended runs of 2+ frames, awaiting their details
+	open := map[string]*scene{}
+	gap := r.o.sceneGap()
+	var pending []*scene // ended scenes of 2+ shots, awaiting their details
 	pendingN := 0
 	flush := func() error {
-		if err := r.burstDetails(pending); err != nil {
+		if err := r.sceneDetails(pending); err != nil {
 			return err
 		}
 		pending, pendingN = pending[:0], 0
 		return nil
 	}
-	end := func(cam string, x *run) error {
+	end := func(cam string, x *scene) error {
 		delete(open, cam)
 		if len(x.ids) >= 2 {
-			pending = append(pending, x.ids)
+			pending = append(pending, x)
 			pendingN += len(x.ids)
 			if pendingN >= 2000 {
 				return flush()
@@ -239,18 +243,18 @@ func (r *rebuild) bursts() error {
 	feed := func(batch []frame) error {
 		for _, f := range batch {
 			x := open[f.cam]
-			if x != nil && f.at-x.last > r.o.Gap {
+			if x != nil && f.at-x.ats[len(x.ats)-1] > gap {
 				if err := end(f.cam, x); err != nil {
 					return err
 				}
 				x = nil
 			}
 			if x == nil {
-				x = &run{}
+				x = &scene{}
 				open[f.cam] = x
 			}
 			x.ids = append(x.ids, f.id)
-			x.last = f.at
+			x.ats = append(x.ats, f.at)
 		}
 		return nil
 	}
@@ -308,7 +312,7 @@ func (r *rebuild) bursts() error {
 		}
 		sort.Strings(cams)
 		for _, c := range cams {
-			if x := open[c]; n < scanPage || at-x.last > r.o.Gap {
+			if x := open[c]; n < scanPage || at-x.ats[len(x.ats)-1] > gap {
 				if err := end(c, x); err != nil {
 					return err
 				}
@@ -321,63 +325,128 @@ func (r *rebuild) bursts() error {
 	return flush()
 }
 
-// burstDetails loads the runs' frames, stacks them, and queues the changes.
-func (r *rebuild) burstDetails(runs [][]int64) error {
-	if len(runs) == 0 {
+// scene is one camera's shots, in time order, each within the scene gap of
+// the last.
+type scene struct {
+	ids, ats []int64
+}
+
+// sceneChunk is consecutive bursts of one scene (a lone shot is a burst of
+// one), stacked together: a scene is cut into chunks of at most maxStackRun
+// shots, between bursts, so stacking stays bounded.
+type sceneChunk [][]int64
+
+// sceneDetails cuts the scenes into bursts and chunks, loads the chunks'
+// shots a batch at a time, and queues the changes.
+func (r *rebuild) sceneDetails(scenes []*scene) error {
+	var batch []sceneChunk
+	batchN := 0
+	add := func(c sceneChunk, n int) error {
+		if n == 0 {
+			return nil
+		}
+		batch = append(batch, c)
+		batchN += n
+		if batchN >= 2000 {
+			err := r.chunkDetails(batch)
+			batch, batchN = batch[:0], 0
+			return err
+		}
+		return nil
+	}
+	for _, sc := range scenes {
+		var cur sceneChunk
+		curN := 0
+		for i := 0; i < len(sc.ids); {
+			j := i + 1
+			for j < len(sc.ids) && sc.ats[j]-sc.ats[j-1] <= r.o.Gap {
+				j++
+			}
+			b := sc.ids[i:j]
+			i = j
+			if len(b) > maxStackRun {
+				if err := r.hugeBurst(b); err != nil { // not stacked: read in chunks
+					return err
+				}
+				continue
+			}
+			if curN+len(b) > maxStackRun {
+				if err := add(cur, curN); err != nil {
+					return err
+				}
+				cur, curN = nil, 0
+			}
+			cur = append(cur, b)
+			curN += len(b)
+		}
+		if err := add(cur, curN); err != nil {
+			return err
+		}
+	}
+	return r.chunkDetails(batch)
+}
+
+// chunkDetails loads the chunks' shots, stacks each chunk, makes a burst of
+// each run of 2+ shots, and queues the changes.
+func (r *rebuild) chunkDetails(chunks []sceneChunk) error {
+	if len(chunks) == 0 {
 		return nil
 	}
 	var ids []int64
-	var normal [][]int64
-	for _, x := range runs {
-		if len(x) > maxStackRun {
-			if err := r.hugeBurst(x); err != nil { // not stacked: read in chunks
-				return err
-			}
-			continue
+	for _, c := range chunks {
+		for _, b := range c {
+			ids = append(ids, b...)
 		}
-		normal = append(normal, x)
-		ids = append(ids, x...)
 	}
-	runs = normal
 	byID, err := r.details(ids)
 	if err != nil {
 		return err
 	}
-	// Work out every run, then queue the writes.
+	// Work out every chunk, then queue the writes.
 	type plan struct {
-		burst  int64
-		frames []*gphoto
-		want   map[int64][3]int64
+		shots []*gphoto
+		burst map[int64]int64    // shot -> its burst's id (2+ shots), else none
+		want  map[int64][3]int64 // shot -> stack_top, stack_size, stacked
 	}
 	var plans []plan
-	for _, x := range runs {
-		var frames []*gphoto
-		for _, id := range x {
-			if p := byID[id]; p != nil {
-				frames = append(frames, p)
+	for _, c := range chunks {
+		pl := plan{burst: map[int64]int64{}}
+		for _, b := range c {
+			var frames []*gphoto
+			for _, id := range b {
+				if p := byID[id]; p != nil { // else deleted meanwhile
+					frames = append(frames, p)
+				}
 			}
+			pl.shots = append(pl.shots, frames...)
+			if len(frames) < 2 {
+				continue
+			}
+			burst := frames[0].id
+			for _, f := range frames {
+				burst = min(burst, f.id)
+			}
+			for _, f := range frames {
+				pl.burst[f.id] = burst
+			}
+			r.st.Bursts++
+			r.addGroup(GroupBurst, frames)
 		}
-		if len(frames) < 2 {
-			continue // deleted meanwhile
-		}
-		burst := frames[0].id
-		for _, f := range frames {
-			burst = min(burst, f.id)
-		}
-		plans = append(plans, plan{burst, frames, stackFrames(frames, r.o.Hamming)})
-		r.addGroup(GroupBurst, frames)
+		pl.want = stackFrames(pl.shots, r.o.Hamming)
+		plans = append(plans, pl)
 	}
 	for _, pl := range plans {
-		r.st.Bursts++
-		for _, f := range pl.frames {
-			w := pl.want[f.id]
+		for _, f := range pl.shots {
+			w, burst := pl.want[f.id], pl.burst[f.id]
 			if w[0] == f.id {
 				r.st.Stacks++
 			}
-			r.members[GroupBurst] = append(r.members[GroupBurst], f.id)
-			if f.cur[0] != pl.burst || f.cur[1] != w[0] || f.cur[2] != w[1] || f.cur[3] != w[2] {
+			if burst != 0 || w[0] != 0 {
+				r.members[GroupBurst] = append(r.members[GroupBurst], f.id) // still grouped, and up to date: resetOld leaves it
+			}
+			if f.cur[0] != burst || f.cur[1] != w[0] || f.cur[2] != w[1] || f.cur[3] != w[2] {
 				if err := r.w.exec(`UPDATE photos SET burst_id = ?, stack_top = ?, stack_size = ?, stacked = ? WHERE id = ?`,
-					pl.burst, w[0], w[1], w[2], f.id); err != nil {
+					burst, w[0], w[1], w[2], f.id); err != nil {
 					return err
 				}
 				r.st.PhotoWrites++
@@ -428,13 +497,14 @@ func (r *rebuild) hugeBurst(ids []int64) error {
 	return r.writePending()
 }
 
-// maxStackRun is the most frames a burst may have and still be stacked:
-// stacking compares frames pairwise, and a run of thousands (a camera
-// stamping every photo with its default clock) is not a real burst.
+// maxStackRun is the most shots stacked together (a scene is stacked in
+// chunks of at most this many), and the most frames a burst may have and
+// still be stacked: stacking compares shots pairwise, and a burst of
+// thousands (a camera stamping every photo with its default clock) is not
+// a real burst.
 var maxStackRun = 1000 // a variable so tests can make huge runs cheaply
 
-// stackFrames clusters a burst's frames into stacks of near-identical
-// frames: taking frames best first (overall, then lower id), each frame not
+// stackFrames clusters a scene's shots into stacks of alike shots: taking frames best first (overall, then lower id), each frame not
 // yet in a stack starts one and takes every later frame not yet in a stack
 // whose perceptual hash is within the threshold of its own. So the top is
 // the best frame, and a slow pan does not chain into one stack. It returns
@@ -782,7 +852,7 @@ func contains(ids []int64, id int64) bool {
 
 // resetOld clears the group columns of every photo no longer in a group.
 // It finds the grouped photos from the database (through the photos_in_*
-// and photos_stacked indexes), not from what this run replaced, so photos
+// indexes), not from what this run replaced, so photos
 // left over by an earlier, interrupted run are cleared too.
 func (r *rebuild) resetOld() error {
 	newBurst, newDup := dedupe(r.members[GroupBurst]), dedupe(r.members[GroupDuplicate])
@@ -802,7 +872,7 @@ func (r *rebuild) resetOld() error {
 		}
 		return out, rows.Err()
 	}
-	inBurst, err := ids(`SELECT id FROM photos WHERE burst_id != 0 UNION SELECT id FROM photos WHERE stacked = 1`)
+	inBurst, err := ids(`SELECT id FROM photos WHERE burst_id != 0 UNION SELECT id FROM photos WHERE stack_size != 0`)
 	if err != nil {
 		return err
 	}

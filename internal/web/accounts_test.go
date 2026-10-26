@@ -543,6 +543,16 @@ func TestSettingsWithoutAccounts(t *testing.T) {
 	if rec := b.do("POST", "/admin/settings", url.Values{"stack_bursts": {"on", "off"}}); rec.Code != http.StatusSeeOther || !cat.Store.GetSettings().StackBursts {
 		t.Fatalf("stacking on: %d %+v", rec.Code, cat.Store.GetSettings())
 	}
+	// the scene gap: saved, shown, and checked against its limits
+	if rec := b.do("POST", "/admin/settings", url.Values{"scene_gap": {"25"}}); rec.Code != http.StatusSeeOther || cat.Store.GetSettings().SceneGap != 25 {
+		t.Fatalf("scene gap: %d %+v", rec.Code, cat.Store.GetSettings())
+	}
+	if rec := b.do("GET", "/admin/settings", nil); !strings.Contains(rec.Body.String(), `name="scene_gap" min="0" max="120" value="25"`) {
+		t.Fatal("the settings page does not show the scene gap")
+	}
+	if rec := b.do("POST", "/admin/settings", url.Values{"scene_gap": {"500"}}); rec.Code != http.StatusBadRequest || cat.Store.GetSettings().SceneGap != 25 {
+		t.Fatalf("scene gap 500: %d %+v", rec.Code, cat.Store.GetSettings())
+	}
 	if body := b.do("GET", "/admin/settings", nil).Body.String(); !strings.Contains(body, `name="stack_bursts" value="on" checked`) {
 		t.Fatal("settings page does not show stacking on")
 	}

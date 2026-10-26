@@ -19,7 +19,7 @@ func TestSettingsCommand(t *testing.T) {
 		err := settingsCmd(st, args, &b)
 		return b.String(), err
 	}
-	if out, err := run(); err != nil || out != "burst_gap = 3\nstack_bursts = on\nstack_hamming = 6\n" {
+	if out, err := run(); err != nil || out != "burst_gap = 3\nscene_gap = 10\nstack_bursts = on\nstack_hamming = 10\n" {
 		t.Fatalf("list: %q %v", out, err)
 	}
 	if out, err := run("set", "burst_gap", "5"); err != nil || out != "burst_gap = 5\n" {

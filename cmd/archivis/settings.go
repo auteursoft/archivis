@@ -17,10 +17,13 @@ page, for admins).
   settings set NAME VALUE
 Settings:
   burst_gap      most seconds between frames of one burst (1-60, default 3)
-  stack_bursts   show near-identical burst frames as one card on the Photos
+  scene_gap      most minutes between one camera's shots of one scene, whose
+                 alike shots stack (0-120, default 10; 0: only bursts stack)
+  stack_bursts   show alike shots of one scene as one card on the Photos
                  page (on/off, default on)
-  stack_hamming  how alike frames must be to stack: the most bits their
-                 perceptual hashes may differ by (0-16, default 6)`
+  stack_hamming  how alike shots must be to stack: the most bits their
+                 perceptual hashes may differ from the best shot's by (0-16,
+                 default 10)`
 
 func runSettings(g *globals, args []string) error {
 	fs := newFlagSet("settings", settingsHelp)

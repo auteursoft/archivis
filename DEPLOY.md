@@ -636,15 +636,26 @@ server:
 ```sh
 archivis settings                    # list them
 archivis settings set burst_gap 5    # frames up to 5 s apart form one burst
-archivis settings set stack_bursts off   # show every burst frame on the Photos page
-archivis settings set stack_hamming 4    # stack only frames more alike (0-16, default 6)
+archivis settings set scene_gap 20      # shots up to 20 min apart are one scene (0-120, default 10)
+archivis settings set stack_bursts off   # show every shot on the Photos page
+archivis settings set stack_hamming 6    # stack only shots more alike (0-16, default 10)
 ```
 
-**Stacks.** On the Photos page, near-identical frames of a burst show as
-one card: the best frame, with the number of frames on it. Its page lists
-the others. A filter that leaves out a stack's best frame shows the other
-frames that match. Text search shows each stack once. Turn stacking off on
-the Settings page, or with `stack_bursts off`.
+**Stacks.** On the Photos page, alike shots of one scene show as one card:
+the best shot, with the number of shots on it. A scene is one camera's
+shots, each taken within the scene gap (10 minutes) of the last, so a run
+of shots of one view over several minutes, and the RAW and JPEG of each,
+stack together, while a shot of something else in between stays apart. A
+shot joins a stack when its perceptual hash is within `stack_hamming` bits
+of the best shot's. The card's page lists the others. A filter that leaves
+out a stack's best shot shows the other shots that match. Text search
+shows each stack once. Set `scene_gap 0` to stack only frames of one burst,
+as before; turn stacking off on the Settings page, or with
+`stack_bursts off`.
+
+Settings saved before scenes stacked kept the old similarity default, 6:
+they now read as 10 until saved again. A similarity set to anything else
+is kept.
 
 ### Bursts and identical images
 
