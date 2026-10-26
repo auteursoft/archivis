@@ -494,16 +494,23 @@ vectors in memory.
 
 ## Not validated / known limitations
 
-* **Camera RAW and HEIC coverage** — eight real files are tested in CI on
-  Linux and macOS (`TestRealSamples`): Canon CR2 from three cameras, Nikon
-  NEF from two, a Canon DNG and two iPhone HEICs. That testing found two
-  bugs, both fixed. An iPhone HEIC whose rotation is recorded only in EXIF
-  came out sideways. Lenses were blank for cameras that record them only in
-  maker notes; Canon and Nikon maker notes are now read, but only for
-  photos indexed from now on. Not yet covered by real files: Sony ARW,
-  Fujifilm RAF, Olympus ORF, Panasonic RW2, Pentax PEF, Canon CR3; lens
-  names from other makers' maker notes. Kodak KDC and Sigma X3F files carry
-  no usable preview and are reported as errors.
+* **Camera RAW and HEIC coverage** — 25 real files are tested in CI on
+  Linux and macOS (`TestRealSamples`): Canon CR2 from four cameras and CR3
+  from four (EOS R5, R6 Mark II, R3, 90D), Nikon NEF from eight (D3S, D4,
+  D810, D850, Z 7II, and Z 8, Z 9 and Z 6III each in lossless and High
+  Efficiency* form), Sony ARW from three (A7R IV, A7R V, A1 II), a Canon
+  DNG and two iPhone HEICs. That testing found three bugs, all fixed. An
+  iPhone HEIC whose rotation is recorded only in EXIF came out sideways.
+  Lenses were blank for cameras that record them only in maker notes;
+  Canon and Nikon maker notes are now read, but only for photos indexed
+  from now on. CR3 files had no camera, lens, date or orientation: CR3
+  keeps them in its own metadata boxes, which are now read (again only for
+  photos indexed from now on). Uncompressed ARW from the A7R IV holds only
+  a 1616x1080 preview, so that is what is shown and analysed. Not yet
+  covered by real files: Fujifilm RAF, Olympus ORF, Panasonic RW2, Pentax
+  PEF; photos taken in portrait orientation with current Nikon, Sony and
+  Canon bodies; lens names from other makers' maker notes. Kodak KDC and
+  Sigma X3F files carry no usable preview and are reported as errors.
 * **macOS / CoreML** — CI runs the whole test suite and the model
   comparisons on macOS (Apple Silicon, CPU). CoreML itself is not
   exercised.

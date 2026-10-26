@@ -142,6 +142,9 @@ func Load(path string, maxDim int) (*Decoded, error) {
 	case string(head[4:8]) == "ftyp":
 		brand := string(head[8:12])
 		if brand == "crx " {
+			// Metadata from the CMT boxes; scanEmbeddedJPEG falls back to
+			// an embedded JPEG's EXIF only if they named no camera.
+			parseCR3Meta(f, size, &d.Meta)
 			img, err = scanEmbeddedJPEG(f, size, &d.Meta)
 			d.Format = "raw:cr3"
 		} else {

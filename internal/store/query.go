@@ -38,6 +38,16 @@ type Filter struct {
 	Limit         int
 	Offset        int
 
+	// Dirs limits photos to those anywhere below these folders (exact
+	// stored paths, either separator). DirsByPath says the folders hold few
+	// photos, so reading them through the path index and sorting beats
+	// walking the sort's own index.
+	Dirs       []string
+	DirsByPath bool
+	// SkipCount leaves BrowsePage's total at -1 (the caller knows it, as
+	// Albums does from the folders table).
+	SkipCount bool
+
 	// Stacked shows each stack of near-identical burst frames as its top
 	// frame alone. Only BrowsePage reads it: counts and searches are of
 	// every photo.
@@ -109,6 +119,23 @@ func (f Filter) where() (string, []any) {
 	if f.To != 0 {
 		add("taken_at < ?", f.To)
 	}
+	// Folders as ranges of paths. A big folder is not read through the
+	// path index (+path), but found walking the sort's own index, which
+	// stops after a page instead of sorting the whole folder.
+	if len(f.Dirs) > 0 {
+		col := "path"
+		if !f.DirsByPath {
+			col = "+path"
+		}
+		var or []string
+		for _, d := range f.Dirs {
+			for _, r := range dirRanges(d) {
+				or = append(or, "("+col+" >= ? AND "+col+" < ?)")
+				a = append(a, r[0], r[1])
+			}
+		}
+		w = append(w, "("+strings.Join(or, " OR ")+")")
+	}
 	// Years as a range of capture times, which the taken_at index serves.
 	// taken_at is the camera's wall-clock time stored as if UTC, so years
 	// start at UTC midnight. Undated photos (taken_at 0) never match.
@@ -165,7 +192,32 @@ func (s *Store) Years() ([]int, error) {
 	return out, nil
 }
 
+// dirRanges are the path ranges holding everything below folder d: after
+// d+sep and before d+(sep+1), for each separator (just "/" in a Unix
+// path). They scan the path index.
+func dirRanges(d string) [][2]string {
+	d = TrimDir(d)
+	if d == "/" {
+		d = ""
+	}
+	r := [][2]string{{d + "/", d + "0"}}
+	if seps(d) != "/" && d != "" {
+		r = append(r, [2]string{d + `\`, d + "]"})
+	}
+	return r
+}
+
 func (f Filter) order() string {
+	if len(f.Dirs) > 0 && f.DirsByPath {
+		// "+col" keeps SQLite off the sort column's index: the path ranges
+		// pick the (few) rows, then they are sorted
+		o := f.orderBy()
+		return strings.NewReplacer(" BY ", " BY +", ", ", ", +").Replace(o)
+	}
+	return f.orderBy()
+}
+
+func (f Filter) orderBy() string {
 	switch f.Sort {
 	case "technical":
 		return " ORDER BY technical DESC"
@@ -203,9 +255,11 @@ func (s *Store) Browse(f Filter) ([]Photo, int, error) {
 // leaves would take a full scan.
 func (s *Store) BrowsePage(f Filter) ([]Photo, int, bool, error) {
 	where, args := f.where()
-	var total int
-	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM photos`+where, args...).Scan(&total); err != nil {
-		return nil, 0, false, err
+	total := -1
+	if !f.SkipCount {
+		if err := s.DB.QueryRow(`SELECT COUNT(*) FROM photos`+where, args...).Scan(&total); err != nil {
+			return nil, 0, false, err
+		}
 	}
 	if f.Limit <= 0 {
 		f.Limit = 200

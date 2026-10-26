@@ -11,7 +11,8 @@ import (
 )
 
 func runGroups(g *globals, args []string) error {
-	fs := newFlagSet("groups", `Bursts, stacks of near-identical frames, and identical images:
+	fs := newFlagSet("groups", `Bursts, stacks of near-identical frames, identical images, and the
+folders Albums shows:
   groups status     whether they are up to date
   groups rebuild    work them out again now (index runs and the web
                     interface do this by themselves when photos change)`)
@@ -34,7 +35,7 @@ func runGroups(g *globals, args []string) error {
 		switch {
 		case st.GroupsRebuilding():
 			fmt.Println("being worked out now")
-		case st.GroupsStale(o):
+		case st.GroupsStale(o) || st.FoldersStale():
 			fmt.Println("out of date (the next index run or the web interface will update them; or run `archivis groups rebuild`)")
 		default:
 			fmt.Println("up to date")

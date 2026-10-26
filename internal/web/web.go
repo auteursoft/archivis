@@ -99,6 +99,7 @@ func (s *Server) Handler() http.Handler {
 	st, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(st))))
 	mux.HandleFunc("GET /{$}", s.handleBrowse)
+	mux.HandleFunc("GET /albums", s.handleAlbums)
 	mux.HandleFunc("GET /photo/{id}", s.handlePhoto)
 	mux.HandleFunc("GET /face/{id}", s.handleFace)
 	mux.HandleFunc("POST /query", s.handleQueryUpload)
@@ -582,8 +583,16 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimSpace(r.URL.Query().Get("q"))
 	p := &page{Title: "Photos", Nav: "browse", Filter: f, Query: text}
 	s.filterForm(r, p, "/")
+	p.Data = s.browse(r, p, f, text, "/", -1)
+	s.render(w, r, "browse", p)
+}
+
+// browse fills in a page of photos matching f (and the text search, if
+// any), with stacking as set, for the Photos page and album pages at path.
+// total, if not -1, is the photos matching f, known without counting.
+func (s *Server) browse(r *http.Request, p *page, f store.Filter, text, path string, total int) *browseData {
 	d := &browseData{Page: f.Offset / f.Limit}
-	pageURL := func(n int) template.URL { return pageLink(r, "/", n) }
+	pageURL := func(n int) template.URL { return pageLink(r, path, n) }
 	stacking := s.cat.Store.GetSettings().StackBursts
 	if text != "" {
 		d.Searched = true
@@ -599,7 +608,8 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	} else {
 		f.Stacked = stacking
 		d.Stacked = stacking
-		ps, total, more, err := s.cat.Store.BrowsePage(f)
+		f.SkipCount = total >= 0
+		ps, n, more, err := s.cat.Store.BrowsePage(f)
 		if err != nil {
 			p.Error = err.Error()
 		}
@@ -610,7 +620,10 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 			}
 			d.Photos = append(d.Photos, hit)
 		}
-		d.Total = total
+		d.Total = n
+		if total >= 0 {
+			d.Total = total
+		}
 		d.HasMore = more
 	}
 	if d.Page > 0 {
@@ -619,8 +632,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	if d.HasMore {
 		d.Next = pageURL(d.Page + 1)
 	}
-	p.Data = d
-	s.render(w, r, "browse", p)
+	return d
 }
 
 // searchPage cuts page f out of the best hits of a search, fetched one

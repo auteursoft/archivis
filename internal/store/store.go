@@ -139,6 +139,16 @@ BEGIN
 		VALUES ('groups_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'groups_dirty'), 0) + 1);
 END;
 
+-- A photo moved (a file recognised at a new path) changes the folders. Only
+-- a real change counts: re-saving a photo writes its path unchanged.
+DROP TRIGGER IF EXISTS photos_moved;
+CREATE TRIGGER IF NOT EXISTS photos_moved2 AFTER UPDATE OF path ON photos
+WHEN OLD.path IS NOT NEW.path
+BEGIN
+	INSERT OR REPLACE INTO meta (key, value)
+		VALUES ('folders_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'folders_dirty'), 0) + 1);
+END;
+
 -- CLIP embeddings live in their own table so that filtering and counting
 -- photos scans small rows (the 1 KB blobs made full scans ~7x slower).
 CREATE TABLE IF NOT EXISTS photo_clip (
@@ -186,6 +196,25 @@ CREATE TABLE IF NOT EXISTS errors (
 );
 
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+
+-- The folders indexed (archivis index ROOT...; archivis roots), shown as
+-- the top level of Albums.
+CREATE TABLE IF NOT EXISTS roots (
+	path     TEXT PRIMARY KEY,
+	added_at INTEGER NOT NULL DEFAULT 0
+);
+
+-- Every folder holding photos (at any depth below it), with its count and
+-- best photo: worked out with the groups (RebuildFolders), so Albums pages
+-- read an index.
+CREATE TABLE IF NOT EXISTS folders (
+	path          TEXT PRIMARY KEY,
+	parent        TEXT NOT NULL,
+	total         INTEGER NOT NULL,
+	cover_id      INTEGER NOT NULL,
+	cover_overall REAL NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent, path);
 
 CREATE TABLE IF NOT EXISTS aesthetic_models (
 	id         TEXT PRIMARY KEY,

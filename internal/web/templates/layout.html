@@ -11,14 +11,17 @@
   <a class="brand" href="/">Archivis</a>
   {{if not .Bare}}<nav>
     <a href="/" class="{{if eq .Nav "browse"}}on{{end}}">Photos</a>
+    <a href="/albums" class="{{if eq .Nav "albums"}}on{{end}}">Albums</a>
     <a href="/people" class="{{if eq .Nav "people"}}on{{end}}">People</a>
     <a href="/discover" class="{{if eq .Nav "discover"}}on{{end}}">Discover</a>
     <a href="/bursts" class="{{if eq .Nav "bursts"}}on{{end}}">Bursts</a>
     <a href="/duplicates" class="{{if eq .Nav "duplicates"}}on{{end}}">Duplicates</a>
     <a href="/guide" class="{{if eq .Nav "guide"}}on{{end}}">Scores</a>
   </nav>
-  <form class="search" action="/" method="get">
-    <input type="search" name="q" value="{{.Query}}" placeholder="Describe a photo… e.g. “protest at night in the rain”">
+  {{/* in an album, search within it */}}{{$album := or .Params.dir .Params.iphone}}
+  <form class="search" action="{{if $album}}/albums{{else}}/{{end}}" method="get">
+    {{with .Params.dir}}<input type="hidden" name="dir" value="{{.}}">{{end}}{{with .Params.iphone}}<input type="hidden" name="iphone" value="{{.}}">{{end}}
+    <input type="search" name="q" value="{{.Query}}" placeholder="{{if $album}}Search this album… e.g. “sunset on the beach”{{else}}Describe a photo… e.g. “protest at night in the rain”{{end}}">
   </form>
   <form class="upload" action="/query" method="post" enctype="multipart/form-data" title="Search with a photo: finds the people in it and similar scenes">
     <label class="btn filebtn">Search by photo<input class="visually-hidden" type="file" name="image" accept="image/*,.cr2,.cr3,.nef,.arw,.dng,.raf,.orf,.rw2,.heic" onchange="this.form.submit()"></label>
@@ -106,6 +109,8 @@
 {{$p := .Params}}
 <form class="filters" method="get" action="{{$p.action}}">
   {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
+  {{with $p.dir}}<input type="hidden" name="dir" value="{{.}}">{{end}}
+  {{with $p.iphone}}<input type="hidden" name="iphone" value="{{.}}">{{end}}
   <label>Sort
     <select name="sort">
       {{$sort := index $p "sort"}}{{if $.Query}}<option value="relevance" {{if or (eq $sort "") (eq $sort "relevance")}}selected{{end}}>Best match</option>{{end}}
@@ -186,6 +191,6 @@
   <label>Camera <input type="text" name="camera" value="{{$p.camera}}" size="8"></label>
   <label>Path <input type="text" name="path" value="{{$p.path}}" size="10"></label>
   <button class="btn primary">Apply</button>
-  <a class="btn ghost" href="{{$p.action}}{{if .Query}}?q={{q .Query}}{{end}}">Reset</a>
+  <a class="btn ghost" href="{{with $p.reset}}{{.}}{{else}}{{$p.action}}{{if .Query}}?q={{q .Query}}{{end}}{{end}}">Reset</a>
 </form>
 {{end}}

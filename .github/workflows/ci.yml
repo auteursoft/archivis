@@ -77,9 +77,10 @@ jobs:
           ONNXRUNTIME_LIB: ${{ env.DATA }}/lib/${{ matrix.lib }}
         run: go test -count=1 -v -run 'Faces|CLIP|Tokenizer' ./internal/ml/
 
-  # Real camera files (Canon CR2, Nikon NEF, DNG, iPhone HEIC), downloaded
-  # with pinned checksums by tools/samples/fetch.sh. On macOS, HEIC goes
-  # through sips; on Linux through libheif's heif-convert.
+  # Real camera files (Canon CR2 and CR3, Nikon NEF, Sony ARW, DNG, iPhone
+  # HEIC; ~1 GB, cached), downloaded with pinned checksums by
+  # tools/samples/fetch.sh. On macOS, HEIC goes through sips; on Linux
+  # through libheif's heif-convert.
   samples:
     name: camera files (${{ matrix.os }})
     strategy:
