@@ -190,3 +190,47 @@ func TestFailedArchiveSourceTriedOnce(t *testing.T) {
 		}
 	}
 }
+
+// A file already at dest that doesn't match its pin is replaced only by a
+// verified download. If every source fails (one down, one serving another
+// file), it is kept untouched, the error says so, and nothing is left
+// beside it.
+func TestSetupKeepsExistingFileWhenAllSourcesFail(t *testing.T) {
+	good := []byte(strings.Repeat("model bytes ", 200))
+	sum := sha256.Sum256(good)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/down", func(w http.ResponseWriter, r *http.Request) { http.Error(w, "down", 503) })
+	mux.HandleFunc("/other", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(strings.Repeat("other ", 300))) })
+	mux.HandleFunc("/good", func(w http.ResponseWriter, r *http.Request) { w.Write(good) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "visual.onnx")
+	old := []byte("an older export, not the pinned one")
+	if err := os.WriteFile(dest, old, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := modelFile{urls: []string{srv.URL + "/down", srv.URL + "/other"}, sha256: hex.EncodeToString(sum[:])}
+	err := fetchModel(m, dest, map[string]string{})
+	if err == nil || !strings.Contains(err.Error(), "kept the existing") {
+		t.Fatalf("all sources failing: err = %v, want it to say the existing file was kept", err)
+	}
+	if b, _ := os.ReadFile(dest); string(b) != string(old) {
+		t.Fatalf("the existing file was changed: %q", b)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("left beside it: %v", names)
+	}
+	// a verified download replaces it
+	m.urls = []string{srv.URL + "/other", srv.URL + "/good"}
+	if err := fetchModel(m, dest, map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dest); string(b) != string(good) {
+		t.Fatal("the verified download did not replace the old file")
+	}
+}

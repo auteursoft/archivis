@@ -148,8 +148,22 @@ func runSetup(g *globals, args []string) error {
 
 // fetchModel downloads m to dest from the first of its URLs that gives
 // the pinned file: a source that fails or serves something else (moved,
-// replaced) falls through to the next, the mirror last.
+// replaced) falls through to the next, the mirror last. Only a verified
+// file replaces what is at dest; if no source gives one, a file already
+// there is kept, and the error says so.
 func fetchModel(m modelFile, dest string, zipCache map[string]string) error {
+	err := fetchModelTo(m, dest, zipCache)
+	if err != nil {
+		if _, serr := os.Stat(dest); serr == nil {
+			err = fmt.Errorf("%w; kept the existing %s, which does not match the pinned version: Archivis uses it until setup succeeds (delete it to stop)", err, dest)
+		}
+	}
+	return err
+}
+
+func fetchModelTo(m modelFile, dest string, zipCache map[string]string) error {
+	tmp := dest + ".new" // verified before it replaces dest
+	defer os.Remove(tmp)
 	var err error
 	for _, u := range m.urls {
 		if m.zipMember != "" {
@@ -176,16 +190,16 @@ func fetchModel(m modelFile, dest string, zipCache map[string]string) error {
 				}
 				zipCache[u] = zp
 			}
-			err = extractZipMember(zp, m.zipMember, dest)
+			err = extractZipMember(zp, m.zipMember, tmp)
 		} else {
-			err = download(u, dest)
+			err = download(u, tmp)
 		}
 		if err == nil {
 			var ok bool
-			if ok, err = verify(dest, m.sha256); ok {
-				return nil
+			if ok, err = verify(tmp, m.sha256); ok {
+				return os.Rename(tmp, dest)
 			}
-			os.Remove(dest)
+			os.Remove(tmp)
 			err = fmt.Errorf("checksum mismatch from %s (%v)", u, err)
 		}
 		fmt.Fprintf(os.Stderr, "  %v; trying the next source\n", err)
