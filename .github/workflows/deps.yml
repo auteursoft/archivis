@@ -1,0 +1,51 @@
+name: deps
+
+# Keeps auteursoft's copies of everything Archivis depends on: the "deps"
+# release mirrors every file `archivis setup` and the camera tests download
+# (tools/deps/mirror.sh), and the originals, repositories and Go modules are
+# checked weekly (tools/deps/check.sh), so a disappearance shows while the
+# mirror and the forks (tools/deps/fork.sh) still hold it.
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tools/deps/**'
+      - 'tools/samples/fetch.sh'
+      - '.github/workflows/deps.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deps
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: mirror files
+    # only reviewed code writes to the release: main, its schedule, or a
+    # dispatch of main; other branches run the read-only checks below
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the "deps" release
+    steps:
+      - uses: actions/checkout@v4
+      - run: tools/deps/mirror.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  origins:
+    name: originals still there
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: tools/deps/check.sh
+        env:
+          GH_TOKEN: ${{ github.token }}

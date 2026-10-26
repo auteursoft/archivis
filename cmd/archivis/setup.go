@@ -20,6 +20,11 @@ import (
 	"github.com/auteursoft/archivis/internal/ml"
 )
 
+// mirrorBase is auteursoft's copy of every file setup downloads (the "deps"
+// release, filled and checked by .github/workflows/deps.yml from
+// tools/deps/assets.txt), tried when the original fails or has changed.
+const mirrorBase = "https://github.com/auteursoft/archivis/releases/download/deps/"
+
 // ortVersion must match the C API version compiled into onnxruntime_go.
 const ortVersion = "1.29.0"
 
@@ -41,25 +46,31 @@ type modelFile struct {
 	sha256 string // required: every download is verified
 	// fromZip extracts this member from a zip download instead of saving it.
 	zipMember string
+	zipSHA256 string // the zip's own pin: a source serving another zip is skipped
 }
+
+const buffaloZipSHA256 = "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f"
 
 var modelFiles = []modelFile{
 	{
 		dest:      "buffalo_l/det_10g.onnx",
-		urls:      []string{"https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"},
+		urls:      []string{"https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip", mirrorBase + "buffalo_l.zip"},
 		zipMember: "det_10g.onnx",
+		zipSHA256: buffaloZipSHA256,
 		sha256:    "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
 	},
 	{
 		dest:      "buffalo_l/w600k_r50.onnx",
-		urls:      []string{"https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"},
+		urls:      []string{"https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip", mirrorBase + "buffalo_l.zip"},
 		zipMember: "w600k_r50.onnx",
+		zipSHA256: buffaloZipSHA256,
 		sha256:    "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
 	},
 	{
 		dest: "clip/visual.onnx",
 		urls: []string{
 			"https://clip-as-service.s3.us-east-2.amazonaws.com/models-436c69702d61732d53657276696365/onnx/ViT-B-32/visual.onnx",
+			mirrorBase + "clip-ViT-B-32-visual.onnx",
 		},
 		sha256: "06395063c0a5c28b1a8d4bd585261501a878c8f52d1216db6c4cbb651f7c13f1",
 	},
@@ -67,6 +78,7 @@ var modelFiles = []modelFile{
 		dest: "clip/textual.onnx",
 		urls: []string{
 			"https://clip-as-service.s3.us-east-2.amazonaws.com/models-436c69702d61732d53657276696365/onnx/ViT-B-32/textual.onnx",
+			mirrorBase + "clip-ViT-B-32-textual.onnx",
 		},
 		sha256: "0af04c287a3be2570eaef7a1ef896d81c1989602df67a8905941afed589e545e",
 	},
@@ -108,10 +120,12 @@ func runSetup(g *globals, args []string) error {
 			return err
 		}
 	}
-	zipCache := map[string]string{}
+	zipCache := map[string]string{} // archive URL -> its download ("" failed: not tried again)
 	defer func() {
 		for _, p := range zipCache {
-			os.Remove(p)
+			if p != "" {
+				os.Remove(p)
+			}
 		}
 	}()
 	for _, m := range modelFiles {
@@ -123,36 +137,91 @@ func runSetup(g *globals, args []string) error {
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}
-		var err error
-		for _, u := range m.urls {
-			if m.zipMember != "" {
-				zp, ok := zipCache[u]
-				if !ok {
-					zp = dest + ".zip.part"
-					if err = download(u, zp); err != nil {
-						continue
-					}
-					zipCache[u] = zp
-				}
-				err = extractZipMember(zp, m.zipMember, dest)
-			} else {
-				err = download(u, dest)
-			}
-			if err == nil {
-				break
-			}
-		}
-		if err != nil {
+		if err := fetchModel(m, dest, zipCache); err != nil {
 			return fmt.Errorf("%s: %w", m.dest, err)
-		}
-		if ok, err := verify(dest, m.sha256); !ok {
-			os.Remove(dest)
-			return fmt.Errorf("%s: checksum mismatch (%v)", m.dest, err)
 		}
 		fmt.Printf("✓ %s\n", m.dest)
 	}
 	fmt.Printf("\nReady. Models in %s\nNext: archivis index /path/to/photos\n", g.modelsDir())
 	return nil
+}
+
+// fetchModel downloads m to dest from the first of its URLs that gives
+// the pinned file: a source that fails or serves something else (moved,
+// replaced) falls through to the next, the mirror last. Only a verified
+// file replaces what is at dest; if no source gives one, a file already
+// there is kept, and the error says so.
+func fetchModel(m modelFile, dest string, zipCache map[string]string) error {
+	err := fetchModelTo(m, dest, zipCache)
+	if err != nil {
+		if _, serr := os.Stat(dest); serr == nil {
+			err = fmt.Errorf("%w; kept the existing %s, which does not match the pinned version: Archivis uses it until setup succeeds (delete it to stop)", err, dest)
+		}
+	}
+	return err
+}
+
+func fetchModelTo(m modelFile, dest string, zipCache map[string]string) error {
+	tmp := dest + ".new" // verified before it replaces dest
+	defer os.Remove(tmp)
+	var err error
+	for _, u := range m.urls {
+		if m.zipMember != "" {
+			zp, ok := zipCache[u]
+			if ok && zp == "" {
+				err = fmt.Errorf("%s failed earlier in this run", u)
+				continue // one outage or bad archive costs one wait, not one per member
+			}
+			if !ok {
+				zp = dest + ".zip.part" + fmt.Sprint(len(zipCache))
+				if err = download(u, zp); err != nil {
+					zipCache[u] = ""
+					fmt.Fprintf(os.Stderr, "  %v; trying the next source\n", err)
+					continue
+				}
+				if m.zipSHA256 != "" {
+					if ok, verr := verify(zp, m.zipSHA256); !ok {
+						os.Remove(zp)
+						zipCache[u] = ""
+						err = fmt.Errorf("checksum mismatch from %s (%v)", u, verr)
+						fmt.Fprintf(os.Stderr, "  %v; trying the next source\n", err)
+						continue
+					}
+				}
+				zipCache[u] = zp
+			}
+			err = extractZipMember(zp, m.zipMember, tmp)
+		} else {
+			err = download(u, tmp)
+		}
+		if err == nil {
+			var ok bool
+			if ok, err = verify(tmp, m.sha256); ok {
+				return os.Rename(tmp, dest)
+			}
+			os.Remove(tmp)
+			err = fmt.Errorf("checksum mismatch from %s (%v)", u, err)
+		}
+		fmt.Fprintf(os.Stderr, "  %v; trying the next source\n", err)
+	}
+	return err
+}
+
+// fetchVerified downloads the first of urls whose file matches sum to dest.
+func fetchVerified(urls []string, dest, sum string) error {
+	var err error
+	for _, u := range urls {
+		if err = download(u, dest); err == nil {
+			var ok bool
+			if ok, err = verify(dest, sum); ok {
+				return nil
+			}
+			os.Remove(dest)
+			err = fmt.Errorf("checksum mismatch from %s (%v)", u, err)
+		}
+		fmt.Fprintf(os.Stderr, "  %v; trying the next source\n", err)
+	}
+	return err
 }
 
 func setupORT(g *globals, gpu bool) error {
@@ -170,16 +239,18 @@ func setupORT(g *globals, gpu bool) error {
 		fmt.Printf("✓ ONNX Runtime already in %s\n", libDir)
 		return nil
 	}
-	url := "https://github.com/microsoft/onnxruntime/releases/download/v" + ortVersion + "/" + name
 	tmp := filepath.Join(os.TempDir(), name)
-	if err := download(url, tmp); err != nil {
-		return fmt.Errorf("downloading ONNX Runtime: %w", err)
-	}
 	defer os.Remove(tmp)
-	if ok, err := verify(tmp, sum); !ok {
-		return fmt.Errorf("ONNX Runtime archive %s: checksum mismatch (%v); nothing was installed", name, err)
+	if err := fetchVerified(ortURLs(name), tmp, sum); err != nil {
+		return fmt.Errorf("downloading ONNX Runtime %s: %w; nothing was installed", name, err)
 	}
 	return installORT(tmp, name, libDir, want)
+}
+
+// ortURLs are where an ONNX Runtime archive comes from: Microsoft's
+// release, then the mirror.
+func ortURLs(name string) []string {
+	return []string{"https://github.com/microsoft/onnxruntime/releases/download/v" + ortVersion + "/" + name, mirrorBase + name}
 }
 
 // ortInstalled reports whether the runtime library itself (not just a

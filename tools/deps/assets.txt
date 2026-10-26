@@ -1,0 +1,14 @@
+# Every file `archivis setup` downloads, mirrored in the auteursoft/archivis
+# "deps" release by .github/workflows/deps.yml (camera samples come from
+# tools/samples/fetch.sh --list). One per line: sha256 mirror-name original-url.
+# TestDepsManifestMatchesSetup keeps this in step with cmd/archivis/setup.go.
+
+d0706fc34f315d8c88639d0a8c81f2e09e815f282cabed3493c06a054352cf92 onnxruntime-osx-arm64-1.29.0.tgz https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-osx-arm64-1.29.0.tgz
+c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba onnxruntime-linux-x64-1.29.0.tgz https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-linux-x64-1.29.0.tgz
+e1799098ebc054b370f6176a450f158720f297818c613e5dc99b92e2ec82346f onnxruntime-linux-aarch64-1.29.0.tgz https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-linux-aarch64-1.29.0.tgz
+c9b4b7086b529ad814f428c1bad028e20a25d7dc0699836775faace4ab5b78b2 onnxruntime-win-x64-1.29.0.zip https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-win-x64-1.29.0.zip
+4ca594a0da83927befbd73fe020d7f569be151d70bb4fe9741ad405f4882e2ad onnxruntime-linux-x64-gpu_cuda12-1.29.0.tgz https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-linux-x64-gpu_cuda12-1.29.0.tgz
+3526773ba1fef5849a3e9d18558d87bbbb75b0db3ddcde4f08694a746ac3169f onnxruntime-win-x64-gpu_cuda12-1.29.0.zip https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-win-x64-gpu_cuda12-1.29.0.zip
+80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f buffalo_l.zip https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
+06395063c0a5c28b1a8d4bd585261501a878c8f52d1216db6c4cbb651f7c13f1 clip-ViT-B-32-visual.onnx https://clip-as-service.s3.us-east-2.amazonaws.com/models-436c69702d61732d53657276696365/onnx/ViT-B-32/visual.onnx
+0af04c287a3be2570eaef7a1ef896d81c1989602df67a8905941afed589e545e clip-ViT-B-32-textual.onnx https://clip-as-service.s3.us-east-2.amazonaws.com/models-436c69702d61732d53657276696365/onnx/ViT-B-32/textual.onnx
