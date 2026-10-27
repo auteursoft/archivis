@@ -121,19 +121,30 @@
         })
       );
   }
+  // A click changes every star of that photo on the page (a card and the
+  // photo page may both show it), and disables them until the server has
+  // answered, so quick clicks cannot send opposite changes that land out of
+  // order; if it fails, they go back and say so.
   stars.forEach((b) =>
     b.addEventListener("click", async (e) => {
       e.preventDefault();
       if (b.disabled) return;
+      const same = stars.filter((x) => x.dataset.star === b.dataset.star);
       const on = b.getAttribute("aria-pressed") !== "true";
-      b.dataset.toggled = "1";
-      showStar(b, on); // at once; put back if not saved
+      same.forEach((x) => {
+        x.dataset.toggled = "1";
+        x.disabled = true;
+        showStar(x, on); // at once; put back if not saved
+      });
       try {
         await post(`/api/star/${b.dataset.star}`, { on });
-        document.querySelectorAll(`[data-star="${b.dataset.star}"]`).forEach((x) => showStar(x, on));
       } catch (err) {
-        showStar(b, !on);
-        alert("Not saved: " + err.message);
+        same.forEach((x) => {
+          showStar(x, !on);
+          x.title = "Not saved (" + err.message + "): click to try again";
+        });
+      } finally {
+        same.forEach((x) => (x.disabled = false));
       }
     })
   );

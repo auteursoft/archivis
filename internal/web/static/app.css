@@ -168,5 +168,6 @@ table.users form { margin: 0; display: inline; }
 .star:disabled { cursor: progress; opacity: .6; }
 .star:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; border-radius: 4px; }
 .cell > .star { position: absolute; right: 8px; bottom: 8px; z-index: 2; }
+.cell > .card.stack ~ .star { right: 16px; bottom: 16px; } /* inside the stack's offset edges */
 .star.inline { color: inherit; text-shadow: none; font-size: 20px; vertical-align: -2px; }
 .star.inline:not([aria-pressed="true"])::before { color: #888; }

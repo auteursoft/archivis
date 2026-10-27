@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -121,4 +122,26 @@ func TestStarsWithoutAccounts(t *testing.T) {
 	if body := get(t, s.Handler(), "/?starred=1"); !strings.Contains(body, `title="/st/0.jpg`) || strings.Contains(body, `title="/st/1.jpg`) {
 		t.Fatal("the shared starred page")
 	}
+}
+
+// Stacked cards carry a star too: a Duplicates card and a stack on the
+// Photos page, for the card's photo.
+func TestStackCardsHaveStars(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	var rs []*store.Result
+	for i := 0; i < 3; i++ { // one shot three times: a set of copies and a stack
+		p := fmt.Sprintf("/dup/%d.jpg", i)
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, CameraModel: "Z 8",
+			TakenAt: 1_700_000_000 + int64(i), PHash: 77, Overall: float64(60 - i), Version: store.SchemaVersion}})
+	}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cat.Store.RebuildGroups(context.Background(), cat.Store.GroupOptions()); err != nil {
+		t.Fatal(err)
+	}
+	top := rs[0].Photo.ID // the best: the copies' and the stack's top
+	want := fmt.Sprintf(`data-star="%d"`, top)
+	mustContain(t, "duplicates", get(t, s.Handler(), "/duplicates"), `class="card stack"`, want)
+	mustContain(t, "photos", get(t, s.Handler(), "/"), `class="card stack"`, want)
 }
