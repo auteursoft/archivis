@@ -89,6 +89,9 @@ func TestStarsPerAccount(t *testing.T) {
 	if rec := ann.api("/api/star/999999", `{"on":true}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("starring a missing photo: %d", rec.Code)
 	}
+	if rec := ann.api("/api/star/999999", `{"on":false}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("unstarring a missing photo: %d", rec.Code)
+	}
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/star/%d", ids[0]), strings.NewReader(`{"on":true}`))
 	req.Host = "photos.example"
 	req.Header.Set("Content-Type", "application/json")

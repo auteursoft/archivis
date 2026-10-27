@@ -1,19 +1,25 @@
 package store
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 // Stars: photos an account likes, its own (user_id 0 is the one shared list
 // of a server without accounts). Filter.Starred lists them.
 
 // SetStar stars (on) or unstars a photo for user. Starring twice, or
-// unstarring a photo not starred, changes nothing.
+// unstarring a photo not starred, changes nothing; a photo that does not
+// exist is ErrNoPhoto either way.
 func (s *Store) SetStar(user, photo int64, on bool) error {
-	if !on {
-		_, err := s.DB.Exec(`DELETE FROM stars WHERE user_id = ? AND photo_id = ?`, user, photo)
-		return err
+	var res sql.Result
+	var err error
+	if on {
+		res, err = s.DB.Exec(`INSERT OR IGNORE INTO stars (user_id, photo_id, at) SELECT ?, id, ? FROM photos WHERE id = ?`,
+			user, time.Now().Unix(), photo)
+	} else {
+		res, err = s.DB.Exec(`DELETE FROM stars WHERE user_id = ? AND photo_id = ?`, user, photo)
 	}
-	res, err := s.DB.Exec(`INSERT OR IGNORE INTO stars (user_id, photo_id, at) SELECT ?, id, ? FROM photos WHERE id = ?`,
-		user, time.Now().Unix(), photo)
 	if err != nil {
 		return err
 	}

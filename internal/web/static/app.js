@@ -85,26 +85,48 @@
   );
 
   // stars: each card's and the photo page's star shows, and toggles, whether
-  // you starred the photo (your own list; see Starred)
+  // you starred the photo (your own list; see Starred). The buttons wait,
+  // disabled, until the page's stars are looked up (in batches of what the
+  // server answers at once), so a lookup can never undo a click.
+  const starChunk = 500;
   const stars = [...document.querySelectorAll("[data-star]")];
   function showStar(b, on) {
     b.setAttribute("aria-pressed", on ? "true" : "false");
     b.title = on ? "Starred: click to unstar" : "Star";
   }
   if (stars.length) {
-    const ids = [...new Set(stars.map((b) => b.dataset.star))].slice(0, 500);
-    fetch("/api/stars?ids=" + ids.join(","))
-      .then((r) => (r.ok ? r.json() : { starred: [] }))
-      .then((j) => {
-        const on = new Set((j.starred || []).map(String));
-        stars.forEach((b) => showStar(b, on.has(b.dataset.star)));
+    stars.forEach((b) => (b.disabled = true));
+    const ids = [...new Set(stars.map((b) => b.dataset.star))];
+    const batches = [];
+    for (let i = 0; i < ids.length; i += starChunk) {
+      batches.push(
+        fetch("/api/stars?ids=" + ids.slice(i, i + starChunk).join(",")).then((r) => {
+          if (!r.ok) throw new Error(r.statusText);
+          return r.json();
+        })
+      );
+    }
+    Promise.all(batches)
+      .then((js) => {
+        const on = new Set(js.flatMap((j) => j.starred || []).map(String));
+        stars.forEach((b) => {
+          if (!b.dataset.toggled) showStar(b, on.has(b.dataset.star));
+          b.disabled = false;
+        });
       })
-      .catch(() => {});
+      .catch(() =>
+        stars.forEach((b) => {
+          b.title = "Stars could not be loaded: reload the page to try again";
+          b.setAttribute("aria-label", b.title);
+        })
+      );
   }
   stars.forEach((b) =>
     b.addEventListener("click", async (e) => {
       e.preventDefault();
+      if (b.disabled) return;
       const on = b.getAttribute("aria-pressed") !== "true";
+      b.dataset.toggled = "1";
       showStar(b, on); // at once; put back if not saved
       try {
         await post(`/api/star/${b.dataset.star}`, { on });
