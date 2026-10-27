@@ -87,20 +87,20 @@ func (s *Store) CleanAppCaches(ctx context.Context) (AppCacheCleanup, error) {
 		return res, nil
 	}
 	type cacheCopy struct {
-		id, at int64
-		path   string
-		camera string
-		phash  uint64
+		id, at      int64
+		path        string
+		make, model string
+		phash       uint64
 	}
 	var copies []cacheCopy
-	rows, err := s.DB.Query(`SELECT id, path, COALESCE(taken_at, 0), TRIM(COALESCE(camera_make, '') || ' ' || COALESCE(camera_model, '')), phash FROM photos
+	rows, err := s.DB.Query(`SELECT id, path, COALESCE(taken_at, 0), COALESCE(camera_make, ''), COALESCE(camera_model, ''), phash FROM photos
 		WHERE path LIKE '%.photoslibrary%' OR path LIKE '%.photolibrary%' OR path LIKE '%.aplibrary%' OR path LIKE '%.cocatalog%' OR path LIKE '%CaptureOne%'`)
 	if err != nil {
 		return res, err
 	}
 	for rows.Next() {
 		var c cacheCopy
-		if err := rows.Scan(&c.id, &c.path, &c.at, &c.camera, (*int64ptr)(&c.phash)); err != nil {
+		if err := rows.Scan(&c.id, &c.path, &c.at, &c.make, &c.model, (*int64ptr)(&c.phash)); err != nil {
 			rows.Close()
 			return res, err
 		}
@@ -127,7 +127,7 @@ func (s *Store) CleanAppCaches(ctx context.Context) (AppCacheCleanup, error) {
 				if same == 0 {
 					continue // gone meanwhile (its id may be reused)
 				}
-				twin, err := twinOf(tx, c.id, c.phash, c.at, c.camera)
+				twin, err := twinOf(tx, c.id, c.phash, c.at, c.make, c.model)
 				if err != nil {
 					return err
 				}
@@ -191,10 +191,11 @@ const twinMaxBits = 10
 
 // twinOf finds a catalogued photo, outside any app cache, that copy id is
 // a copy of (0 if none): one with the same perceptual hash; else, if the
-// copy names its camera, the closest-looking photo that camera took within
+// copy names its camera model, the closest-looking photo that camera (the
+// same make and model, each) took within
 // a second of it (nearest hash, then nearest time). Two equally close
 // candidates (a burst) are no twin: which one it copies is not known.
-func twinOf(tx *sql.Tx, id int64, phash uint64, at int64, camera string) (int64, error) {
+func twinOf(tx *sql.Tx, id int64, phash uint64, at int64, make, model string) (int64, error) {
 	if phash != 0 {
 		rows, err := tx.Query(`SELECT id, path FROM photos WHERE phash = ? ORDER BY id`, int64(phash))
 		if err != nil {
@@ -218,11 +219,11 @@ func twinOf(tx *sql.Tx, id int64, phash uint64, at int64, camera string) (int64,
 			return 0, err
 		}
 	}
-	if at == 0 || phash == 0 || camera == "" {
-		return 0, nil // a camera-less or undated photo has nothing safe to match by
+	if at == 0 || phash == 0 || model == "" {
+		return 0, nil // a photo with no camera model, or undated, has nothing safe to match by
 	}
 	rows, err := tx.Query(`SELECT id, path, phash, taken_at FROM photos WHERE taken_at BETWEEN ? AND ?
-		AND TRIM(COALESCE(camera_make, '') || ' ' || COALESCE(camera_model, '')) = ?`, at-1, at+1, camera)
+		AND COALESCE(camera_make, '') = ? AND COALESCE(camera_model, '') = ?`, at-1, at+1, make, model) // make and model each the same
 	if err != nil {
 		return 0, err
 	}

@@ -168,3 +168,35 @@ func TestAppCacheTwinsAreSafe(t *testing.T) {
 		t.Errorf("cleanup: %+v, want 3 kept, 1 removed", res)
 	}
 }
+
+// The camera is matched field by field: make "Canon" with no model is not
+// model "Canon" with no make, and a copy with no model has no near twin.
+func TestAppCacheTwinCameraFields(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	mk := func(path, make, model string, hash uint64) *Result {
+		return &Result{Photo: Photo{Path: path, Size: 1, MTime: 1, Fingerprint: path, PHash: hash, TakenAt: 1_700_000_000,
+			CameraMake: make, CameraModel: model, Version: SchemaVersion}}
+	}
+	other := mk("/Shoots/IMG_1.jpg", "", "Canon", 0x0F0F)
+	copy := mk("/Shoots/A.cocatalog/Cache/Previews/IMG_1.jpg", "Canon", "", 0x0F0F^0b11)
+	if err := st.Save([]*Result{other, copy}); err != nil {
+		t.Fatal(err)
+	}
+	st.DB.Exec(`INSERT INTO aesthetic_feedback (photo_id, rater, rating, created_at) VALUES (?, 'sean', 8, 1)`, copy.Photo.ID)
+	if _, err := st.CleanAppCaches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	st.DB.QueryRow(`SELECT COUNT(*) FROM aesthetic_feedback WHERE photo_id = ?`, other.Photo.ID).Scan(&n)
+	if n != 0 {
+		t.Fatal("a copy from make Canon was merged into a photo from model Canon")
+	}
+	st.DB.QueryRow(`SELECT COUNT(*) FROM photos WHERE id = ?`, copy.Photo.ID).Scan(&n)
+	if n != 1 {
+		t.Fatal("the rated copy with no twin was removed")
+	}
+}
