@@ -336,3 +336,30 @@ func TestAlbumListFilters(t *testing.T) {
 		t.Error("unfiltered list links carry lf")
 	}
 }
+
+// Review follow-ups: "everything" chosen on the list goes into the albums
+// opened; the iPhone album leads back to the filtered list; an album's own
+// folder is no filter, so an unfiltered album lists every subfolder (one
+// of memes alone too) as before; and the list's filter form leaves the
+// cards in their order unless a photo sort is chosen.
+func TestAlbumListFilterFollowUps(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	seedAlbums(t, cat, []string{"/pics", "/pics2"})
+	meme := &store.Result{Photo: store.Photo{Path: "/pics/memes/x.png", Size: 1, MTime: 1, Fingerprint: "meme", Overall: 20, Source: store.SourceMeme, Version: store.SchemaVersion}}
+	if err := cat.Store.Save([]*store.Result{meme}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cat.Store.RebuildFolders(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h := s.Handler()
+	mustContain(t, "everything kept", get(t, h, "/albums?source=all"), `href="/albums?dir=%2Fpics&amp;lf=source%3Dall&amp;source=all"`)
+	mustContain(t, "iPhone way back", get(t, h, "/albums?iphone=1&min_overall=25&lf=min_overall%3D25"), `<a href="/albums?min_overall=25">Albums</a>`)
+	body := get(t, h, "/albums?dir=%2Fpics")
+	mustContain(t, "unfiltered album", body, `href="/albums?dir=%2Fpics%2Fmemes"`)
+	body = get(t, h, "/albums")
+	mustContain(t, "list form", body, `<option value="" selected>Albums in their order</option>`, `<form class="albumsort"`)
+	if strings.Contains(get(t, h, "/albums?dir=%2Fpics"), "Albums in their order") {
+		t.Error("an album's photo sort offers the list's order")
+	}
+}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -186,6 +187,79 @@ func TestBestMatchesBigAndSmall(t *testing.T) {
 		for i, p := range got {
 			if p == nil || p.Path != c.want[i] {
 				t.Errorf("sort %q, %v: %v, want %s", c.sort, groups[i], p, c.want[i])
+			}
+		}
+	}
+}
+
+// Sorts with a second key (Sharpest: focus, then sharpness; Most faces:
+// faces, then overall) pick by both, and Most aesthetic counts an unscored
+// photo (as the Photos page does, below any score): for groups and for an
+// album's subfolders alike.
+func TestBestMatchesSecondKeyAndUnscored(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*Result
+	for i, x := range []struct {
+		path         string
+		overall      float64
+		focus, sharp float64
+		faces        int
+		aes          sql.NullFloat64
+	}{
+		// the worse of each tie first: a single-key pick takes the first of equals
+		{"/a/1.jpg", 10, 0.9, 0.1, 2, sql.NullFloat64{}}, {"/a/2.jpg", 90, 0.9, 0.8, 2, sql.NullFloat64{}},
+		{"/b/3.jpg", 50, 0.2, 0.2, 0, sql.NullFloat64{}},
+		{"/s/x/4.jpg", 20, 0.5, 0.1, 1, sql.NullFloat64{}}, {"/s/x/5.jpg", 80, 0.5, 0.9, 1, sql.NullFloat64{}},
+		{"/s/y/6.jpg", 30, 0.1, 0.1, 0, sql.NullFloat64{}},
+	} {
+		rs = append(rs, &Result{Photo: Photo{Path: x.path, Size: 1, MTime: 1, Fingerprint: fmt.Sprint(i), Overall: x.overall,
+			FocusScore: x.focus, Sharpness: x.sharp, FaceCount: x.faces, Aesthetic: x.aes, Version: SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	less := map[string]func(a, b Photo) bool{
+		"sharpness": func(a, b Photo) bool {
+			if a.FocusScore != b.FocusScore {
+				return a.FocusScore > b.FocusScore
+			}
+			return a.Sharpness > b.Sharpness
+		},
+		"faces": func(a, b Photo) bool {
+			if a.FaceCount != b.FaceCount {
+				return a.FaceCount > b.FaceCount
+			}
+			return a.Overall > b.Overall
+		},
+		"aesthetic": func(a, b Photo) bool { return false }, // all unscored: equal
+	}
+	for _, c := range []struct {
+		groups [][]string
+		sort   string
+		want   []string
+	}{
+		{[][]string{{"/a"}, {"/b", "/c"}}, "sharpness", []string{"/a/2.jpg", "/b/3.jpg"}},
+		{[][]string{{"/a"}, {"/b", "/c"}}, "faces", []string{"/a/2.jpg", "/b/3.jpg"}},
+		{[][]string{{"/a"}, {"/b", "/c"}}, "aesthetic", []string{"/a/1.jpg", "/b/3.jpg"}},
+		{[][]string{{"/s/x"}, {"/s/y"}}, "sharpness", []string{"/s/x/5.jpg", "/s/y/6.jpg"}},
+		{[][]string{{"/s/x"}, {"/s/y"}}, "faces", []string{"/s/x/5.jpg", "/s/y/6.jpg"}},
+		{[][]string{{"/s/x"}, {"/s/y"}}, "aesthetic", []string{"/s/x/4.jpg", "/s/y/6.jpg"}},
+	} {
+		got, err := st.BestMatches(Filter{Sort: c.sort}, c.groups, []int{2, 1}, less[c.sort])
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, p := range got {
+			name := ""
+			if p != nil {
+				name = p.Path
+			}
+			if name != c.want[i] {
+				t.Errorf("sort %s, group %v: %q, want %q", c.sort, c.groups[i], name, c.want[i])
 			}
 		}
 	}

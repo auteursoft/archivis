@@ -68,7 +68,7 @@ func (s *Store) BestMatches(f Filter, groups [][]string, sizes []int, less func(
 		}
 		var smallBest []*Photo
 		if smallGroups := pick(small); nested(smallGroups) {
-			smallBest, err = s.bestByScan(f, smallGroups, less)
+			smallBest, err = s.bestByScan(f, smallGroups, less, false)
 		} else {
 			smallBest, err = s.bestByGroup(f, smallGroups, true)
 		}
@@ -83,13 +83,16 @@ func (s *Store) BestMatches(f Filter, groups [][]string, sizes []int, less func(
 		}
 		return out, nil
 	}
+	if compound(f.Sort) { // a second key on ties: compared here, by less
+		return s.bestByScan(f, groups, less, sum < 200000)
+	}
 	if parent, ok := siblings(groups); ok {
 		return s.bestByChild(f, groups, parent, sum < 200000)
 	}
 	if !nested(groups) {
 		return s.bestByGroup(f, groups, sum < 200000)
 	}
-	return s.bestByScan(f, groups, less)
+	return s.bestByScan(f, groups, less, sum < 200000)
 }
 
 // nested reports whether a folder of one group lies in another group's.
@@ -175,22 +178,26 @@ func (s *Store) bestByChild(f Filter, groups [][]string, parent string, byPath b
 	return s.photosFor(ids)
 }
 
-// bestKey is, for each sort, the column whose largest (max) or smallest
-// value marks a group's best photo.
+// compound reports whether a sort orders by a second key when the first
+// ties (see Filter.orderBy), which min() or max() of one column cannot.
+func compound(sort string) bool {
+	return sort == "sharpness" || sort == "faces"
+}
+
+// bestKey is, for each one-key sort, the column whose largest (max) or
+// smallest value marks a group's best photo. An unscored photo counts as
+// bestByScan and the Photos page's comparator count it (no aesthetic score:
+// below any, as it sorts last), so it is never left out.
 func bestKey(sort string) (expr string, max bool) {
 	switch sort {
 	case "worst":
-		return "overall", false
+		return "COALESCE(overall, 0)", false
 	case "technical":
-		return "technical", true
+		return "COALESCE(technical, 0)", true
 	case "aesthetic":
-		return "aesthetic", true
-	case "sharpness":
-		return "focus_score", true
+		return "COALESCE(aesthetic, -1)", true
 	case "colorful":
-		return "colorfulness", true
-	case "faces":
-		return "face_count", true
+		return "COALESCE(colorfulness, 0)", true
 	case "newest":
 		return "taken_at", true
 	case "oldest":
@@ -198,7 +205,7 @@ func bestKey(sort string) (expr string, max bool) {
 	case "path":
 		return "path", false
 	}
-	return "overall", true
+	return "COALESCE(overall, 0)", true
 }
 
 // bestByGroup reads the matching photos once in SQL, each labelled with
@@ -284,11 +291,11 @@ func (g *groupIndex) of(path string) []int {
 	return in
 }
 
-// bestByScan reads the matching photos' sort keys once, keeping each
-// group's best.
-func (s *Store) bestByScan(f Filter, groups [][]string, less func(a, b Photo) bool) ([]*Photo, error) {
+// bestByScan reads the matching photos' sort keys once (through the path
+// index, with byPath: few photos), keeping each group's best by less.
+func (s *Store) bestByScan(f Filter, groups [][]string, less func(a, b Photo) bool, byPath bool) ([]*Photo, error) {
 	g := f
-	g.Dirs, g.DirsByPath = nil, false
+	g.Dirs, g.DirsByPath = nil, byPath
 	for _, ds := range groups {
 		g.Dirs = append(g.Dirs, ds...)
 	}

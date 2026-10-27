@@ -115,7 +115,7 @@
   {{with $p.lf}}<input type="hidden" name="lf" value="{{.}}">{{end}}
   <label>Sort
     <select name="sort">
-      {{$sort := index $p "sort"}}{{if $.Query}}<option value="relevance" {{if or (eq $sort "") (eq $sort "relevance")}}selected{{end}}>Best match</option>{{end}}
+      {{$sort := index $p "sort"}}{{if $.Query}}<option value="relevance" {{if or (eq $sort "") (eq $sort "relevance")}}selected{{end}}>Best match</option>{{end}}{{if $p.albumlist}}<option value="" {{if eq $sort ""}}selected{{end}}>Albums in their order</option>{{end}}
       <option value="overall" {{if eq $p.sort "overall"}}selected{{end}}>Best overall</option>
       <option value="technical" {{if eq $p.sort "technical"}}selected{{end}}>Best technical</option>
       <option value="aesthetic" {{if eq $p.sort "aesthetic"}}selected{{end}}>Most aesthetic</option>

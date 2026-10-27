@@ -114,9 +114,23 @@ func withFilters(href string, filters url.Values, lf string) string {
 }
 
 // listActive reports whether the album cards are narrowed: a filter beyond
-// the default (memes left out), or a photo sort chosen.
+// the default (memes left out), another source chosen (everything, too:
+// it widens the photos, and the albums opened should keep it), or a photo
+// sort chosen. f holds no album: the cards' own folders are their groups.
 func listActive(f store.Filter, q url.Values) bool {
-	return f.Narrows() || q.Get("sort") != ""
+	return f.Narrows() || f.Source != sourceFilter("") || q.Get("sort") != ""
+}
+
+// listTop is the link to the album list: the filtered one an album was
+// opened from (lf), else the plain one in the cards' order.
+func listTop(asort, lf string) string {
+	switch {
+	case lf != "":
+		return "/albums?" + lf
+	case asort != albumSorts[0]:
+		return "/albums?asort=" + url.QueryEscape(asort)
+	}
+	return "/albums"
 }
 
 // matchCards keeps the cards whose albums hold a photo matching f, each
@@ -254,10 +268,8 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 		f := parseFilter(r)
 		p.Filter = f
 		s.filterForm(r, p, "/albums")
-		reset := "/albums"
-		if d.Sort != albumSorts[0] {
-			reset += "?asort=" + url.QueryEscape(d.Sort)
-		}
+		p.Params["albumlist"] = "1" // no photo sort unless one is chosen: the cards keep their order
+		reset := listTop(d.Sort, "")
 		p.Params["reset"], d.Reset = reset, reset
 		if listActive(f, q) {
 			d.Filtered, d.PhotoSort = true, q.Get("sort") != ""
@@ -292,6 +304,7 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 			d.Name = n
 		}
 		reset.Set("iphone", "1")
+		d.Crumbs = []crumb{{"Albums", listTop(d.Sort, lf), ""}}
 		for _, l := range libs {
 			f.Dirs = append(f.Dirs, l.Path)
 			total += l.Total
@@ -323,9 +336,11 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 		// subfolders narrowed by this album's filters, as the top list by its
 		// own; links carry this album's filters and, unchanged, the list to
 		// go back to
-		if listActive(f, q) {
+		cf := f
+		cf.Dirs = nil // the album itself: no filter, its subfolders are the groups
+		if listActive(cf, q) {
 			d.Filtered, d.PhotoSort = true, q.Get("sort") != ""
-			d.Folders = s.matchCards(d.Folders, f, d.PhotoSort, fail)
+			d.Folders = s.matchCards(d.Folders, cf, d.PhotoSort, fail)
 		}
 		for i := range d.Folders {
 			d.Folders[i].Href = withFilters(d.Folders[i].Href, carried(q), lf)
@@ -424,14 +439,7 @@ func crumbs(dir string, roots []string, names map[string]string, asort, lf strin
 			break
 		}
 	}
-	top := "/albums"
-	switch {
-	case lf != "":
-		top += "?" + lf
-	case asort != albumSorts[0]:
-		top += "?asort=" + url.QueryEscape(asort)
-	}
-	out := []crumb{{"Albums", top, ""}}
+	out := []crumb{{"Albums", listTop(asort, lf), ""}}
 	for i := len(up) - 1; i >= 0; i-- {
 		out = append(out, up[i])
 	}
