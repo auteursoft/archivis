@@ -200,3 +200,43 @@ func TestAppCacheTwinCameraFields(t *testing.T) {
 		t.Fatal("the rated copy with no twin was removed")
 	}
 }
+
+// Several photos with the copy's exact hash are a twin only when exactly
+// one of them was taken by the copy's camera in its second; otherwise the
+// copy is ambiguous, and kept if it holds anything of the user's.
+func TestAppCacheExactHashAmbiguity(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	const t0 = 1_700_000_000
+	mk := func(path, model string, hash uint64, at int64) *Result {
+		return &Result{Photo: Photo{Path: path, Size: 1, MTime: 1, Fingerprint: path, PHash: hash, TakenAt: at, CameraModel: model, Version: SchemaVersion}}
+	}
+	early := mk("/Shoots/A/IMG_1.NEF", "Z 8", 0x0F0F, t0-30) // the same hash, saved first, another moment
+	real := mk("/Shoots/A/IMG_2.NEF", "Z 8", 0x0F0F, t0)
+	copy := mk("/Shoots/A.cocatalog/Cache/Previews/IMG_2.jpg", "Z 8", 0x0F0F, t0)
+	twinA := mk("/Shoots/B/IMG_3.NEF", "Z 9", 0x5555, t0)
+	twinB := mk("/Shoots/B/IMG_4.NEF", "Z 9", 0x5555, t0)
+	unsure := mk("/Shoots/B.cocatalog/Cache/Previews/IMG_3.jpg", "Z 9", 0x5555, t0)
+	if err := st.Save([]*Result{early, real, copy, twinA, twinB, unsure}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []*Result{copy, unsure} {
+		st.DB.Exec(`INSERT INTO aesthetic_feedback (photo_id, rater, rating, created_at) VALUES (?, 'sean', 8, 1)`, r.Photo.ID)
+	}
+	if _, err := st.CleanAppCaches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var on int64
+	st.DB.QueryRow(`SELECT photo_id FROM aesthetic_feedback WHERE photo_id IN (?, ?)`, early.Photo.ID, real.Photo.ID).Scan(&on)
+	if on != real.Photo.ID {
+		t.Fatalf("the copy's rating moved to %d, want the frame of its own second %d", on, real.Photo.ID)
+	}
+	var n int
+	st.DB.QueryRow(`SELECT COUNT(*) FROM photos WHERE id = ?`, unsure.Photo.ID).Scan(&n)
+	if n != 1 {
+		t.Fatal("a rated copy with two identical candidates in its second was merged")
+	}
+}

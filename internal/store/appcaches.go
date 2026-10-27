@@ -190,33 +190,48 @@ func (s *Store) CleanAppCaches(ctx context.Context) (AppCacheCleanup, error) {
 const twinMaxBits = 10
 
 // twinOf finds a catalogued photo, outside any app cache, that copy id is
-// a copy of (0 if none): one with the same perceptual hash; else, if the
+// a copy of (0 if none): the one with the same perceptual hash (of several,
+// the one also taken by its camera in its second); else, if the
 // copy names its camera model, the closest-looking photo that camera (the
 // same make and model, each) took within
 // a second of it (nearest hash, then nearest time). Two equally close
 // candidates (a burst) are no twin: which one it copies is not known.
 func twinOf(tx *sql.Tx, id int64, phash uint64, at int64, make, model string) (int64, error) {
 	if phash != 0 {
-		rows, err := tx.Query(`SELECT id, path FROM photos WHERE phash = ? ORDER BY id`, int64(phash))
+		// the same hash: one photo is the twin; several (identical frames
+		// of a burst, say) only if exactly one also has the copy's camera
+		// and second, else which one it copies is not known
+		rows, err := tx.Query(`SELECT id, path, COALESCE(taken_at, 0), COALESCE(camera_make, ''), COALESCE(camera_model, '') FROM photos WHERE phash = ?`, int64(phash))
 		if err != nil {
 			return 0, err
 		}
+		var all, same []int64
 		for rows.Next() {
-			var tid int64
-			var path string
-			if err := rows.Scan(&tid, &path); err != nil {
+			var tid, tat int64
+			var path, tmake, tmodel string
+			if err := rows.Scan(&tid, &path, &tat, &tmake, &tmodel); err != nil {
 				rows.Close()
 				return 0, err
 			}
-			if tid != id && !InAppCache(path) {
-				rows.Close()
-				return tid, nil
+			if tid == id || InAppCache(path) {
+				continue
+			}
+			all = append(all, tid)
+			if model != "" && tmake == make && tmodel == model && at != 0 && max(tat-at, at-tat) <= 1 {
+				same = append(same, tid)
 			}
 		}
 		err = rows.Err()
 		rows.Close()
-		if err != nil {
+		switch {
+		case err != nil:
 			return 0, err
+		case len(all) == 1:
+			return all[0], nil
+		case len(same) == 1:
+			return same[0], nil
+		case len(all) > 1:
+			return 0, nil // ambiguous
 		}
 	}
 	if at == 0 || phash == 0 || model == "" {
