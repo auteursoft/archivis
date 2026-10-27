@@ -158,3 +158,34 @@ func TestClassifySourcesWithoutClassifier(t *testing.T) {
 		t.Fatalf("left to work out: %+v", left)
 	}
 }
+
+// An embedding of another size (a damaged row, another model's) leaves the
+// source unknown rather than panicking the backfill; the others are still
+// worked out.
+func TestClassifySourcesSkipsWrongSizedEmbeddings(t *testing.T) {
+	s := testSources()
+	for _, n := range []int{10, 1024} {
+		if got := s.Of(false, make([]float32, n)); got != store.SourceUnknown {
+			t.Errorf("%d-dimension embedding: source %d, want unknown", n, got)
+		}
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*store.Result
+	for i, emb := range [][]float32{make([]float32, 10), axis(0)} {
+		p := fmt.Sprintf("/p/%d.jpg", i)
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, CLIP: vindex.EncodeF16(emb), Version: store.SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ClassifySources(context.Background(), st, s, false); err != nil || n != 1 {
+		t.Fatalf("worked out %d (%v), want the one good embedding", n, err)
+	}
+	if left, _ := st.SourceInputs(0, false, 10); len(left) != 1 || left[0].ID != rs[0].Photo.ID {
+		t.Fatalf("left to work out: %+v", left)
+	}
+}

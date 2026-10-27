@@ -97,13 +97,15 @@ func (s *Sources) MemeProb(emb []float32) float64 {
 
 // Of works out a photo's source: a camera photo if its metadata names a
 // camera; otherwise, from its embedding, a meme or screenshot or a saved
-// image. Without an embedding (or a classifier) it stays unknown, to be
-// worked out once there is one.
+// image. Without an embedding of the classifier's size (or a classifier)
+// it stays unknown, to be worked out once there is one.
 func (s *Sources) Of(camera bool, emb []float32) int {
 	switch {
 	case camera:
 		return store.SourceCamera
-	case s == nil || len(emb) == 0:
+	case s == nil || len(s.prompts) == 0 || len(emb) != len(s.prompts[0]):
+		// none yet, or of another size (a damaged row, another model): left
+		// to work out later, the photo shown meanwhile
 		return store.SourceUnknown
 	case s.MemeProb(emb) >= MemeThreshold:
 		return store.SourceMeme
