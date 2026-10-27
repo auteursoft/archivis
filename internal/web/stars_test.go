@@ -75,6 +75,9 @@ func TestStarsPerAccount(t *testing.T) {
 		if !strings.Contains(body, `name="starred" value="1" checked`) || !strings.Contains(body, "<title>Starred photos") {
 			t.Fatalf("%s: the filter or title does not say starred", path)
 		}
+		if !strings.Contains(body, `class="btn ghost" href="/?starred=1">Reset`) {
+			t.Fatalf("%s: Reset leaves the Starred page", path)
+		}
 	}
 	if body := bob.do("GET", "/?starred=1", nil).Body.String(); strings.Contains(body, `title="/st/`) {
 		t.Fatal("bob's starred page lists ann's star")

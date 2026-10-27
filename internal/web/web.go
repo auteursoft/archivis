@@ -637,6 +637,9 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		p.Title, p.Nav = "Starred photos", "starred"
 	}
 	s.filterForm(r, p, "/")
+	if f.Starred {
+		p.Params["reset"] = "/?starred=1" // Reset clears the other filters: the Starred page stays the Starred page
+	}
 	p.Data = s.browse(r, p, f, text, "/", -1)
 	s.render(w, r, "browse", p)
 }
