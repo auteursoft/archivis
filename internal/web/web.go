@@ -128,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/match", s.apiMatch)
 	mux.HandleFunc("POST /api/refresh", s.apiRefresh)
 	mux.HandleFunc("POST /api/photo/{id}/aesthetic", s.apiAestheticFeedback)
+	mux.HandleFunc("POST /api/star/{id}", s.apiStar)
+	mux.HandleFunc("GET /api/stars", s.apiStars)
 	mux.HandleFunc("GET /login", s.handleLogin)
 	mux.HandleFunc("POST /login", s.handleLogin)
 	mux.HandleFunc("POST /logout", s.handleLogout)
@@ -489,6 +491,9 @@ func parseFilter(r *http.Request) store.Filter {
 	}
 	f.YearFrom, f.YearTo = yearRange(q)
 	f.Source = sourceFilter(q.Get("source"))
+	if q.Get("starred") == "1" {
+		f.Starred, f.StarredBy = true, starUser(r)
+	}
 	f.PersonID, _ = strconv.ParseInt(q.Get("person"), 10, 64)
 	pg, _ := strconv.Atoi(q.Get("page"))
 	if pg > 0 {
@@ -628,6 +633,9 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	f := parseFilter(r)
 	text := strings.TrimSpace(r.URL.Query().Get("q"))
 	p := &page{Title: "Photos", Nav: "browse", Filter: f, Query: text}
+	if f.Starred {
+		p.Title, p.Nav = "Starred photos", "starred"
+	}
 	s.filterForm(r, p, "/")
 	p.Data = s.browse(r, p, f, text, "/", -1)
 	s.render(w, r, "browse", p)

@@ -12,6 +12,7 @@
   {{if not .Bare}}<nav>
     <a href="/" class="{{if eq .Nav "browse"}}on{{end}}">Photos</a>
     <a href="/albums" class="{{if eq .Nav "albums"}}on{{end}}">Albums</a>
+    <a href="/?starred=1" class="{{if eq .Nav "starred"}}on{{end}}" title="The photos you starred">Starred</a>
     <a href="/people" class="{{if eq .Nav "people"}}on{{end}}">People</a>
     <a href="/discover" class="{{if eq .Nav "discover"}}on{{end}}">Discover</a>
     <a href="/bursts" class="{{if eq .Nav "bursts"}}on{{end}}">Bursts</a>
@@ -42,6 +43,7 @@
 {{define "photogrid"}}
 <div class="grid">
 {{range .}}
+  <div class="cell">
   <a class="card{{if .Stack}} stack{{end}}" href="/photo/{{.ID}}" title="{{.Path}}{{if .Stack}} (one of {{.Stack}} alike shots){{end}}">
     <img loading="lazy" src="/t/{{.Fingerprint}}.jpg" alt="{{base .Path}}">
     <span class="badge {{scoreClass .Overall}}">{{f0 .Overall}}</span>
@@ -55,6 +57,8 @@
       <i>{{date .TakenAt}}</i>
     </span>
   </a>
+  <button type="button" class="star" data-star="{{.ID}}" aria-pressed="false" aria-label="Star {{base .Path}}" title="Star"></button>
+  </div>
 {{else}}
   <p class="empty">No photos match.</p>
 {{end}}
@@ -177,6 +181,7 @@
       {{range .Tags}}<option value="{{.Tag}}" {{if eq $p.tag .Tag}}selected{{end}}>{{.Tag}} ({{f0 .Score}})</option>{{end}}
     </select>
   </label>
+  <label class="check"><input type="checkbox" name="starred" value="1" {{if eq $p.starred "1"}}checked{{end}}> Starred only</label>
   <label>B&amp;W
     <select name="mono">
       <option value="">any</option>

@@ -11,7 +11,7 @@
       </a>
       {{end}}
     </div>
-    <p class="path">{{if $.CanEdit}}<a href="/original/{{.Photo.ID}}" target="_blank">{{.Photo.Path}}</a>{{else}}{{.Photo.Path}}{{end}}</p>
+    <p class="path"><button type="button" class="star inline" data-star="{{.Photo.ID}}" aria-pressed="false" aria-label="Star this photo" title="Star"></button> {{if $.CanEdit}}<a href="/original/{{.Photo.ID}}" target="_blank">{{.Photo.Path}}</a>{{else}}{{.Photo.Path}}{{end}}</p>
   </div>
   <aside class="info">
     <h2>Quality</h2>

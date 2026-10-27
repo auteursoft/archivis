@@ -84,6 +84,38 @@
     })
   );
 
+  // stars: each card's and the photo page's star shows, and toggles, whether
+  // you starred the photo (your own list; see Starred)
+  const stars = [...document.querySelectorAll("[data-star]")];
+  function showStar(b, on) {
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.title = on ? "Starred: click to unstar" : "Star";
+  }
+  if (stars.length) {
+    const ids = [...new Set(stars.map((b) => b.dataset.star))].slice(0, 500);
+    fetch("/api/stars?ids=" + ids.join(","))
+      .then((r) => (r.ok ? r.json() : { starred: [] }))
+      .then((j) => {
+        const on = new Set((j.starred || []).map(String));
+        stars.forEach((b) => showStar(b, on.has(b.dataset.star)));
+      })
+      .catch(() => {});
+  }
+  stars.forEach((b) =>
+    b.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const on = b.getAttribute("aria-pressed") !== "true";
+      showStar(b, on); // at once; put back if not saved
+      try {
+        await post(`/api/star/${b.dataset.star}`, { on });
+        document.querySelectorAll(`[data-star="${b.dataset.star}"]`).forEach((x) => showStar(x, on));
+      } catch (err) {
+        showStar(b, !on);
+        alert("Not saved: " + err.message);
+      }
+    })
+  );
+
   // per-face naming on the photo page
   document.querySelectorAll(".inline-assign").forEach((f) =>
     f.addEventListener("submit", async (e) => {
