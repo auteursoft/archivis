@@ -1,6 +1,9 @@
 package store
 
-import "strings"
+import (
+	"database/sql"
+	"strings"
+)
 
 // Where a photo came from, as far as its file tells (photos.source).
 // SourceCamera: its metadata names the camera. Otherwise it is a saved
@@ -56,8 +59,8 @@ type SourceSet struct {
 // if the photo is unchanged since it was read (a photo re-indexed meanwhile
 // already has its source from that analysis), and never one Apple Photos
 // calls a screenshot. It does not change their
-// seq, as nothing else about them changed; a change marks the folders for
-// working out again, as their covers leave memes out.
+// seq, as nothing else about them changed; a change marks the folders and
+// groups for working out again (covers and groups leave memes out).
 func (s *Store) SetSources(src []SourceSet) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
@@ -79,8 +82,7 @@ func (s *Store) SetSources(src []SourceSet) error {
 		changed += n
 	}
 	if changed > 0 {
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value)
-			VALUES ('folders_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'folders_dirty'), 0) + 1)`); err != nil {
+		if err := markSourcesChanged(tx); err != nil {
 			return err
 		}
 	}
@@ -90,6 +92,14 @@ func (s *Store) SetSources(src []SourceSet) error {
 // MemeCount counts the memes and screenshots, all of them or those below
 // the given folders, through the photos_memes index.
 func (s *Store) MemeCount(dirs []string) (int, error) {
+	q, args := memeCountSQL(dirs)
+	var n int
+	err := s.DB.QueryRow(q, args...).Scan(&n)
+	return n, err
+}
+
+// memeCountSQL is MemeCount's query.
+func memeCountSQL(dirs []string) (string, []any) {
 	q, args := `SELECT COUNT(*) FROM photos INDEXED BY photos_memes WHERE source = 3`, []any{}
 	if len(dirs) > 0 {
 		var or []string
@@ -101,7 +111,15 @@ func (s *Store) MemeCount(dirs []string) (int, error) {
 		}
 		q += " AND (" + strings.Join(or, " OR ") + ")"
 	}
-	var n int
-	err := s.DB.QueryRow(q, args...).Scan(&n)
-	return n, err
+	return q, args
+}
+
+// markSourcesChanged notes, in tx, that photos' sources changed: the
+// folders (their covers) and groups (their meme counts) are stale.
+func markSourcesChanged(tx *sql.Tx) error {
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value)
+		VALUES ('folders_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'folders_dirty'), 0) + 1)`); err != nil {
+		return err
+	}
+	return markGroupsDirty(tx)
 }

@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS photo_groups (
 	max_colorful  REAL NOT NULL DEFAULT 0,
 	max_faces     INTEGER NOT NULL DEFAULT 0,
 	faces_overall REAL NOT NULL DEFAULT 0,
+	-- members that are memes or screenshots (a group of only those is left out by default)
+	memes         INTEGER NOT NULL DEFAULT 0,
 	members       TEXT NOT NULL,
 	PRIMARY KEY (kind, id)
 ) WITHOUT ROWID;

@@ -647,13 +647,13 @@ func (s *Store) FilterCount(f Filter) (int, error) {
 	if g := f; f.Source == "photos" {
 		g.Source, g.Dirs = "", nil
 		if !g.Restricts() {
+			// one statement, so one snapshot: a backfill changing sources
+			// between two reads cannot skew the difference
 			g.Dirs, g.DirsByPath = f.Dirs, true
-			all, err := s.FilterCount(g)
-			if err != nil {
-				return 0, err
-			}
-			memes, err := s.MemeCount(f.Dirs)
-			return all - memes, err
+			where, args := g.where()
+			mq, margs := memeCountSQL(f.Dirs)
+			err := s.DB.QueryRow(`SELECT (SELECT COUNT(*) FROM photos`+where+`) - (`+mq+`)`, append(args, margs...)...).Scan(&n)
+			return max(0, n), err
 		}
 	}
 	where, args := f.where()

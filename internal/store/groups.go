@@ -27,7 +27,7 @@ const (
 )
 
 // groupsVersion changes when the grouping rules do, forcing a rebuild.
-const groupsVersion = "5"
+const groupsVersion = "6"
 
 // GroupOptions are the rules RebuildGroups groups by.
 type GroupOptions struct {
@@ -111,6 +111,7 @@ type gphoto struct {
 	overall, technical, aesthetic, focus, colr float64
 	sharpness                                  float64
 	faces                                      int
+	source                                     int
 	cur                                        [5]int64 // burst_id, stack_top, stack_size, stacked, dup_id
 }
 
@@ -124,6 +125,7 @@ type groupRow struct {
 	focusSharp                                        float64 // sharpness of the sharpest-focus member (its tie-break, as on the Photos page)
 	maxFaces                                          int
 	facesOverall                                      float64 // best overall among the members with the most faces
+	memes                                             int     // members that are memes or screenshots (a group of only those is left out by default)
 	members                                           string  // JSON ids, ascending
 }
 
@@ -663,14 +665,14 @@ func (r *rebuild) details(ids []int64) (map[int64]*gphoto, error) {
 		chunk := ids[start:min(len(ids), start+500)]
 		rows, err := r.query(`SELECT id, taken_at, TRIM(COALESCE(camera_make, '') || ' ' || COALESCE(camera_model, '')), phash, COALESCE(overall, 0),
 			COALESCE(technical, 0), COALESCE(aesthetic, 0), COALESCE(focus_score, 0), COALESCE(colorfulness, 0), COALESCE(sharpness, 0), face_count,
-			burst_id, stack_top, stack_size, stacked, dup_id FROM photos WHERE id IN (`+placeholders(len(chunk))+`)`, int64sToAny(chunk)...)
+			source, burst_id, stack_top, stack_size, stacked, dup_id FROM photos WHERE id IN (`+placeholders(len(chunk))+`)`, int64sToAny(chunk)...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
 			p := &gphoto{}
 			if err := rows.Scan(&p.id, &p.at, &p.camera, (*int64ptr)(&p.phash), &p.overall, &p.technical, &p.aesthetic,
-				&p.focus, &p.colr, &p.sharpness, &p.faces, &p.cur[0], &p.cur[1], &p.cur[2], &p.cur[3], &p.cur[4]); err != nil {
+				&p.focus, &p.colr, &p.sharpness, &p.faces, &p.source, &p.cur[0], &p.cur[1], &p.cur[2], &p.cur[3], &p.cur[4]); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -700,6 +702,9 @@ func (a *groupAcc) add(p *gphoto) {
 	g := &a.g
 	g.size++
 	a.ids = append(a.ids, p.id)
+	if p.source == SourceMeme {
+		g.memes++
+	}
 	if a.best == nil || p.overall > a.best.overall || (p.overall == a.best.overall && p.id < a.best.id) {
 		best := *p // a copy: chunks' details are dropped as the scan moves on
 		a.best = &best
@@ -745,7 +750,7 @@ func (r *rebuild) queueGroup(g groupRow) {
 }
 
 const groupCols = `kind, id, size, start_at, end_at, oldest_at, camera, best_id, best_overall, min_overall,
-	max_technical, max_aesthetic, max_focus, focus_sharp, max_colorful, max_faces, faces_overall, members`
+	max_technical, max_aesthetic, max_focus, focus_sharp, max_colorful, max_faces, faces_overall, memes, members`
 
 // writePending writes the queued groups that are new or changed, noting the
 // old members of changed ones.
@@ -768,7 +773,7 @@ func (r *rebuild) writePending() error {
 			for rows.Next() {
 				var g groupRow
 				if err := rows.Scan(&g.kind, &g.id, &g.size, &g.start, &g.end, &g.oldest, &g.camera, &g.best, &g.bestOverall, &g.minOverall,
-					&g.maxTechnical, &g.maxAesthetic, &g.maxFocus, &g.focusSharp, &g.maxColorful, &g.maxFaces, &g.facesOverall, &g.members); err != nil {
+					&g.maxTechnical, &g.maxAesthetic, &g.maxFocus, &g.focusSharp, &g.maxColorful, &g.maxFaces, &g.facesOverall, &g.memes, &g.members); err != nil {
 					rows.Close()
 					return err
 				}
@@ -787,9 +792,9 @@ func (r *rebuild) writePending() error {
 			if ok && o == g {
 				continue
 			}
-			if err := r.w.exec(`INSERT OR REPLACE INTO photo_groups (`+groupCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			if err := r.w.exec(`INSERT OR REPLACE INTO photo_groups (`+groupCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 				g.kind, g.id, g.size, g.start, g.end, g.oldest, g.camera, g.best, g.bestOverall, g.minOverall,
-				g.maxTechnical, g.maxAesthetic, g.maxFocus, g.focusSharp, g.maxColorful, g.maxFaces, g.facesOverall, g.members); err != nil {
+				g.maxTechnical, g.maxAesthetic, g.maxFocus, g.focusSharp, g.maxColorful, g.maxFaces, g.facesOverall, g.memes, g.members); err != nil {
 				return err
 			}
 			r.st.GroupWrites++
@@ -1088,6 +1093,12 @@ func (s *Store) GroupPage(kind int, f Filter, minSize int, summary bool) ([]Grou
 	switch {
 	case where == "":
 		ids, err = s.groupIDs(`SELECT id FROM photo_groups WHERE kind = ? AND size >= ? ORDER BY `+order+` LIMIT ? OFFSET ?`,
+			kind, minSize, limit+1, offset)
+	case f.Source == "photos" && !f.Narrows():
+		// memes left out, nothing else (the pages' default): a group shows if
+		// any member is not a meme, which the groups record; the members
+		// shown are still filtered below
+		ids, err = s.groupIDs(`SELECT id FROM photo_groups WHERE kind = ? AND size >= ? AND memes < size ORDER BY `+order+` LIMIT ? OFFSET ?`,
 			kind, minSize, limit+1, offset)
 	case f.photoFirst():
 		ids, err = s.groupsFromPhotos(kind, minSize, order, where, args, offset+limit+1)

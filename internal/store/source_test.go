@@ -217,3 +217,65 @@ func TestFolderCoversLeaveMemesOut(t *testing.T) {
 		t.Fatalf("/: cover %d, want the one photo %d", got, rs[1].Photo.ID)
 	}
 }
+
+// The pages' default (memes left out, nothing else) reads Bursts and
+// Duplicates from the group index, like no filter: a group shows unless
+// all its members are memes, exact however far the pages go, never a
+// partial walk; a mixed group shows only its other members. Changing
+// sources makes the groups stale, so their meme counts follow.
+func TestGroupPagesLeaveMemesOut(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "g.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	defer func(n int) { maxGroupWalk = n }(maxGroupWalk)
+	maxGroupWalk = 1 // a walk would stop at once, partial
+	var rs []*Result
+	at := int64(1_700_000_000)
+	for b, srcs := range [][]int{{SourceMeme, SourceMeme, SourceMeme}, {SourceCamera, SourceMeme, SourceCamera}, {SourceCamera, SourceCamera, SourceCamera}} {
+		for i, src := range srcs {
+			p := fmt.Sprintf("/b%d/%d.jpg", b, i)
+			rs = append(rs, &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, CameraModel: "Z 8", TakenAt: at + int64(i),
+				PHash: uint64(1 + 10*b + i), Overall: float64(90 - 10*b - i), Source: src, Version: SchemaVersion}})
+		}
+		at += 1000
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	o := GroupOptions{Gap: 3, Hamming: 0}
+	if _, err := st.RebuildGroups(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	f := Filter{Source: "photos", Limit: 10}
+	gs, info, err := st.GroupPage(GroupBurst, f, 3, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Partial || len(gs) != 2 {
+		t.Fatalf("default page: %d bursts, partial %v; want the 2 with photos, not partial", len(gs), info.Partial)
+	}
+	for _, g := range gs {
+		for _, m := range g.Members {
+			if m.Source == SourceMeme {
+				t.Fatalf("burst %d shows the meme %s", g.ID, m.Path)
+			}
+		}
+		if g.ID == rs[3].Photo.ID && (g.Matching != 2 || len(g.Members) != 2) {
+			t.Fatalf("mixed burst: %d members shown, %d matching; want 2", len(g.Members), g.Matching)
+		}
+	}
+	f.Offset = 1 // exact paging: the second page holds the plain burst alone
+	if gs, _, _ := st.GroupPage(GroupBurst, f, 3, false); len(gs) != 1 || gs[0].ID != rs[6].Photo.ID {
+		t.Fatalf("offset 1: %+v", gs)
+	}
+	// a source change makes the groups stale (their meme counts)
+	in, _ := st.SourceInputs(rs[6].Photo.ID-1, true, 1)
+	if err := st.SetSources([]SourceSet{{ID: in[0].ID, Seq: in[0].Seq, Source: SourceMeme}}); err != nil {
+		t.Fatal(err)
+	}
+	if !st.GroupsStale(o) {
+		t.Fatal("groups current after a source changed")
+	}
+}

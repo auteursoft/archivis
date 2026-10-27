@@ -174,8 +174,7 @@ func (s *Store) markScreenshots(paths []string) (int, error) {
 		}
 		got, _ := res.RowsAffected()
 		if got > 0 {
-			if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value)
-				VALUES ('folders_dirty', COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'folders_dirty'), 0) + 1)`); err != nil {
+			if err := markSourcesChanged(tx); err != nil {
 				tx.Rollback()
 				return n, err
 			}

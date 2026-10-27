@@ -870,7 +870,9 @@ func runRetag(g *globals, args []string) error {
 	ctx, cancel := signalContext()
 	defer cancel()
 	classifySources(ctx, cat.Store, eng.Sources, true) // the rules may have changed too
-	markScreenshots(ctx, cat.Store)
+	if ctx.Err() == nil {
+		regroupAndMark(ctx, g.data, cat.Store) // Apple's screenshots, then covers and groups for the new sources
+	}
 	return nil
 }
 
