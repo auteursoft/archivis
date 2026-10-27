@@ -95,27 +95,11 @@ var skipDirNames = map[string]bool{
 	"System Volume Information": true, "node_modules": true, "lost+found": true,
 }
 
-// photosLibraryChildAllowed reports whether base, a direct child of an
-// Apple Photos library package (parent ends in .photoslibrary), should be
-// indexed. Only the originals are photos to catalogue: originals/ (Photos 5
-// and later) and Masters/ (older libraries). Everything else in the package
-// is Apple's own: resources/derivatives holds resized JPEG copies of each
-// photo, plus thumbnails, renders, scopes and databases.
-func photosLibraryChildAllowed(parent, base string) bool {
-	if !isPhotosLibrary(parent) {
-		return true
-	}
-	return strings.EqualFold(base, "originals") || strings.EqualFold(base, "Masters")
-}
-
-// isPhotosLibrary reports whether dir is an Apple Photos library package.
-func isPhotosLibrary(dir string) bool {
-	return strings.EqualFold(filepath.Ext(dir), ".photoslibrary")
-}
-
 func (ix *Indexer) excluded(path string, isDir bool) bool {
 	base := filepath.Base(path)
-	if !photosLibraryChildAllowed(filepath.Dir(path), base) {
+	// photo apps' own copies (thumbnails, previews) inside their libraries
+	// and catalogs: only the originals are photos (store.PackageChildAllowed)
+	if !store.PackageChildAllowed(filepath.Base(filepath.Dir(path)), base) {
 		return true
 	}
 	if isDir {

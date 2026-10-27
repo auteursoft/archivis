@@ -384,6 +384,16 @@ func runIndex(g *globals, args []string) error {
 			fmt.Fprintf(os.Stderr, "Photos libraries: removed %d of Apple's copies (moved %d face names, %d ratings to the originals); kept %d with no original catalogued\n",
 				res.Removed, res.LabelsMoved, res.FeedbackMoved, res.Kept)
 		}
+		// then any app copies left: Photos copies with a twin elsewhere,
+		// iPhoto, Aperture and Capture One caches
+		cres, err := cat.Store.CleanAppCaches(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: cleaning up photo apps' copies: %v (retried on the next run)\n", err)
+		}
+		if cres.Removed > 0 || cres.Kept > 0 {
+			fmt.Fprintf(os.Stderr, "app copies: removed %d thumbnails and previews of photo apps (moved %d face names, %d ratings to the photos they copy); kept %d (no other copy, or hand-named faces or ratings on them)\n",
+				cres.Removed, cres.LabelsMoved, cres.FeedbackMoved, cres.Kept)
+		}
 	}
 	if !*noMatch && ctx.Err() == nil {
 		// The photos are indexed either way; a failure here only means named
