@@ -116,7 +116,8 @@ func TestAlbumCardCountsLeaveMemesOut(t *testing.T) {
 	if err := cat.Store.Save(rs); err != nil {
 		t.Fatal(err)
 	}
-	if err := cat.Store.RecordRoots([]string{"/pics"}); err != nil {
+	// as recorded (RecordRoots would add a drive on Windows)
+	if _, err := cat.Store.DB.Exec(`INSERT INTO roots (path) VALUES (?)`, "/pics"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cat.Store.RebuildFolders(context.Background()); err != nil {
