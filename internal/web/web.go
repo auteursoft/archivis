@@ -48,6 +48,11 @@ var staticFS embed.FS
 type Server struct {
 	cat  *catalog.Catalog
 	Auth string // "user:password" for basic auth until the first account exists; empty = none
+	// OnStart, if set, runs once in the background when ListenAndServe
+	// starts, after the startup regroup (so the folders, and the Photos
+	// libraries they list, are current), as part of its background work:
+	// its context ends, and it is waited for, before ListenAndServe returns.
+	OnStart func(ctx context.Context)
 
 	hasUsers           atomic.Bool
 	ipLimit, nameLimit *auth.Limiter
@@ -193,6 +198,28 @@ func sameOrigin(next http.Handler) http.Handler {
 	})
 }
 
+// startup is the background work ListenAndServe starts with: the groups and
+// folders worked out if stale, then OnStart, then the folders again if it
+// changed them (photos' sources pick album covers), at once rather than at
+// the next periodic regroup. A regroup already under way (the ticker's, or
+// a settings change's) may have read the sources before OnStart changed
+// them; it leaves them stale, so startup waits for it, then regroups.
+func (s *Server) startup(ctx context.Context) {
+	s.regroup(false)
+	if s.OnStart == nil {
+		return
+	}
+	s.OnStart(ctx)
+	for s.regrouping.Load() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	s.regroup(true) // past the rate limit the first run just set; only if stale
+}
+
 // ListenAndServe serves until the process exits, refreshing the in-memory
 // indexes periodically so photos indexed meanwhile become searchable.
 // The background work (refreshes, regroups) stops, and is waited for, before
@@ -204,7 +231,11 @@ func (s *Server) ListenAndServe(addr string) error {
 		stop() // a regroup in progress stops at its next step
 		s.background.Wait()
 	}()
-	s.regroupInBackground(false)
+	s.background.Add(1)
+	go func() {
+		defer s.background.Done()
+		s.startup(ctx)
+	}()
 	s.background.Add(1)
 	go func() {
 		defer s.background.Done()
@@ -457,12 +488,25 @@ func parseFilter(r *http.Request) store.Filter {
 		Limit:         120,
 	}
 	f.YearFrom, f.YearTo = yearRange(q)
+	f.Source = sourceFilter(q.Get("source"))
 	f.PersonID, _ = strconv.ParseInt(q.Get("person"), 10, 64)
 	pg, _ := strconv.Atoi(q.Get("page"))
 	if pg > 0 {
 		f.Offset = min(pg, maxPage) * f.Limit // bounded: no overflow, no huge result buffers
 	}
 	return f
+}
+
+// sourceFilter maps the form's source choice to the filter's: memes and
+// screenshots are left out unless asked for ("all", or "memes").
+func sourceFilter(v string) string {
+	switch v {
+	case "all":
+		return ""
+	case "camera", "saved", "memes":
+		return v
+	}
+	return "photos"
 }
 
 // maxPage bounds paging (120 photos a page): far beyond what anyone pages
@@ -495,6 +539,7 @@ type browseData struct {
 	HasMore  bool
 	Searched bool
 	Stacked  bool // near-identical burst frames show as one card
+	NoMemes  bool // memes and screenshots are left out (the default)
 	// Prev and Next are the pager links, with every filter kept. They are
 	// built here: a query string put into the template as text would be
 	// escaped into a single parameter, and the filters lost.
@@ -592,7 +637,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 // any), with stacking as set, for the Photos page and album pages at path.
 // total, if not -1, is the photos matching f, known without counting.
 func (s *Server) browse(r *http.Request, p *page, f store.Filter, text, path string, total int) *browseData {
-	d := &browseData{Page: f.Offset / f.Limit}
+	d := &browseData{Page: f.Offset / f.Limit, NoMemes: f.Source == "photos"}
 	pageURL := func(n int) template.URL { return pageLink(r, path, n) }
 	stacking := s.cat.Store.GetSettings().StackBursts
 	if text != "" {
@@ -710,7 +755,11 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Tags, err = s.cat.Store.TagsForPhoto(id)
 	errs.note("tags", err)
-	d.Similar, err = s.cat.SimilarPhotos(id, store.Filter{}, 12)
+	similar := store.Filter{Source: "photos"} // memes left out, as on the pages; a meme's own page may list alike ones
+	if ph.Source == store.SourceMeme {
+		similar.Source = ""
+	}
+	d.Similar, err = s.cat.SimilarPhotos(id, similar, 12)
 	if _, has := s.cat.PhotoIndex().Vector(id); has { // no embedding is not a failure
 		errs.note("similar photos", err)
 	}
@@ -1056,6 +1105,7 @@ type queryData struct {
 	Faces   []queryFace
 	Similar []catalog.PhotoHit
 	Metrics []metricRow
+	NoMemes bool // memes and screenshots are left out of the matches
 }
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
@@ -1068,15 +1118,19 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := e.q.Analysis
-	d := &queryData{Token: tok}
+	d := &queryData{Token: tok, NoMemes: true}
 	names := s.personNames()
+	// memes and screenshots left out, as on the pages: of faces too
+	memes, err := s.cat.Store.MemeIDs()
+	skip := func(fid int64) bool { return memes[s.cat.PhotoOfFace(fid)] }
 	min := fval(r, "min")
 	if min <= 0 {
 		min = 0.35
 	}
 	var errs pageErrs
+	errs.note("memes and screenshots", err)
 	for i, f := range a.Faces {
-		hits, err := s.cat.SearchFaces([][]float32{f.Embedding}, queryLimit, float32(min), nil)
+		hits, err := s.cat.SearchFaces([][]float32{f.Embedding}, queryLimit, float32(min), skip)
 		errs.note(fmt.Sprintf("face %d search", i+1), err)
 		qf := queryFace{Index: i}
 		for _, h := range hits {
@@ -1087,7 +1141,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.CLIP != nil {
 		var err error
-		d.Similar, err = s.cat.SearchVector(a.CLIP, store.Filter{}, 48)
+		d.Similar, err = s.cat.SearchVector(a.CLIP, store.Filter{Source: "photos"}, 48) // memes left out, as on the pages
 		errs.note("similar scenes", err)
 	}
 	ph := a.Result.Photo

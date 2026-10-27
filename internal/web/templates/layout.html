@@ -184,6 +184,15 @@
       <option value="exclude" {{if eq $p.mono "exclude"}}selected{{end}}>exclude</option>
     </select>
   </label>
+  <label>Source
+    <select name="source" title="Memes and screenshots: images with no camera named in their metadata that look like a meme, post, graphic or screenshot">
+      <option value="">no memes or screenshots</option>
+      <option value="all" {{if eq $p.source "all"}}selected{{end}}>everything</option>
+      <option value="camera" {{if eq $p.source "camera"}}selected{{end}}>camera photos</option>
+      <option value="saved" {{if eq $p.source "saved"}}selected{{end}}>saved images</option>
+      <option value="memes" {{if eq $p.source "memes"}}selected{{end}}>memes &amp; screenshots</option>
+    </select>
+  </label>
   <label>Years
     <span class="yearrange"><select name="year_from" aria-label="From year"><option value="">any</option>{{range .Years}}<option{{if eq (printf "%d" .) $p.year_from}} selected{{end}}>{{.}}</option>{{end}}</select>
     to

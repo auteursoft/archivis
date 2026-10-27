@@ -1,6 +1,6 @@
 {{define "content"}}
 {{template "filters" .}}
-<h1>Duplicates</h1>
+<h1>Duplicates{{if .Data.NoMemes}} <small title="Images with no camera in their metadata that look like a meme, post, graphic or screenshot. Choose Source: everything to show them.">· memes &amp; screenshots hidden</small>{{end}}</h1>
 <p class="hint">Sets of photos with identical perceptual hashes: the same image saved or exported more than once. Each card is one set, showing its best copy; the number is how many copies there are (and how many match the filters). Open a card to see every copy.</p>
 {{template "groupstate" .Data}}
 <div class="grid">

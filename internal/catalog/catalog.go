@@ -453,7 +453,11 @@ func (c *Catalog) SearchVector(e []float32, f store.Filter, k int) ([]PhotoHit, 
 	if !f.Restricts() {
 		return c.filtered(ix.Search([][]float32{e}, vindex.SearchOpts{K: k}), f, k)
 	}
-	n, err := c.Store.FilterCount(f)
+	n := eligibleMax + 1 // only memes left out: nearly everything matches, so widen
+	var err error
+	if f.Narrows() {
+		n, err = c.Store.FilterCount(f)
+	}
 	if err != nil || n == 0 {
 		return nil, err
 	}
@@ -546,7 +550,7 @@ func (c *Catalog) SearchFaces(qs [][]float32, k int, minScore float32, skip func
 // or no more faces clear minScore.
 func (c *Catalog) SearchFacePhotos(q []float32, f store.Filter, k int, minScore float32) ([]PhotoHit, error) {
 	var keep func(fid int64) bool
-	if f.Restricts() {
+	if f.Narrows() { // only memes left out: nearly everything matches, so the candidates are filtered below
 		n, err := c.Store.FilterCount(f)
 		if err != nil || n == 0 {
 			return nil, err

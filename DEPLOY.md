@@ -720,6 +720,47 @@ separate from the sort of the photos below.
 After upgrading, the folders are worked out once more in the background,
 to add those dates and scores.
 
+### Memes and screenshots
+
+Pages leave out memes and screenshots unless you ask for them. The
+**Source** filter offers:
+- no memes or screenshots (the default);
+- everything;
+- camera photos;
+- saved images;
+- memes & screenshots.
+
+The heading says when memes are hidden. From the command line, use
+`--source photos|camera|saved|memes`; without it, the command line lists
+everything.
+
+**How a photo's source is worked out:**
+- A photo whose metadata names a camera is a **camera photo**, whatever it
+  shows. A phone's own photos count too.
+- Anything else (sent through a messaging app, downloaded, screenshotted)
+  is a **saved image**, unless its CLIP embedding looks like a meme, a
+  social media post, a news or sports graphic, a quote card or a screenshot.
+  Then it is a **meme or screenshot**.
+
+**Apple Photos libraries.** Inside an Apple Photos library, Archivis also
+reads which photos Photos itself calls screenshots. It reads them from the
+library's `database/Photos.sqlite`, opened read-only, and needs macOS 10.15
+or later. Those photos are memes and screenshots whatever they look like.
+Archivis checks this after each index run, when `archivis serve` starts,
+and after `archivis retag`.
+
+In a test with 126 made-up memes and screenshots and 80 real phone photos
+stripped of their metadata, 115 of the memes were hidden and 2 of the photos
+were. Hidden photos are never lost: choose "everything" or "saved images" to
+see them.
+
+New photos are sorted as they are indexed. Photos catalogued before
+upgrading are sorted from their stored embeddings, with no re-analysis:
+- by `archivis serve` when it starts, in the background;
+- or by the next index run.
+
+Until then they show. `archivis retag` sorts every photo again.
+
 ## Teaching it your taste
 
 Rate photos on their pages in the web interface (or say the aesthetic score

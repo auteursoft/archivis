@@ -30,6 +30,7 @@ type Engines struct {
 	// catalog.Open from the catalogue).
 	Aesthetics []AestheticModel
 	Tagger     *Tagger
+	Sources    *Sources // tells memes and screenshots (needs the CLIP text model)
 }
 
 // Layout of the data directory.
@@ -195,6 +196,7 @@ func AnalyzeImage(d *imageio.Decoded, eng *Engines) (*Analysis, error) {
 		a.Result.AestheticScores, p.Aesthetic = ScoreAesthetic(eng.Aesthetics, e)
 		a.Result.Tags = eng.Tagger.Tags(e)
 	}
+	p.Source = eng.Sources.Of(d.Meta.Make != "" || d.Meta.Model != "", a.CLIP) // the photo's metadata is filled in later: read it here
 	a.Metrics = quality.Analyze(img)
 	q := a.Metrics
 	p.PHash = imageio.PHash(img)

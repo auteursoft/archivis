@@ -941,6 +941,107 @@ func TestListenAndServeStopsBackgroundWork(t *testing.T) {
 	s.regroup(true) // after shutdown: does nothing
 }
 
+// OnStart work (the startup backfill of sources) is part of the background
+// work: when serving stops, its context ends and ListenAndServe waits for
+// it, so the catalogue is not closed under it.
+func TestOnStartStopsWithServer(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	started, finished := make(chan struct{}), make(chan error, 1)
+	s.OnStart = func(ctx context.Context) {
+		close(started)
+		<-ctx.Done() // a long backfill, until told to stop
+		time.Sleep(50 * time.Millisecond)
+		finished <- ctx.Err()
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err := s.ListenAndServe(l.Addr().String()); err == nil { // the address is taken: serving stops at once
+		t.Fatal("served on a taken address")
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("OnStart never ran")
+	}
+	select {
+	case err := <-finished:
+		if err == nil {
+			t.Fatal("OnStart's context was not cancelled")
+		}
+	default:
+		t.Fatal("ListenAndServe returned while OnStart was still running")
+	}
+}
+
+// OnStart runs after the startup regroup: a Photos library catalogued by an
+// index run that stopped before regrouping is listed by the time OnStart
+// (which marks Apple's screenshots in the listed libraries) looks.
+func TestStartupRunsOnStartAfterRegroup(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	p := "/m/New.photoslibrary/originals/A/SHOT.PNG"
+	if err := cat.Store.Save([]*store.Result{{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, Version: store.SchemaVersion}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !cat.Store.FoldersStale() {
+		t.Fatal("folders current before any regroup")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.ctx.Store(&ctx)
+	var libs []store.Folder
+	stale := true
+	s.OnStart = func(context.Context) {
+		libs, _ = cat.Store.PhotosLibraries()
+		stale = cat.Store.FoldersStale()
+		// then it finds the photo is a screenshot, which makes the folders
+		// (their covers) stale
+		in, _ := cat.Store.SourceInputs(0, true, 10)
+		if err := cat.Store.SetSources([]store.SourceSet{{ID: in[0].ID, Seq: in[0].Seq, Source: store.SourceMeme}}); err != nil {
+			t.Error(err)
+		}
+	}
+	s.startup(ctx)
+	if stale || len(libs) != 1 || libs[0].Path != "/m/New.photoslibrary" {
+		t.Fatalf("OnStart saw folders stale=%v, libraries %+v; want them worked out first", stale, libs)
+	}
+	if cat.Store.FoldersStale() {
+		t.Fatal("folders left stale after OnStart changed sources: covers wait for the next periodic regroup")
+	}
+}
+
+// A regroup under way while OnStart changes sources (the ticker's, or a
+// settings change's) read them before the change, so it leaves the groups
+// and folders stale; startup waits for it to finish, then regroups, rather
+// than leaving them for the next periodic regroup.
+func TestStartupRegroupsAfterConcurrentRebuild(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	p := "/m/New.photoslibrary/originals/A/SHOT.PNG"
+	if err := cat.Store.Save([]*store.Result{{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, Version: store.SchemaVersion}}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.ctx.Store(&ctx)
+	s.OnStart = func(context.Context) {
+		in, _ := cat.Store.SourceInputs(0, true, 10)
+		if err := cat.Store.SetSources([]store.SourceSet{{ID: in[0].ID, Seq: in[0].Seq, Source: store.SourceMeme}}); err != nil {
+			t.Error(err)
+		}
+		s.regrouping.Store(true) // another regroup is under way ...
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			s.regrouping.Store(false) // ... and finishes
+		}()
+	}
+	s.startup(ctx)
+	if cat.Store.FoldersStale() || cat.Store.GroupsStale(cat.Store.GroupOptions()) {
+		t.Fatal("left stale: startup's last regroup gave up on the one under way")
+	}
+}
+
 // The Photos page shows a stack of near-identical burst frames as one card,
 // its best frame with the count; with stacking off, every frame. A frame's
 // page lists the rest of its stack.

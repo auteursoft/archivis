@@ -24,7 +24,7 @@ type albumCard struct {
 	Album    string // a top-level album's key for renaming: its root, or store.IPhoneAlbum
 	Href     string
 	Path     string
-	Total    int
+	Total    int          // photos below, less memes and screenshots (as the album's page shows by default)
 	Cover    *store.Photo // nil if none
 	NewestAt int64        // 0: none dated
 	Avg      float64
@@ -222,8 +222,13 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 	known := -1
 	plain := f
 	plain.Dirs = nil
-	if !plain.Restricts() && !d.Stale {
+	if !plain.Narrows() && !d.Stale {
 		known = total // the folders say how many: no count
+		if plain.Source == "photos" {
+			memes, err := st.MemeCount(f.Dirs) // less the memes left out (an index of them alone)
+			fail(err)
+			known = max(0, total-memes)
+		}
 	}
 	s.filterForm(r, p, "/albums")
 	if text != "" {
@@ -269,7 +274,7 @@ func (s *Server) albumCards(fs []store.Folder, asort string, fail func(error)) [
 	out := make([]albumCard, 0, len(fs))
 	for _, f := range fs {
 		avg, scored := f.AvgScore()
-		out = append(out, albumCard{Name: f.Name(), Own: f.Name(), Href: dirHref(f.Path, asort), Path: f.Path, Total: f.Total,
+		out = append(out, albumCard{Name: f.Name(), Own: f.Name(), Href: dirHref(f.Path, asort), Path: f.Path, Total: f.Total - f.Memes,
 			Cover: covers[f.CoverID], NewestAt: f.NewestAt, Avg: avg, Scored: scored})
 	}
 	return out

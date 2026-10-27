@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS photos (
 	overall          REAL,
 	face_count       INTEGER NOT NULL DEFAULT 0,
 	blockiness       REAL NOT NULL DEFAULT 1,
+	-- where the photo came from (source.go): 0 not yet worked out, 1 a
+	-- camera (its metadata names one), 2 a saved image, 3 a meme or screenshot
+	source           INTEGER NOT NULL DEFAULT 0,
+	-- 1: Apple Photos calls it a screenshot (screenshots.go). Never written
+	-- by Save, and while set, Save keeps source 3 whatever analysis says.
+	apple_shot       INTEGER NOT NULL DEFAULT 0,
 	indexed_at       INTEGER NOT NULL,
 	version          INTEGER NOT NULL,
 	-- change counter: each Save takes the next value (see nextSeq), so a
@@ -111,6 +117,8 @@ CREATE TABLE IF NOT EXISTS photo_groups (
 	max_colorful  REAL NOT NULL DEFAULT 0,
 	max_faces     INTEGER NOT NULL DEFAULT 0,
 	faces_overall REAL NOT NULL DEFAULT 0,
+	-- members that are memes or screenshots (a group of only those is left out by default)
+	memes         INTEGER NOT NULL DEFAULT 0,
 	members       TEXT NOT NULL,
 	PRIMARY KEY (kind, id)
 ) WITHOUT ROWID;
@@ -128,6 +136,11 @@ CREATE INDEX IF NOT EXISTS photo_groups_faces2    ON photo_groups(kind, max_face
 -- interrupted one (small: only photos in a group).
 CREATE INDEX IF NOT EXISTS photos_in_burst ON photos(burst_id) WHERE burst_id != 0;
 CREATE INDEX IF NOT EXISTS photos_in_dup   ON photos(dup_id) WHERE dup_id != 0;
+
+-- Memes and screenshots by path, to count them (all, or below a folder)
+-- without reading every photo; photos whose source is not worked out yet.
+CREATE INDEX IF NOT EXISTS photos_memes     ON photos(path) WHERE source = 3;
+CREATE INDEX IF NOT EXISTS photos_unsourced ON photos(id) WHERE source = 0;
 CREATE INDEX IF NOT EXISTS photos_in_stack ON photos(stack_top) WHERE stack_size != 0; -- tops too, which need not be in a burst
 
 -- Deleting a stack's top shows its other frames again; any delete marks
@@ -220,7 +233,9 @@ CREATE TABLE IF NOT EXISTS folders (
 	-- have an overall score and their sum (for the average)
 	newest_at     INTEGER NOT NULL DEFAULT 0,
 	scored        INTEGER NOT NULL DEFAULT 0,
-	score_sum     REAL NOT NULL DEFAULT 0
+	score_sum     REAL NOT NULL DEFAULT 0,
+	-- of the photos below, how many are memes or screenshots
+	memes         INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent, path);
 
@@ -542,6 +557,7 @@ type Photo struct {
 	CLIP            []byte  // float16 embedding (stored in photo_clip; not filled by queries — see Store.CLIP)
 	IndexedAt       int64
 	Version         int
+	Source          int // SourceCamera, SourceSaved, SourceMeme; 0 = not yet worked out
 
 	// Groups (read-only here: set by RebuildGroups, never by Save).
 	BurstID   int64 // the burst this frame belongs to (0 = none)
@@ -578,7 +594,7 @@ const photoCols = `id, path, size, mtime, fingerprint, format, width, height, ta
 	gps_lat, gps_lon, artist, phash, sharpness, sharpness_global, face_sharpness, brightness,
 	highlights, shadows, dynamic_range, contrast, cast_a, cast_b, cast_strength, colorfulness,
 	saturation, monochrome, noise, focus_score, exposure_score, color_score, noise_score,
-	technical, aesthetic, overall, face_count, blockiness, indexed_at, version`
+	technical, aesthetic, overall, face_count, blockiness, indexed_at, version, source`
 
 // readCols are photoCols plus the group columns. Reads use them; writes
 // (insertPhotoSQL, updatePhotoSQL) use photoCols, so saving a re-indexed
@@ -591,7 +607,7 @@ func (p *Photo) scanArgs() []any {
 		&p.GPSLat, &p.GPSLon, &p.Artist, (*int64ptr)(&p.PHash), &p.Sharpness, &p.SharpnessGlobal, &p.FaceSharpness, &p.Brightness,
 		&p.Highlights, &p.Shadows, &p.DynamicRange, &p.Contrast, &p.CastA, &p.CastB, &p.CastStrength, &p.Colorfulness,
 		&p.Saturation, &p.Monochrome, &p.Noise, &p.FocusScore, &p.ExposureScore, &p.ColorScore, &p.NoiseScore,
-		&p.Technical, &p.Aesthetic, &p.Overall, &p.FaceCount, &p.Blockiness, &p.IndexedAt, &p.Version,
+		&p.Technical, &p.Aesthetic, &p.Overall, &p.FaceCount, &p.Blockiness, &p.IndexedAt, &p.Version, &p.Source,
 		&p.BurstID, &p.StackTop, &p.StackSize, &p.Stacked, &p.DupID}
 }
 
@@ -616,7 +632,7 @@ func (p *Photo) insertArgs() []any {
 		p.GPSLat, p.GPSLon, p.Artist, int64(p.PHash), p.Sharpness, p.SharpnessGlobal, p.FaceSharpness, p.Brightness,
 		p.Highlights, p.Shadows, p.DynamicRange, p.Contrast, p.CastA, p.CastB, p.CastStrength, p.Colorfulness,
 		p.Saturation, p.Monochrome, p.Noise, p.FocusScore, p.ExposureScore, p.ColorScore, p.NoiseScore,
-		p.Technical, p.Aesthetic, p.Overall, p.FaceCount, p.Blockiness, p.IndexedAt, p.Version}
+		p.Technical, p.Aesthetic, p.Overall, p.FaceCount, p.Blockiness, p.IndexedAt, p.Version, p.Source}
 }
 
 var insertPhotoSQL = func() string {
@@ -629,6 +645,9 @@ var updatePhotoSQL = func() string {
 	cols := strings.Split(strings.TrimPrefix(photoCols, "id, "), ",")
 	for i, c := range cols {
 		cols[i] = strings.TrimSpace(c) + " = ?"
+		if cols[i] == "source = ?" { // Apple's screenshot flag outranks a re-analysis
+			cols[i] = "source = CASE WHEN apple_shot = 1 THEN 3 ELSE ? END"
+		}
 	}
 	return "UPDATE photos SET " + strings.Join(cols, ", ") + " WHERE id = ?"
 }()

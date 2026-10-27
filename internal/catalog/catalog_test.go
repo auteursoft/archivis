@@ -598,3 +598,36 @@ func TestSearchStacksFillsThePage(t *testing.T) {
 		t.Fatalf("all matches: %d, want 204", len(got))
 	}
 }
+
+// Leaving memes out (the pages' default) finds the best matches that are
+// not memes, however many memes look more like the query, without listing
+// every photo the filter keeps; asking for memes finds only them.
+func TestSearchLeavesMemesOut(t *testing.T) {
+	c := open(t)
+	var rs []*store.Result
+	for i := 0; i < 60; i++ { // the closest matches, all memes
+		r := photo(fmt.Sprintf("/meme%02d.png", i), 0, -1)
+		r.Photo.Source = store.SourceMeme
+		rs = append(rs, r)
+	}
+	for i := 0; i < 10; i++ {
+		r := photo(fmt.Sprintf("/photo%02d.jpg", i), 1+i%3, -1)
+		r.Photo.Source = store.SourceCamera
+		rs = append(rs, r)
+	}
+	if err := c.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	c.Refresh()
+	for src, prefix := range map[string]string{"photos": "/photo", "memes": "/meme"} {
+		hits, err := c.SearchVector(unit(0), store.Filter{Source: src}, 5)
+		if err != nil || len(hits) != 5 {
+			t.Fatalf("%s: %d hits (%v), want 5", src, len(hits), err)
+		}
+		for _, h := range hits {
+			if !strings.HasPrefix(h.Path, prefix) {
+				t.Fatalf("%s: %s found", src, h.Path)
+			}
+		}
+	}
+}
