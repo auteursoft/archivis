@@ -123,3 +123,22 @@ func markSourcesChanged(tx *sql.Tx) error {
 	}
 	return markGroupsDirty(tx)
 }
+
+// MemeIDs returns the ids of the memes and screenshots (through the
+// photos_memes index), for searches over faces, which leave them out.
+func (s *Store) MemeIDs() (map[int64]bool, error) {
+	rows, err := s.DB.Query(`SELECT id FROM photos INDEXED BY photos_memes WHERE source = 3`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}

@@ -4,7 +4,7 @@
   <img class="queryimg" src="/query/{{.Token}}/img" alt="">
   <div>
     <h1>Search by photo</h1>
-    <p>{{len .Faces}} face{{if ne (len .Faces) 1}}s{{end}} found in your image.</p>
+    <p>{{len .Faces}} face{{if ne (len .Faces) 1}}s{{end}} found in your image.{{if .NoMemes}} <small title="Images with no camera in their metadata that look like a meme, post, graphic or screenshot are left out of the matches.">· memes &amp; screenshots hidden</small>{{end}}</p>
     <details><summary>Quality of this image</summary>
       <table class="metrics">{{range .Metrics}}<tr><th>{{.Name}}</th><td>{{.Value}} <small class="note">{{.Note}}</small></td></tr>{{end}}</table>
     </details>

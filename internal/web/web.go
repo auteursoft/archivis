@@ -1105,6 +1105,7 @@ type queryData struct {
 	Faces   []queryFace
 	Similar []catalog.PhotoHit
 	Metrics []metricRow
+	NoMemes bool // memes and screenshots are left out of the matches
 }
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
@@ -1117,15 +1118,19 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := e.q.Analysis
-	d := &queryData{Token: tok}
+	d := &queryData{Token: tok, NoMemes: true}
 	names := s.personNames()
+	// memes and screenshots left out, as on the pages: of faces too
+	memes, err := s.cat.Store.MemeIDs()
+	skip := func(fid int64) bool { return memes[s.cat.PhotoOfFace(fid)] }
 	min := fval(r, "min")
 	if min <= 0 {
 		min = 0.35
 	}
 	var errs pageErrs
+	errs.note("memes and screenshots", err)
 	for i, f := range a.Faces {
-		hits, err := s.cat.SearchFaces([][]float32{f.Embedding}, queryLimit, float32(min), nil)
+		hits, err := s.cat.SearchFaces([][]float32{f.Embedding}, queryLimit, float32(min), skip)
 		errs.note(fmt.Sprintf("face %d search", i+1), err)
 		qf := queryFace{Index: i}
 		for _, h := range hits {

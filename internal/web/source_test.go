@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/auteursoft/archivis/internal/catalog"
+	"github.com/auteursoft/archivis/internal/indexer"
+	"github.com/auteursoft/archivis/internal/ml"
 	"github.com/auteursoft/archivis/internal/store"
 	"github.com/auteursoft/archivis/internal/vindex"
 )
@@ -173,5 +176,34 @@ func TestSimilarPhotosLeaveMemesOut(t *testing.T) {
 	}
 	if got := similar(rs[1].Photo.ID); !strings.Contains(got, "/s/meme-twin.jpg") {
 		t.Fatal("a meme's similar photos should include the alike meme")
+	}
+}
+
+// Search by photo leaves memes out of its face matches too, as of its
+// similar scenes, and says so.
+func TestQueryFaceMatchesLeaveMemesOut(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	face := make([]float32, 512)
+	face[3] = 1
+	var rs []*store.Result
+	for _, x := range []struct {
+		name string
+		src  int
+	}{{"camera", store.SourceCamera}, {"meme", store.SourceMeme}} {
+		p := "/q/" + x.name + ".jpg"
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, Source: x.src, FaceCount: 1, Version: store.SchemaVersion},
+			Faces: []store.Face{{X1: .1, Y1: .1, X2: .3, Y2: .4, Score: .9, Embedding: vindex.EncodeF16(face)}}})
+	}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	s.cacheQuery("tok", &catalog.QueryResult{Analysis: &indexer.Analysis{Faces: []ml.Face{{Embedding: face}}, Result: &store.Result{}}})
+	body := get(t, s.Handler(), "/query/tok")
+	mustContain(t, "query", body, "/q/camera.jpg", "memes &amp; screenshots hidden")
+	if strings.Contains(body, "/q/meme.jpg") {
+		t.Fatal("a face in a meme matched on Search by photo")
 	}
 }
