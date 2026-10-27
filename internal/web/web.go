@@ -745,7 +745,11 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Tags, err = s.cat.Store.TagsForPhoto(id)
 	errs.note("tags", err)
-	d.Similar, err = s.cat.SimilarPhotos(id, store.Filter{}, 12)
+	similar := store.Filter{Source: "photos"} // memes left out, as on the pages; a meme's own page may list alike ones
+	if ph.Source == store.SourceMeme {
+		similar.Source = ""
+	}
+	d.Similar, err = s.cat.SimilarPhotos(id, similar, 12)
 	if _, has := s.cat.PhotoIndex().Vector(id); has { // no embedding is not a failure
 		errs.note("similar photos", err)
 	}
@@ -1122,7 +1126,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.CLIP != nil {
 		var err error
-		d.Similar, err = s.cat.SearchVector(a.CLIP, store.Filter{}, 48)
+		d.Similar, err = s.cat.SearchVector(a.CLIP, store.Filter{Source: "photos"}, 48) // memes left out, as on the pages
 		errs.note("similar scenes", err)
 	}
 	ph := a.Result.Photo

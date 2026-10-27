@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/auteursoft/archivis/internal/store"
+	"github.com/auteursoft/archivis/internal/vindex"
 )
 
 // The Photos page and Albums leave memes and screenshots out unless asked;
@@ -102,4 +103,74 @@ func sortedInts(xs []int) []int {
 	out := slices.Clone(xs)
 	slices.Sort(out)
 	return out
+}
+
+// Album cards count what the album's page shows by default: memes left out.
+func TestAlbumCardCountsLeaveMemesOut(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	var rs []*store.Result
+	for i, src := range []int{store.SourceCamera, store.SourceSaved, store.SourceMeme, store.SourceMeme} {
+		p := fmt.Sprintf("/pics/%d.jpg", i)
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, Overall: 50, Source: src, Version: store.SchemaVersion}})
+	}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.Store.RecordRoots([]string{"/pics"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cat.Store.RebuildFolders(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/albums")
+	mustContain(t, "albums", body, `<span class="count">2</span>`)
+	if strings.Contains(body, `<span class="count">4</span>`) {
+		t.Error("the album card counts the memes its page hides")
+	}
+}
+
+// Similar photos leave memes out, as the pages do, unless the photo itself
+// is one: a meme's page may list alike memes.
+func TestSimilarPhotosLeaveMemesOut(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	vec := func(a, b float32) []byte {
+		v := make([]float32, 512)
+		v[0], v[1] = a, b
+		return vindex.EncodeF16(v)
+	}
+	var rs []*store.Result
+	for _, x := range []struct {
+		name string
+		src  int
+		clip []byte
+	}{
+		{"photo", store.SourceCamera, vec(1, 0)},
+		{"meme-near", store.SourceMeme, vec(0.99, 0.14)},    // the closest to photo
+		{"other-photo", store.SourceCamera, vec(0.9, 0.44)}, // further
+		{"meme-twin", store.SourceMeme, vec(0.98, 0.2)},
+	} {
+		p := "/s/" + x.name + ".jpg"
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: p, Source: x.src, CLIP: x.clip, Version: store.SchemaVersion}})
+	}
+	if err := cat.Store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	similar := func(id int64) string {
+		body := get(t, s.Handler(), fmt.Sprintf("/photo/%d", id))
+		i := strings.Index(body, "<h2>Similar photos</h2>")
+		if i < 0 {
+			t.Fatalf("photo %d: no similar photos", id)
+		}
+		return body[i:]
+	}
+	got := similar(rs[0].Photo.ID)
+	if !strings.Contains(got, "/s/other-photo.jpg") || strings.Contains(got, "/s/meme-near.jpg") || strings.Contains(got, "/s/meme-twin.jpg") {
+		t.Fatal("a photo's similar photos: want the other photo, not the memes")
+	}
+	if got := similar(rs[1].Photo.ID); !strings.Contains(got, "/s/meme-twin.jpg") {
+		t.Fatal("a meme's similar photos should include the alike meme")
+	}
 }

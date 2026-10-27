@@ -23,7 +23,7 @@ import (
 const memeCover = 1000
 
 // foldersVersion changes when the rules do, forcing a rebuild.
-const foldersVersion = "4"
+const foldersVersion = "5"
 
 // Folder is a folder holding photos somewhere below it.
 type Folder struct {
@@ -35,6 +35,7 @@ type Folder struct {
 	NewestAt     int64   // the latest taken_at below (0: none dated, as taken_at)
 	Scored       int     // photos below with an overall score
 	ScoreSum     float64 // their scores added up
+	Memes        int     // photos below that are memes or screenshots (pages leave them out by default)
 }
 
 // AvgScore is the mean overall score of the photos below that have one
@@ -57,6 +58,7 @@ func (f *Folder) Add(o Folder) {
 	}
 	f.Scored += o.Scored
 	f.ScoreSum += o.ScoreSum
+	f.Memes += o.Memes
 }
 
 // Name is the folder's last path element.
@@ -216,7 +218,7 @@ func (s *Store) strings(q string, args ...any) ([]string, error) {
 }
 
 func (s *Store) folders(q string, args ...any) ([]Folder, error) {
-	rows, err := s.DB.Query(`SELECT path, parent, total, cover_id, cover_overall, newest_at, scored, score_sum FROM folders `+q, args...)
+	rows, err := s.DB.Query(`SELECT path, parent, total, cover_id, cover_overall, newest_at, scored, score_sum, memes FROM folders `+q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +226,7 @@ func (s *Store) folders(q string, args ...any) ([]Folder, error) {
 	var out []Folder
 	for rows.Next() {
 		var f Folder
-		if err := rows.Scan(&f.Path, &f.Parent, &f.Total, &f.CoverID, &f.CoverOverall, &f.NewestAt, &f.Scored, &f.ScoreSum); err != nil {
+		if err := rows.Scan(&f.Path, &f.Parent, &f.Total, &f.CoverID, &f.CoverOverall, &f.NewestAt, &f.Scored, &f.ScoreSum, &f.Memes); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -402,8 +404,8 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 			if o, ok := old[f.Path]; ok && o == f {
 				continue
 			}
-			if err := w.exec(`INSERT OR REPLACE INTO folders (path, parent, total, cover_id, cover_overall, newest_at, scored, score_sum)
-				VALUES (?,?,?,?,?,?,?,?)`, f.Path, f.Parent, f.Total, f.CoverID, f.CoverOverall, f.NewestAt, f.Scored, f.ScoreSum); err != nil {
+			if err := w.exec(`INSERT OR REPLACE INTO folders (path, parent, total, cover_id, cover_overall, newest_at, scored, score_sum, memes)
+				VALUES (?,?,?,?,?,?,?,?,?)`, f.Path, f.Parent, f.Total, f.CoverID, f.CoverOverall, f.NewestAt, f.Scored, f.ScoreSum, f.Memes); err != nil {
 				return err
 			}
 			st.Writes++
@@ -503,6 +505,7 @@ func (s *Store) RebuildFolders(ctx context.Context) (FolderStats, error) {
 			one := Folder{Total: 1, CoverID: p.id, CoverOverall: p.overall.Float64, NewestAt: p.at} // unscored counts as 0 for the cover, as before
 			if p.source == SourceMeme {
 				one.CoverOverall -= memeCover // pages leave memes out: one is a cover only when nothing else is below
+				one.Memes = 1
 			}
 			if p.overall.Valid {
 				one.Scored, one.ScoreSum = 1, p.overall.Float64

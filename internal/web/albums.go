@@ -24,7 +24,7 @@ type albumCard struct {
 	Album    string // a top-level album's key for renaming: its root, or store.IPhoneAlbum
 	Href     string
 	Path     string
-	Total    int
+	Total    int          // photos below, less memes and screenshots (as the album's page shows by default)
 	Cover    *store.Photo // nil if none
 	NewestAt int64        // 0: none dated
 	Avg      float64
@@ -274,7 +274,7 @@ func (s *Server) albumCards(fs []store.Folder, asort string, fail func(error)) [
 	out := make([]albumCard, 0, len(fs))
 	for _, f := range fs {
 		avg, scored := f.AvgScore()
-		out = append(out, albumCard{Name: f.Name(), Own: f.Name(), Href: dirHref(f.Path, asort), Path: f.Path, Total: f.Total,
+		out = append(out, albumCard{Name: f.Name(), Own: f.Name(), Href: dirHref(f.Path, asort), Path: f.Path, Total: f.Total - f.Memes,
 			Cover: covers[f.CoverID], NewestAt: f.NewestAt, Avg: avg, Scored: scored})
 	}
 	return out

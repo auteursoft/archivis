@@ -233,7 +233,9 @@ CREATE TABLE IF NOT EXISTS folders (
 	-- have an overall score and their sum (for the average)
 	newest_at     INTEGER NOT NULL DEFAULT 0,
 	scored        INTEGER NOT NULL DEFAULT 0,
-	score_sum     REAL NOT NULL DEFAULT 0
+	score_sum     REAL NOT NULL DEFAULT 0,
+	-- of the photos below, how many are memes or screenshots
+	memes         INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent, path);
 
