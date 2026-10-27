@@ -201,13 +201,23 @@ func sameOrigin(next http.Handler) http.Handler {
 // startup is the background work ListenAndServe starts with: the groups and
 // folders worked out if stale, then OnStart, then the folders again if it
 // changed them (photos' sources pick album covers), at once rather than at
-// the next periodic regroup.
+// the next periodic regroup. A regroup already under way (the ticker's, or
+// a settings change's) may have read the sources before OnStart changed
+// them; it leaves them stale, so startup waits for it, then regroups.
 func (s *Server) startup(ctx context.Context) {
 	s.regroup(false)
-	if s.OnStart != nil {
-		s.OnStart(ctx)
-		s.regroup(true) // past the rate limit the first run just set; only if stale
+	if s.OnStart == nil {
+		return
 	}
+	s.OnStart(ctx)
+	for s.regrouping.Load() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	s.regroup(true) // past the rate limit the first run just set; only if stale
 }
 
 // ListenAndServe serves until the process exits, refreshing the in-memory
