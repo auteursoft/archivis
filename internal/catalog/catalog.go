@@ -365,6 +365,13 @@ func SortHits(hits []PhotoHit, by string) {
 	if by == "" || by == "relevance" {
 		return
 	}
+	less := PhotoLess(by)
+	sort.SliceStable(hits, func(i, j int) bool { return less(hits[i].Photo, hits[j].Photo) })
+}
+
+// PhotoLess reports whether photo a comes before b in one of the browse
+// orders (see store.Filter.Sort; "overall" for "" or anything unknown).
+func PhotoLess(by string) func(a, b store.Photo) bool {
 	aes := func(p store.Photo) float64 {
 		if p.Aesthetic.Valid {
 			return p.Aesthetic.Float64
@@ -400,7 +407,7 @@ func SortHits(hits []PhotoHit, by string) {
 	if less == nil { // "overall" and anything unknown, as in SQL
 		less = func(a, b store.Photo) bool { return a.Overall > b.Overall }
 	}
-	sort.SliceStable(hits, func(i, j int) bool { return less(hits[i].Photo, hits[j].Photo) })
+	return less
 }
 
 // SearchText finds photos matching a natural-language description.

@@ -720,6 +720,15 @@ separate from the sort of the photos below.
 After upgrading, the folders are worked out once more in the background,
 to add those dates and scores.
 
+**Filters on the album list.** The Albums page has the Photos page's filters
+and sorts. With any filter set (beyond leaving memes out) or a photo sort
+chosen, the list shows only the albums that hold matching photos. Each card
+shows its best match, and with a photo sort the cards follow that photo's
+order; without one, "Albums by" still orders them. An album opened from a
+filtered list opens filtered, and its subfolders are narrowed the same way.
+The way back (the "Albums" link and the folders above) returns to the
+filtered list, even after you change or clear the filters inside the album.
+
 ### Memes and screenshots
 
 Pages leave out memes and screenshots unless you ask for them. The
