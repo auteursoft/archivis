@@ -153,6 +153,19 @@ func (s *Store) CleanAppCaches(ctx context.Context) (AppCacheCleanup, error) {
 					}
 					m, _ := r.RowsAffected()
 					res.FeedbackMoved += int(m)
+					// a hand-given name that found no face on the twin (none
+					// overlapping, or faces not detected there) would be lost
+					// with the copy: keep it
+					var lost int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM faces c WHERE c.photo_id = ? AND c.person_source = 'manual'
+						AND NOT EXISTS (SELECT 1 FROM faces t WHERE t.photo_id = ? AND t.person_source = 'manual' AND t.person_id = c.person_id)`,
+						c.id, twin).Scan(&lost); err != nil {
+						return err
+					}
+					if lost > 0 {
+						res.Kept++
+						continue
+					}
 				}
 				if _, err := tx.Exec(`DELETE FROM photos WHERE id = ?`, c.id); err != nil {
 					return err
@@ -177,39 +190,73 @@ func (s *Store) CleanAppCaches(ctx context.Context) (AppCacheCleanup, error) {
 const twinMaxBits = 10
 
 // twinOf finds a catalogued photo, outside any app cache, that copy id is
-// a copy of (0 if none): one with the same perceptual hash, or one taken
-// within a second of it by the same camera that looks alike.
+// a copy of (0 if none): one with the same perceptual hash; else, if the
+// copy names its camera, the closest-looking photo that camera took within
+// a second of it (nearest hash, then nearest time). Two equally close
+// candidates (a burst) are no twin: which one it copies is not known.
 func twinOf(tx *sql.Tx, id int64, phash uint64, at int64, camera string) (int64, error) {
-	pick := func(q string, args []any, ok func(path string, h uint64) bool) (int64, error) {
-		rows, err := tx.Query(q, args...)
+	if phash != 0 {
+		rows, err := tx.Query(`SELECT id, path FROM photos WHERE phash = ? ORDER BY id`, int64(phash))
 		if err != nil {
 			return 0, err
 		}
-		defer rows.Close()
 		for rows.Next() {
 			var tid int64
 			var path string
-			var h uint64
-			if err := rows.Scan(&tid, &path, (*int64ptr)(&h)); err != nil {
+			if err := rows.Scan(&tid, &path); err != nil {
+				rows.Close()
 				return 0, err
 			}
-			if tid != id && !InAppCache(path) && ok(path, h) {
+			if tid != id && !InAppCache(path) {
+				rows.Close()
 				return tid, nil
 			}
 		}
-		return 0, rows.Err()
-	}
-	if phash != 0 {
-		tid, err := pick(`SELECT id, path, phash FROM photos WHERE phash = ? ORDER BY id`, []any{int64(phash)},
-			func(string, uint64) bool { return true })
-		if err != nil || tid != 0 {
-			return tid, err
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return 0, err
 		}
 	}
-	if at == 0 || phash == 0 {
-		return 0, nil
+	if at == 0 || phash == 0 || camera == "" {
+		return 0, nil // a camera-less or undated photo has nothing safe to match by
 	}
-	return pick(`SELECT id, path, phash FROM photos WHERE taken_at BETWEEN ? AND ?
-		AND TRIM(COALESCE(camera_make, '') || ' ' || COALESCE(camera_model, '')) = ? ORDER BY id`, []any{at - 1, at + 1, camera},
-		func(_ string, h uint64) bool { return h != 0 && bits.OnesCount64(h^phash) <= twinMaxBits })
+	rows, err := tx.Query(`SELECT id, path, phash, taken_at FROM photos WHERE taken_at BETWEEN ? AND ?
+		AND TRIM(COALESCE(camera_make, '') || ' ' || COALESCE(camera_model, '')) = ?`, at-1, at+1, camera)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	type cand struct {
+		id         int64
+		bits, secs int
+	}
+	var best *cand
+	tie := false
+	for rows.Next() {
+		var c cand
+		var path string
+		var h uint64
+		var tat int64
+		if err := rows.Scan(&c.id, &path, (*int64ptr)(&h), &tat); err != nil {
+			return 0, err
+		}
+		if c.id == id || h == 0 || InAppCache(path) {
+			continue
+		}
+		c.bits, c.secs = bits.OnesCount64(h^phash), int(max(tat-at, at-tat))
+		if c.bits > twinMaxBits {
+			continue
+		}
+		switch {
+		case best == nil || c.bits < best.bits || (c.bits == best.bits && c.secs < best.secs):
+			best, tie = &c, false
+		case c.bits == best.bits && c.secs == best.secs:
+			tie = true
+		}
+	}
+	if err := rows.Err(); err != nil || best == nil || tie {
+		return 0, err
+	}
+	return best.id, nil
 }

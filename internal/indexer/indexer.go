@@ -98,8 +98,9 @@ var skipDirNames = map[string]bool{
 func (ix *Indexer) excluded(path string, isDir bool) bool {
 	base := filepath.Base(path)
 	// photo apps' own copies (thumbnails, previews) inside their libraries
-	// and catalogs: only the originals are photos (store.PackageChildAllowed)
-	if !store.PackageChildAllowed(filepath.Base(filepath.Dir(path)), base) {
+	// and catalogs: only the originals are photos (store.InAppCache), at any
+	// level, the root's own folders too (a root inside a cache adds nothing)
+	if store.InAppCache(path) {
 		return true
 	}
 	if isDir {

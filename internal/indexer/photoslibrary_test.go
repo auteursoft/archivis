@@ -147,3 +147,36 @@ func TestWalkAppCaches(t *testing.T) {
 		t.Fatalf("walk:\n got %s\nwant %s", g, want)
 	}
 }
+
+// A root inside an app's cache adds nothing: the cache is recognised from
+// the path's folders above the root too.
+func TestWalkRootInsideAppCache(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range []string{"Weddings.cocatalog/Cache/Thumbnails/IMG_1.jpg", "Smith/Capture/CaptureOne/Cache/IMG_2.jpg"} {
+		p := filepath.Join(root, filepath.FromSlash(f))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte("x"), 0o644)
+	}
+	ix := &Indexer{}
+	for _, start := range []string{filepath.Join(root, "Weddings.cocatalog", "Cache"), filepath.Join(root, "Smith", "Capture", "CaptureOne")} {
+		var got []string
+		filepath.WalkDir(start, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if p != start && ix.excluded(p, d.IsDir()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.IsDir() {
+				got = append(got, p)
+			}
+			return nil
+		})
+		if len(got) != 0 {
+			t.Errorf("walk from %s found %v", start, got)
+		}
+	}
+}
