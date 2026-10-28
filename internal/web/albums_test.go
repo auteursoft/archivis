@@ -196,14 +196,19 @@ func TestAlbumSort(t *testing.T) {
 		t.Error("subfolders not newest first")
 	}
 	mustContain(t, "folder keeps the order", body, `<a href="/albums?asort=newest">Albums</a>`, `<input type="hidden" name="asort" value="newest">`)
-	// the photos' sort leaves the albums' alone, and the album sort form keeps the photos' filters
-	body = get(t, h, "/albums?dir=%2Fpics&sort=newest&min_overall=10")
+	// with filters but no photo sort, the album sort form orders the
+	// (filtered) subfolders and keeps the photos' filters
+	body = get(t, h, "/albums?dir=%2Fpics&min_overall=10")
 	i := strings.Index(body, `<form class="albumsort"`)
 	if i < 0 {
 		t.Fatal("no album sort form")
 	}
 	form := body[i : i+strings.Index(body[i:], "</form>")]
-	mustContain(t, "album sort form", form, `name="dir" value="/pics"`, `name="sort" value="newest"`, `name="min_overall" value="10"`, `<option value="name" selected>`)
+	mustContain(t, "album sort form", form, `name="dir" value="/pics"`, `name="min_overall" value="10"`, `<option value="name" selected>`)
+	// a photo sort orders the subfolders by their best photo instead
+	if body := get(t, h, "/albums?dir=%2Fpics&sort=newest"); strings.Contains(body, `<form class="albumsort"`) {
+		t.Error("album sort form shown while a photo sort orders the albums")
+	}
 }
 
 // Display names: admins (anyone, without accounts) name the top-level
@@ -281,5 +286,99 @@ func TestNamedNestedRootInParent(t *testing.T) {
 	at := order(t, body, `>2020</span>`, `>Zebra trip</span>`) // by name: 2020 before Zebra (it was 2019, first)
 	if at[0] > at[1] {
 		t.Error("the named subfolder sorts by its folder name, not its display name")
+	}
+}
+
+// Filters on the album list narrow it to albums holding a match, each shown
+// by its best match (under the photos' sort, which then orders the cards);
+// links into an album carry the filters and the list to come back to (lf),
+// which the way back keeps even once the album's own filters are cleared.
+func TestAlbumListFilters(t *testing.T) {
+	s := albumsServer(t, []string{"/pics", "/pics2"})
+	h := s.Handler()
+	// a filter hides albums without a match
+	body := get(t, h, "/albums?min_overall=90")
+	if !strings.Contains(body, `href="/albums?dir=%2Fpics2&amp;lf=min_overall%3D90&amp;min_overall=90"`) || strings.Contains(body, "dir=%2Fpics&amp;") || strings.Contains(body, "iphone=1") {
+		t.Error("min_overall=90 should leave /pics2 alone")
+	}
+	// a photo sort: covers are each album's best match, cards in its order
+	body = get(t, h, "/albums?min_overall=55&sort=overall")
+	at := order(t, body, `dir=%2Fpics2&amp;`, `iphone=1&amp;`, `dir=%2Fpics&amp;`)
+	if !sort.IntsAreSorted(at) {
+		t.Errorf("cards not ordered by their best match: %v", at)
+	}
+	mustContain(t, "best-match cover", body, `src="/t//pics/2019/trip/b.jpg.jpg"`, // 70, not the folder's own 60/50 mix
+		`href="/albums?dir=%2Fpics2&amp;lf=min_overall%3D55%26sort%3Doverall&amp;min_overall=55&amp;sort=overall"`)
+	if strings.Contains(body, `<form class="albumsort"`) {
+		t.Error("album sort form shown while a photo sort orders the albums")
+	}
+	// nothing matches: say so, and how to see every album
+	mustContain(t, "no match", get(t, h, "/albums?min_overall=100"), "No albums hold photos matching these filters", `href="/albums">Show every album`)
+	// inside an album: its subfolders are filtered by its own filters, and
+	// links carry them and the list (lf) along
+	body = get(t, h, "/albums?dir=%2Fpics&min_overall=65&lf=min_overall%3D55%26sort%3Doverall")
+	mustContain(t, "filtered subfolders", body, `href="/albums?dir=%2Fpics%2F2019&amp;lf=min_overall%3D55%26sort%3Doverall&amp;min_overall=65"`,
+		`<input type="hidden" name="lf" value="min_overall=55&amp;sort=overall">`)
+	if strings.Contains(body, `dir=%2Fpics%2F2020`) {
+		t.Error("a subfolder with no match (2020: 40) still shown")
+	}
+	// the album's filters cleared: the way back still leads to the filtered
+	// list, through ancestors with its filters; reset keeps lf
+	body = get(t, h, "/albums?dir=%2Fpics%2F2019&lf=min_overall%3D55%26sort%3Doverall")
+	mustContain(t, "way back", body, `<a href="/albums?min_overall=55&amp;sort=overall">Albums</a>`,
+		`href="/albums?dir=%2Fpics&amp;lf=min_overall%3D55%26sort%3Doverall&amp;min_overall=55&amp;sort=overall"`)
+	body = get(t, h, "/albums?dir=%2Fpics%2F2019&min_overall=90&lf=min_overall%3D55%26sort%3Doverall")
+	mustContain(t, "reset keeps the list", body, `href="/albums?dir=%2Fpics%2F2019&amp;lf=min_overall%3D55%26sort%3Doverall">Reset</a>`)
+	// no filters: the list as before, every album, no lf on its links
+	body = get(t, h, "/albums")
+	mustContain(t, "unfiltered", body, `href="/albums?dir=%2Fpics"`, `href="/albums?dir=%2Fpics2"`, `href="/albums?iphone=1"`)
+	if strings.Contains(body, "lf=") {
+		t.Error("unfiltered list links carry lf")
+	}
+}
+
+// Review follow-ups: "everything" chosen on the list goes into the albums
+// opened; the iPhone album leads back to the filtered list; an album's own
+// folder is no filter, so an unfiltered album lists every subfolder (one
+// of memes alone too) as before; and the list's filter form leaves the
+// cards in their order unless a photo sort is chosen.
+func TestAlbumListFilterFollowUps(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	seedAlbums(t, cat, []string{"/pics", "/pics2"})
+	meme := &store.Result{Photo: store.Photo{Path: "/pics/memes/x.png", Size: 1, MTime: 1, Fingerprint: "meme", Overall: 20, Source: store.SourceMeme, Version: store.SchemaVersion}}
+	if err := cat.Store.Save([]*store.Result{meme}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cat.Store.RebuildFolders(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h := s.Handler()
+	mustContain(t, "everything kept", get(t, h, "/albums?source=all"), `href="/albums?dir=%2Fpics&amp;lf=source%3Dall&amp;source=all"`)
+	mustContain(t, "iPhone way back", get(t, h, "/albums?iphone=1&min_overall=25&lf=min_overall%3D25"), `<a href="/albums?min_overall=25">Albums</a>`)
+	body := get(t, h, "/albums?dir=%2Fpics")
+	mustContain(t, "unfiltered album", body, `href="/albums?dir=%2Fpics%2Fmemes"`)
+	body = get(t, h, "/albums")
+	mustContain(t, "list form", body, `<option value="" selected>Albums in their order</option>`, `<form class="albumsort"`)
+	if strings.Contains(get(t, h, "/albums?dir=%2Fpics"), "Albums in their order") {
+		t.Error("an album's photo sort offers the list's order")
+	}
+}
+
+// Starred only, on the album list: just the albums holding a starred
+// photo, and the album opened keeps the filter.
+func TestAlbumListStarred(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	seedAlbums(t, cat, []string{"/pics", "/pics2"})
+	var id int64
+	if err := cat.Store.DB.QueryRow(`SELECT id FROM photos WHERE path = '/pics2/e.jpg'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.Store.SetStar(0, id, true); err != nil { // no accounts: the shared list
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/albums?starred=1")
+	mustContain(t, "starred album", body, `href="/albums?dir=%2Fpics2&amp;lf=starred%3D1&amp;starred=1"`)
+	if strings.Contains(body, "dir=%2Fpics&amp;") || strings.Contains(body, "iphone=1&amp;") {
+		t.Error("albums without a starred photo still listed")
 	}
 }

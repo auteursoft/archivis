@@ -4,9 +4,12 @@
 {{if .Top}}
 <h1 class="summary">Albums</h1>
 {{if .NoRoots}}<p class="note">Albums start from the folders you index. The next <code>archivis index</code> run records its folders; to show folders indexed before, run <code>archivis roots add FOLDER</code>.</p>{{end}}
-{{template "albumsort" .}}
+{{template "filters" $}}
+{{if and .Filtered .Folders}}<p class="note">Albums holding photos that match, each shown by its best match{{if .PhotoSort}}, in the photos' sort{{end}}. Open one to see its matches; the way back keeps these filters.</p>{{end}}
+{{if not .PhotoSort}}{{template "albumsort" .}}{{end}}
 {{template "albumgrid" .Folders}}
-{{if and .Folders (or (not $.User) $.Admin)}}
+{{if and .Filtered (not .Folders)}}<p class="empty">No albums hold photos matching these filters. <a href="{{.Reset}}">Show every album</a></p>{{end}}
+{{if and .Folders (or (not $.User) $.Admin) (not .Filtered)}}
 <details class="albumnames">
   <summary>Album names</summary>
   <p class="note">A name shown instead of the folder's own; leave it empty to show the folder's.</p>
@@ -22,7 +25,7 @@
 {{end}}
 {{else}}
 <nav class="crumbs" aria-label="Folders">{{range .Crumbs}}<a href="{{.Href}}"{{with .Path}} title="{{.}}"{{end}}>{{.Name}}</a> › {{end}}<b{{with .Path}} title="{{.}}"{{end}}>{{.Name}}</b>{{with .Path}} <small class="path">{{.}}</small>{{end}}</nav>
-{{with .Folders}}{{template "albumsort" $.Data}}{{template "albumgrid" .}}{{end}}
+{{with .Folders}}{{if not $.Data.PhotoSort}}{{template "albumsort" $.Data}}{{end}}{{template "albumgrid" .}}{{end}}
 {{template "filters" $}}
 <h1 class="summary">{{if .Searched}}Best matches for “{{$.Query}}”{{else}}{{.Total}} photos{{if .Stacked}} <small title="Alike shots of one scene show as one card, the best shot; the number on it counts them. Settings can turn this off.">· alike shots stacked</small>{{end}}{{end}}{{if .NoMemes}} <small title="Images with no camera in their metadata that look like a meme, post, graphic or screenshot. Choose Source: everything to show them.">· memes &amp; screenshots hidden</small>{{end}}{{if .Page}} · page {{add .Page 1}}{{end}}</h1>
 {{template "photogrid" .Photos}}
