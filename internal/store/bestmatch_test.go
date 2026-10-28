@@ -264,3 +264,100 @@ func TestBestMatchesSecondKeyAndUnscored(t *testing.T) {
 		}
 	}
 }
+
+// An album with very many subfolders, and very many groups of any kind (as
+// Windows paths make them), are read without naming every folder in one
+// query, which SQLite refuses past an expression depth of 1000: each
+// group still gets its own best, in every sort and with a filter.
+func TestBestMatchesManySubfolders(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	const n = 1500
+	var rs []*Result
+	add := func(path string) {
+		rs = append(rs, &Result{Photo: Photo{Path: path, Size: 1, MTime: 1, Fingerprint: path, Overall: 50, Version: SchemaVersion}})
+	}
+	for i := range 3000 { // one big subfolder: the walk takes it, the small ones go together
+		add(fmt.Sprintf("/big/a/%d.jpg", i))
+	}
+	unix, unixSizes := [][]string{{"/big/a"}}, []int{3000}
+	win, winSizes := [][]string{}, []int{}
+	for i := range n {
+		add(fmt.Sprintf("/big/d%04d/1.jpg", i))
+		unix, unixSizes = append(unix, []string{fmt.Sprintf("/big/d%04d", i)}), append(unixSizes, 1)
+		add(fmt.Sprintf(`C:\p\d%04d\1.jpg`, i))
+		win, winSizes = append(win, []string{fmt.Sprintf(`C:\p\d%04d`, i)}), append(winSizes, 1)
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	less := func(a, b Photo) bool { return a.Overall > b.Overall }
+	for _, c := range []struct {
+		name   string
+		groups [][]string
+		sizes  []int
+	}{{"subfolders", unix, unixSizes}, {"windows", win, winSizes}} {
+		for _, f := range []Filter{{}, {Sort: "newest"}, {Sort: "worst"}, {Sort: "sharpness"}, {Sort: "faces"}, {MinOverall: 10}, {Sort: "oldest", MinOverall: 10}} {
+			got, err := st.BestMatches(f, c.groups, c.sizes, less)
+			if err != nil {
+				t.Fatalf("%s, %+v: %v", c.name, f, err)
+			}
+			for i, p := range got {
+				if p == nil || !InDir(p.Path, c.groups[i][0]) {
+					t.Fatalf("%s, %+v, group %v: %v", c.name, f, c.groups[i], p)
+				}
+			}
+		}
+	}
+}
+
+// Oldest orders covers as the Photos page does: from 1970 on, then before
+// 1970, then undated; so an album dated only before 1970 is shown by that
+// photo, not an undated one.
+func TestBestMatchesOldestBeforeEpoch(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*Result
+	for i, x := range []struct {
+		path string
+		at   int64
+	}{
+		// the undated photo first by path (read in path order): a tie goes to it
+		{"/a/0undated.jpg", 0}, {"/a/1966.jpg", -100000000}, {"/c/1966.jpg", -100000000}, {"/c/0undated.jpg", 0},
+		{"/b/1950.jpg", -631152000}, {"/b/2000.jpg", 946684800},
+		{"/s/x/0undated.jpg", 0}, {"/s/x/1966.jpg", -100000000}, {"/s/z/1966.jpg", -100000000}, {"/s/z/0undated.jpg", 0},
+		{"/s/y/1950.jpg", -631152000}, {"/s/y/2000.jpg", 946684800},
+	} {
+		rs = append(rs, &Result{Photo: Photo{Path: x.path, Size: 1, MTime: 1, Fingerprint: fmt.Sprint(i), Overall: 50, TakenAt: x.at, Version: SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		groups [][]string
+		want   []string
+	}{
+		{[][]string{{"/a"}, {"/b"}, {"/c", "/d"}}, []string{"/a/1966.jpg", "/b/2000.jpg", "/c/1966.jpg"}},       // per group
+		{[][]string{{"/s/x"}, {"/s/y"}, {"/s/z"}}, []string{"/s/x/1966.jpg", "/s/y/2000.jpg", "/s/z/1966.jpg"}}, // per subfolder
+	} {
+		got, err := st.BestMatches(Filter{Sort: "oldest"}, c.groups, []int{2, 2, 2}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, p := range got {
+			name := ""
+			if p != nil {
+				name = p.Path
+			}
+			if name != c.want[i] {
+				t.Errorf("group %v: %q, want %q", c.groups[i], name, c.want[i])
+			}
+		}
+	}
+}

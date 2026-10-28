@@ -67,7 +67,10 @@ func (s *Store) BestMatches(f Filter, groups [][]string, sizes []int, less func(
 			return nil, err
 		}
 		var smallBest []*Photo
-		if smallGroups := pick(small); nested(smallGroups) {
+		smallGroups := pick(small)
+		if parent, ok := siblings(smallGroups); ok { // an album's subfolders, however many: one read of the album
+			smallBest, err = s.bestByChild(f, smallGroups, parent, sum < 200000)
+		} else if nested(smallGroups) {
 			smallBest, err = s.bestByScan(f, smallGroups, less, false)
 		} else {
 			smallBest, err = s.bestByGroup(f, smallGroups, true)
@@ -93,6 +96,26 @@ func (s *Store) BestMatches(f Filter, groups [][]string, sizes []int, less func(
 		return s.bestByGroup(f, groups, sum < 200000)
 	}
 	return s.bestByScan(f, groups, less, sum < 200000)
+}
+
+// maxQueryGroups bounds the groups one query names by their folders: each
+// folder adds a path range to an OR, and SQLite refuses an expression
+// deeper than 1000.
+const maxQueryGroups = 200
+
+// inChunks runs best over the groups at most maxQueryGroups at a time: a
+// group's photos all lie in its own folders, so its best is found within
+// its chunk.
+func inChunks(groups [][]string, best func([][]string) ([]*Photo, error)) ([]*Photo, error) {
+	var out []*Photo
+	for start := 0; start < len(groups); start += maxQueryGroups {
+		b, err := best(groups[start:min(start+maxQueryGroups, len(groups))])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b...)
+	}
+	return out, nil
 }
 
 // nested reports whether a folder of one group lies in another group's.
@@ -201,7 +224,9 @@ func bestKey(sort string) (expr string, max bool) {
 	case "newest":
 		return "taken_at", true
 	case "oldest":
-		return "CASE WHEN taken_at > 0 THEN taken_at ELSE 9e18 END", false // undated last
+		// as Filter.orderBy: dated from 1970 on, then before 1970, then
+		// undated; exact integers, each range above the one before
+		return "CASE WHEN taken_at > 0 THEN taken_at WHEN taken_at < 0 THEN 4611686018427387904 + taken_at ELSE 9223372036854775807 END", false
 	case "path":
 		return "path", false
 	}
@@ -212,6 +237,9 @@ func bestKey(sort string) (expr string, max bool) {
 // its group (groups that do not nest: one each), keeping each group's best
 // by its sort's key (a row SQLite picks with min() or max()).
 func (s *Store) bestByGroup(f Filter, groups [][]string, byPath bool) ([]*Photo, error) {
+	if len(groups) > maxQueryGroups {
+		return inChunks(groups, func(c [][]string) ([]*Photo, error) { return s.bestByGroup(f, c, byPath) })
+	}
 	g := f
 	g.Dirs, g.DirsByPath = nil, true
 	var label []string
@@ -292,12 +320,20 @@ func (g *groupIndex) of(path string) []int {
 }
 
 // bestByScan reads the matching photos' sort keys once (through the path
-// index, with byPath: few photos), keeping each group's best by less.
+// index, with byPath: few photos), keeping each group's best by less: an
+// album's subfolders, through the album's own range; other groups, by
+// their folders, in chunks.
 func (s *Store) bestByScan(f Filter, groups [][]string, less func(a, b Photo) bool, byPath bool) ([]*Photo, error) {
 	g := f
 	g.Dirs, g.DirsByPath = nil, byPath
-	for _, ds := range groups {
-		g.Dirs = append(g.Dirs, ds...)
+	if parent, ok := siblings(groups); ok {
+		g.Dirs = []string{parent}
+	} else if len(groups) > maxQueryGroups {
+		return inChunks(groups, func(c [][]string) ([]*Photo, error) { return s.bestByScan(f, c, less, byPath) })
+	} else {
+		for _, ds := range groups {
+			g.Dirs = append(g.Dirs, ds...)
+		}
 	}
 	where, args := g.where()
 	rows, err := s.DB.Query(`SELECT id, path, COALESCE(overall, 0), COALESCE(technical, 0), aesthetic, COALESCE(focus_score, 0), COALESCE(sharpness, 0),
