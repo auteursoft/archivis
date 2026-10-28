@@ -91,7 +91,7 @@ input[type=search], input[type=text], input[type=number], input:not([type]), sel
 .person img, .person .noface { width: 100%; aspect-ratio: 1; object-fit: cover; background: var(--line); }
 .person b { padding: 6px 8px 0; } .person small { padding: 0 8px 8px; }
 .cluster, .queryface, .burst, .dupes { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px 12px 12px; margin-bottom: 14px; }
-.burst .card:first-child { outline: 3px solid var(--good); }
+.burst .cell:first-child > .card { outline: 3px solid var(--good); }
 /* a stack of photos shown as one card: offset edges behind it (box-shadow,
    as .card clips its content), and a count where the score sim chip would be */
 .card.stack { box-shadow: 4px 4px 0 -1px var(--panel), 4px 4px 0 0 var(--line), 8px 8px 0 -1px var(--panel), 8px 8px 0 0 var(--line), var(--shadow); margin: 0 8px 8px 0; }
@@ -158,3 +158,16 @@ table.users form { margin: 0; display: inline; }
 .albumnames label { display: flex; flex-direction: column; gap: 3px; flex: 1 1 260px; min-width: 0; }
 .albumnames label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
 .crumbs { margin: 8px 0 12px; font-size: 14px; overflow-wrap: anywhere; }
+
+/* Stars: on each photo card (top right corner, under any count) and on the photo page */
+.cell { position: relative; }
+.star { background: none; border: 0; padding: 0; cursor: pointer; font-size: 22px; line-height: 1; color: #fff;
+  text-shadow: 0 0 3px rgba(0,0,0,.8); }
+.star::before { content: "\2606"; } /* ☆ */
+.star[aria-pressed="true"]::before { content: "\2605"; color: #f5b301; } /* ★ */
+.star:disabled { cursor: progress; opacity: .6; }
+.star:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; border-radius: 4px; }
+.cell > .star { position: absolute; right: 8px; bottom: 8px; z-index: 2; }
+.cell > .card.stack ~ .star { right: 16px; bottom: 16px; } /* inside the stack's offset edges */
+.star.inline { color: inherit; text-shadow: none; font-size: 20px; vertical-align: -2px; }
+.star.inline:not([aria-pressed="true"])::before { color: #888; }

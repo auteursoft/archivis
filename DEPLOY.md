@@ -733,6 +733,16 @@ separate from the sort of the photos below.
 After upgrading, the folders are worked out once more in the background,
 to add those dates and scores.
 
+### Stars
+
+Star a photo you like with the star on its card, or beside its path on the
+photo's page. **Starred** (in the menu) lists your starred photos, and the
+**Starred only** filter narrows any page to them, Albums included.
+
+With accounts, each account's stars are its own: no one else sees them, and
+viewers can star too. Without accounts, everyone the server admits shares
+one list.
+
 ### Memes and screenshots
 
 Pages leave out memes and screenshots unless you ask for them. The

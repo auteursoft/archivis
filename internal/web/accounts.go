@@ -62,6 +62,8 @@ func requiredRole(r *http.Request) string {
 		return store.RoleAdmin
 	case strings.HasPrefix(p, "/original/"):
 		return store.RoleEditor
+	case strings.HasPrefix(p, "/api/star/"):
+		return store.RoleViewer // stars are the account's own: anyone signed in keeps theirs
 	case r.Method != http.MethodGet && r.Method != http.MethodHead && strings.HasPrefix(p, "/api/"):
 		return store.RoleEditor
 	}

@@ -29,7 +29,8 @@ everything runs locally, nothing leaves your machine.
   export of picks as symlinks or copies (e.g. to import into Lightroom).
   Albums browse the indexed folders, with every Apple Photos library together
   as one "iPhone" album. Memes and screenshots (no camera in the metadata,
-  and they look like one) are left out unless asked for.
+  and they look like one) are left out unless asked for. Each account stars the
+  photos it likes and lists them under Starred.
 * **Built for scale.** Parallel, incremental and resumable indexing (Ctrl-C any
   time, rerun to continue). Moved/renamed files and byte-identical copies are
   recognised by content fingerprint and not re-analysed. RAW files are read via

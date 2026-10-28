@@ -1070,7 +1070,7 @@ func groupSort(name string) string {
 // index, so matching groups are best found from the photos (then ordered)
 // rather than by walking groups in order and checking their members.
 func (f Filter) photoFirst() bool {
-	return f.PersonID > 0 || f.Tag != ""
+	return f.PersonID > 0 || f.Tag != "" || f.Starred
 }
 
 // maxGroupWalk bounds how many groups a page with a quality-style filter

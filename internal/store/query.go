@@ -31,6 +31,8 @@ type Filter struct {
 	Faces         string // "", "any", "none", "1", "group" (3+)
 	Mono          string // "", "only", "exclude"
 	Source        string // "" (any), "photos" (no memes or screenshots), "camera", "saved", "memes"
+	Starred       bool   // only the photos StarredBy has starred
+	StarredBy     int64  // the account whose stars (0: the shared list, without accounts)
 	From, To      int64  // unix seconds (taken_at); 0 = no bound
 	Year          int    // one year; shorthand for YearFrom = YearTo = Year
 	YearFrom      int    // first year taken (inclusive); 0 = no bound
@@ -113,6 +115,9 @@ func (f Filter) where() (string, []any) {
 		add("monochrome = 1")
 	case "exclude":
 		add("monochrome = 0")
+	}
+	if f.Starred {
+		add("id IN (SELECT photo_id FROM stars WHERE user_id = ?)", f.StarredBy)
 	}
 	switch f.Source {
 	case "photos":
