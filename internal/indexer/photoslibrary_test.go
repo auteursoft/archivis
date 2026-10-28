@@ -6,9 +6,11 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/auteursoft/archivis/internal/store"
 )
 
-func TestPhotosLibraryChildAllowed(t *testing.T) {
+func TestPackageChildAllowed(t *testing.T) {
 	lib := filepath.Join("Users", "sean", "Pictures", "Photos Library.photoslibrary")
 	for _, tc := range []struct {
 		parent, base string
@@ -25,8 +27,20 @@ func TestPhotosLibraryChildAllowed(t *testing.T) {
 		{filepath.Join(lib, "originals"), "A", true},                    // below originals, anything
 		{filepath.Join("Users", "sean", "Pictures"), "resources", true}, // not a library
 		{"Other.PHOTOSLIBRARY", "resources", false},
+		// other photo apps: their own copies are skipped, their originals kept
+		{"iPhoto Library.photolibrary", "Masters", true},
+		{"iPhoto Library.photolibrary", "Originals", true}, // iPhoto 8 and older
+		{"iPhoto Library.photolibrary", "Thumbnails", false},
+		{"iPhoto Library.photolibrary", "Previews", false},
+		{"Aperture Library.aplibrary", "Masters", true},
+		{"Aperture Library.aplibrary", "Thumbnails", false},
+		{"Aperture Library.aplibrary", "Previews", false},
+		{"Weddings.cocatalog", "Originals", true},
+		{"Weddings.cocatalog", "Cache", false},
+		{filepath.Join("Sessions", "Smith"), "CaptureOne", false}, // a session's cache and settings, anywhere
+		{filepath.Join("Sessions", "Smith"), "Capture", true},
 	} {
-		if got := photosLibraryChildAllowed(tc.parent, tc.base); got != tc.want {
+		if got := store.PackageChildAllowed(tc.parent, tc.base); got != tc.want {
 			t.Errorf("%s / %s: %v, want %v", tc.parent, tc.base, got, tc.want)
 		}
 	}
@@ -84,5 +98,85 @@ func TestWalkPhotosLibrary(t *testing.T) {
 	}
 	if got := walk(lib); len(got) != 2 || !strings.Contains(got[0], "/originals/") || !strings.Contains(got[1], "/originals/") {
 		t.Fatalf("walk with the library as the root: %v", got)
+	}
+}
+
+// A walk over Capture One, iPhoto and Aperture libraries finds only their
+// originals, not their thumbnails, previews or proxies.
+func TestWalkAppCaches(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range []string{
+		"Weddings.cocatalog/Originals/2024/IMG_1.CR3",
+		"Weddings.cocatalog/Cache/Thumbnails/IMG_1.jpg",
+		"Weddings.cocatalog/Cache/Previews/IMG_1.jpg",
+		"Sessions/Smith/Capture/IMG_2.CR3",
+		"Sessions/Smith/Capture/CaptureOne/Cache/Thumbnails/IMG_2.jpg",
+		"Sessions/Smith/Output/IMG_2.jpg", // an export: a photo
+		"iPhoto Library.photolibrary/Masters/2012/IMG_3.jpg",
+		"iPhoto Library.photolibrary/Thumbnails/2012/IMG_3.jpg",
+		"iPhoto Library.photolibrary/Previews/2012/IMG_3.jpg",
+		"Aperture Library.aplibrary/Masters/2010/IMG_4.NEF",
+		"Aperture Library.aplibrary/Thumbnails/IMG_4.jpg",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(f))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte("x"), 0o644)
+	}
+	ix := &Indexer{}
+	var got []string
+	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p != root && ix.excluded(p, d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() {
+			rel, _ := filepath.Rel(root, p)
+			got = append(got, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	sort.Strings(got)
+	want := "Aperture Library.aplibrary/Masters/2010/IMG_4.NEF,Sessions/Smith/Capture/IMG_2.CR3,Sessions/Smith/Output/IMG_2.jpg," +
+		"Weddings.cocatalog/Originals/2024/IMG_1.CR3,iPhoto Library.photolibrary/Masters/2012/IMG_3.jpg"
+	if g := strings.Join(got, ","); g != want {
+		t.Fatalf("walk:\n got %s\nwant %s", g, want)
+	}
+}
+
+// A root inside an app's cache adds nothing: the cache is recognised from
+// the path's folders above the root too.
+func TestWalkRootInsideAppCache(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range []string{"Weddings.cocatalog/Cache/Thumbnails/IMG_1.jpg", "Smith/Capture/CaptureOne/Cache/IMG_2.jpg"} {
+		p := filepath.Join(root, filepath.FromSlash(f))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte("x"), 0o644)
+	}
+	ix := &Indexer{}
+	for _, start := range []string{filepath.Join(root, "Weddings.cocatalog", "Cache"), filepath.Join(root, "Smith", "Capture", "CaptureOne")} {
+		var got []string
+		filepath.WalkDir(start, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if p != start && ix.excluded(p, d.IsDir()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.IsDir() {
+				got = append(got, p)
+			}
+			return nil
+		})
+		if len(got) != 0 {
+			t.Errorf("walk from %s found %v", start, got)
+		}
 	}
 }
