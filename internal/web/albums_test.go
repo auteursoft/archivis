@@ -363,3 +363,22 @@ func TestAlbumListFilterFollowUps(t *testing.T) {
 		t.Error("an album's photo sort offers the list's order")
 	}
 }
+
+// Starred only, on the album list: just the albums holding a starred
+// photo, and the album opened keeps the filter.
+func TestAlbumListStarred(t *testing.T) {
+	s, cat, _ := newTestServer(t)
+	seedAlbums(t, cat, []string{"/pics", "/pics2"})
+	var id int64
+	if err := cat.Store.DB.QueryRow(`SELECT id FROM photos WHERE path = '/pics2/e.jpg'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.Store.SetStar(0, id, true); err != nil { // no accounts: the shared list
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/albums?starred=1")
+	mustContain(t, "starred album", body, `href="/albums?dir=%2Fpics2&amp;lf=starred%3D1&amp;starred=1"`)
+	if strings.Contains(body, "dir=%2Fpics&amp;") || strings.Contains(body, "iphone=1&amp;") {
+		t.Error("albums without a starred photo still listed")
+	}
+}
