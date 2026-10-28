@@ -361,3 +361,41 @@ func TestBestMatchesOldestBeforeEpoch(t *testing.T) {
 		}
 	}
 }
+
+// The same folder as two groups (an Apple Photos library that is also an
+// indexed root: its own card and the iPhone card) gives both its best.
+func TestBestMatchesSameFolderTwice(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*Result
+	for i, x := range []struct {
+		path    string
+		overall float64
+	}{{"/p/Lib.photoslibrary/originals/A/1.jpg", 60}, {"/p/other/2.jpg", 70}} {
+		rs = append(rs, &Result{Photo: Photo{Path: x.path, Size: 1, MTime: 1, Fingerprint: fmt.Sprint(i), Overall: x.overall, Version: SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	groups := [][]string{{"/p/Lib.photoslibrary"}, {"/p/Lib.photoslibrary/"}, {"/p/other"}}
+	want := []string{"/p/Lib.photoslibrary/originals/A/1.jpg", "/p/Lib.photoslibrary/originals/A/1.jpg", "/p/other/2.jpg"}
+	less := func(a, b Photo) bool { return a.Overall > b.Overall }
+	for _, f := range []Filter{{MinOverall: 50}, {Sort: "newest", MinOverall: 50}, {Sort: "sharpness"}} {
+		got, err := st.BestMatches(f, groups, []int{1, 1, 1}, less)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, p := range got {
+			name := ""
+			if p != nil {
+				name = p.Path
+			}
+			if name != want[i] {
+				t.Errorf("%+v, group %v: %q, want %q", f, groups[i], name, want[i])
+			}
+		}
+	}
+}

@@ -138,18 +138,22 @@ func nested(groups [][]string) bool {
 }
 
 // siblings reports whether every group is one folder, all in the same
-// (Unix-style) parent: an album's subfolders.
+// (Unix-style) parent, each once: an album's subfolders. The same folder
+// twice (an Apple Photos library that is also an indexed root, as its own
+// card and the iPhone card) is not: each photo must reach both.
 func siblings(groups [][]string) (string, bool) {
 	parent := ""
+	seen := map[string]bool{}
 	for _, ds := range groups {
 		if len(ds) != 1 || !strings.HasPrefix(ds[0], "/") {
 			return "", false
 		}
-		p := ParentDir(TrimDir(ds[0]))
-		if p == "" || (parent != "" && p != parent) {
+		d := TrimDir(ds[0])
+		p := ParentDir(d)
+		if p == "" || (parent != "" && p != parent) || seen[d] {
 			return "", false
 		}
-		parent = p
+		parent, seen[d] = p, true
 	}
 	return parent, parent != ""
 }
