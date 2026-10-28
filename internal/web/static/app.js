@@ -84,6 +84,71 @@
     })
   );
 
+  // stars: each card's and the photo page's star shows, and toggles, whether
+  // you starred the photo (your own list; see Starred). The buttons wait,
+  // disabled, until the page's stars are looked up (in batches of what the
+  // server answers at once), so a lookup can never undo a click.
+  const starChunk = 500;
+  const stars = [...document.querySelectorAll("[data-star]")];
+  function showStar(b, on) {
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.title = on ? "Starred: click to unstar" : "Star";
+  }
+  if (stars.length) {
+    stars.forEach((b) => (b.disabled = true));
+    const ids = [...new Set(stars.map((b) => b.dataset.star))];
+    const batches = [];
+    for (let i = 0; i < ids.length; i += starChunk) {
+      batches.push(
+        fetch("/api/stars?ids=" + ids.slice(i, i + starChunk).join(",")).then((r) => {
+          if (!r.ok) throw new Error(r.statusText);
+          return r.json();
+        })
+      );
+    }
+    Promise.all(batches)
+      .then((js) => {
+        const on = new Set(js.flatMap((j) => j.starred || []).map(String));
+        stars.forEach((b) => {
+          if (!b.dataset.toggled) showStar(b, on.has(b.dataset.star));
+          b.disabled = false;
+        });
+      })
+      .catch(() =>
+        stars.forEach((b) => {
+          b.title = "Stars could not be loaded: reload the page to try again";
+          b.setAttribute("aria-label", b.title);
+        })
+      );
+  }
+  // A click changes every star of that photo on the page (a card and the
+  // photo page may both show it), and disables them until the server has
+  // answered, so quick clicks cannot send opposite changes that land out of
+  // order; if it fails, they go back and say so.
+  stars.forEach((b) =>
+    b.addEventListener("click", async (e) => {
+      e.preventDefault();
+      if (b.disabled) return;
+      const same = stars.filter((x) => x.dataset.star === b.dataset.star);
+      const on = b.getAttribute("aria-pressed") !== "true";
+      same.forEach((x) => {
+        x.dataset.toggled = "1";
+        x.disabled = true;
+        showStar(x, on); // at once; put back if not saved
+      });
+      try {
+        await post(`/api/star/${b.dataset.star}`, { on });
+      } catch (err) {
+        same.forEach((x) => {
+          showStar(x, !on);
+          x.title = "Not saved (" + err.message + "): click to try again";
+        });
+      } finally {
+        same.forEach((x) => (x.disabled = false));
+      }
+    })
+  );
+
   // per-face naming on the photo page
   document.querySelectorAll(".inline-assign").forEach((f) =>
     f.addEventListener("submit", async (e) => {

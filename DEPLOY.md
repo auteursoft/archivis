@@ -120,6 +120,19 @@ Face names and ratings given to a copy are moved to the original first. With
 are only in iCloud, and those photos are skipped until you download them.
 The index log reports how many copies were kept for that reason.
 
+**Other photo apps.** iPhoto (`.photolibrary`), Aperture (`.aplibrary`) and
+Capture One catalogs (`.cocatalog`) are handled the same way: only their
+originals (`Masters/`, `Originals/`) are catalogued. A Capture One session's
+`CaptureOne` folders (its cache and settings) are skipped wherever they are;
+the session's own photos and exports are kept. Thumbnails and previews
+catalogued by older versions are removed at the end of the next index run.
+Face names and ratings on one move to the photo it copies first: one with
+the same perceptual hash, or one taken in the same second by the same
+camera that looks alike. A copy with no such twin is removed too, unless
+you named faces or rated it, and Apple Photos copies with no twin anywhere
+are kept, as they may be the only copy of a photo kept in iCloud. The index
+log reports what was removed and kept.
+
 ### 6. Run the web interface as a service
 
 This creates a per-user launchd agent that starts when you log in and
@@ -728,6 +741,16 @@ order; without one, "Albums by" still orders them. An album opened from a
 filtered list opens filtered, and its subfolders are narrowed the same way.
 The way back (the "Albums" link and the folders above) returns to the
 filtered list, even after you change or clear the filters inside the album.
+
+### Stars
+
+Star a photo you like with the star on its card, or beside its path on the
+photo's page. **Starred** (in the menu) lists your starred photos, and the
+**Starred only** filter narrows any page to them, Albums included.
+
+With accounts, each account's stars are its own: no one else sees them, and
+viewers can star too. Without accounts, everyone the server admits shares
+one list.
 
 ### Memes and screenshots
 

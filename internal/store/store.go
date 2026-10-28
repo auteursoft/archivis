@@ -271,6 +271,16 @@ CREATE TABLE IF NOT EXISTS aesthetic_feedback (
 );
 CREATE INDEX IF NOT EXISTS aesthetic_feedback_photo ON aesthetic_feedback(photo_id);
 
+-- Photos each account has starred (user_id 0: everyone, without accounts).
+-- Accounts are never deleted (only disabled), so their stars stay theirs.
+CREATE TABLE IF NOT EXISTS stars (
+	user_id  INTEGER NOT NULL,
+	photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+	at       INTEGER NOT NULL,
+	PRIMARY KEY (user_id, photo_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS stars_photo ON stars(photo_id);
+
 CREATE TABLE IF NOT EXISTS users (
 	id          INTEGER PRIMARY KEY,
 	name        TEXT NOT NULL,
