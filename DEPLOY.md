@@ -257,15 +257,23 @@ sudo defaults write /Library/Preferences/SystemConfiguration/autodiskmount Autom
 It applies from the next restart; until then, `diskutil mount Archive1`
 mounts a drive by name. Network shares still need a login.
 
-**Caddy.** Started with `brew services start caddy` (no `sudo`), Caddy is
-an agent too, and the site stays down after a restart until you log in.
-Run it as a system service instead:
+**nginx or Caddy.** The web server in front of Archivis must start at boot
+too, or the site stays down until someone logs in. Started with `sudo brew
+services` (as the [nginx steps](#using-it-from-other-devices) do), it is
+already a system service. Started without `sudo`, it is an agent; move it:
 
 ```sh
-brew services stop caddy   # a running agent would hold ports 80 and 443 (over ssh, with nobody logged in, none is running)
-rm -f ~/Library/LaunchAgents/homebrew.mxcl.caddy.plist
-sudo brew services start caddy
+svc=nginx    # or caddy
+if [ -f ~/Library/LaunchAgents/homebrew.mxcl.$svc.plist ]; then
+  brew services stop $svc   # a running agent would hold ports 80 and 443 (over ssh, with nobody logged in, none is running)
+  rm -f ~/Library/LaunchAgents/homebrew.mxcl.$svc.plist
+  sudo brew services start $svc
+fi
+ls /Library/LaunchDaemons/homebrew.mxcl.$svc.plist    # there: it starts at boot
 ```
+
+With nginx, the certificate renewal in root's crontab runs without a login
+as well.
 
 **Managing them** takes `sudo` and `system/` in place of `gui/$(id -u)/`:
 
