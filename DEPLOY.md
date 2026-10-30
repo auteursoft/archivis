@@ -290,15 +290,25 @@ system /Library/LaunchDaemons/com.archivis.serve.plist`. For the password,
 the [HTTPS steps](#using-it-from-other-devices) give the commands for both kinds of
 service. The logs stay in `~/Library/Logs`.
 
-To go back to agents, stop and remove both services, put the agents back,
-and log in at the Mac:
+To go back to agents, turn each service back into an agent, then log in at
+the Mac. The agents are made from the services as they are now, so a
+password set since the move (`ARCHIVIS_AUTH`) comes back with them; the
+copies in `~/.archivis/launchagents-old` are from before the move and may
+lack it.
 
 ```sh
 for j in serve index; do
+  dst=/Library/LaunchDaemons/com.archivis.$j.plist
+  src=~/Library/LaunchAgents/com.archivis.$j.plist
+  [ -f "$dst" ] || continue
+  sudo cp "$dst" "$src"; sudo chown "$(id -un):staff" "$src"; chmod 600 "$src"
+  /usr/libexec/PlistBuddy -c "Delete :UserName" "$src"
+  /usr/libexec/PlistBuddy -c "Delete :GroupName" "$src"
+  /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:HOME" "$src"
   sudo launchctl bootout system/com.archivis.$j
-  sudo rm -f /Library/LaunchDaemons/com.archivis.$j.plist
+  sudo rm "$dst"
 done
-mv ~/.archivis/launchagents-old/com.archivis.*.plist ~/Library/LaunchAgents/
+grep -c ARCHIVIS_AUTH ~/Library/LaunchAgents/com.archivis.serve.plist   # 1 if you use a shared password
 ```
 
 ## Ubuntu
