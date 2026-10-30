@@ -262,6 +262,7 @@ an agent too, and the site stays down after a restart until you log in.
 Run it as a system service instead:
 
 ```sh
+brew services stop caddy   # a running agent would hold ports 80 and 443 (over ssh, with nobody logged in, none is running)
 rm -f ~/Library/LaunchAgents/homebrew.mxcl.caddy.plist
 sudo brew services start caddy
 ```
@@ -274,16 +275,23 @@ sudo launchctl kickstart system/com.archivis.index      # run the index now
 sudo launchctl bootout system/com.archivis.serve        # stop and disable
 ```
 
-To change a setting (the password, say), edit
-`/Library/LaunchDaemons/com.archivis.serve.plist` with `sudo` (`sudo
-/usr/libexec/PlistBuddy …`, as above), then `sudo launchctl bootout
-system/com.archivis.serve` and `sudo launchctl bootstrap system
-/Library/LaunchDaemons/com.archivis.serve.plist`. The logs stay in
-`~/Library/Logs`.
+To change a setting, edit `/Library/LaunchDaemons/com.archivis.serve.plist`
+with `sudo` (`sudo /usr/libexec/PlistBuddy …`, as above), then `sudo
+launchctl bootout system/com.archivis.serve` and `sudo launchctl bootstrap
+system /Library/LaunchDaemons/com.archivis.serve.plist`. For the password,
+the [HTTPS steps](#using-it-from-other-devices) give the commands for both kinds of
+service. The logs stay in `~/Library/Logs`.
 
-To go back to agents: `sudo launchctl bootout system/com.archivis.$j`,
-`sudo rm /Library/LaunchDaemons/com.archivis.$j.plist`, move the plists in
-`~/.archivis/launchagents-old` back to `~/Library/LaunchAgents`, and log in.
+To go back to agents, stop and remove both services, put the agents back,
+and log in at the Mac:
+
+```sh
+for j in serve index; do
+  sudo launchctl bootout system/com.archivis.$j
+  sudo rm -f /Library/LaunchDaemons/com.archivis.$j.plist
+done
+mv ~/.archivis/launchagents-old/com.archivis.*.plist ~/Library/LaunchAgents/
+```
 
 ## Ubuntu
 
@@ -502,9 +510,25 @@ certificate itself.
    sleep 2; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088   # must print 401
    ```
 
+   If you have already moved Archivis to [system services that start at
+   boot](#start-at-boot-with-nobody-logged-in), the plist is elsewhere and
+   needs `sudo`:
+
+   ```sh
+   pw=$(openssl rand -base64 24); echo "password: $pw"     # note it down
+   plist=/Library/LaunchDaemons/com.archivis.serve.plist
+   sudo /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$plist" 2>/dev/null
+   sudo /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:ARCHIVIS_AUTH" "$plist" 2>/dev/null
+   sudo /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ARCHIVIS_AUTH string yourname:$pw" "$plist"
+   sudo launchctl bootout system/com.archivis.serve       # a restart alone keeps the old settings
+   sudo launchctl bootstrap system "$plist"
+   sleep 2; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088   # must print 401
+   ```
+
    Go on only if that prints `401`. Anything else (`000`, `200`) means
    Archivis is not running with the password yet: check the commands above
-   and `launchctl print gui/$(id -u)/com.archivis.serve` before starting
+   and `launchctl print gui/$(id -u)/com.archivis.serve` (`sudo launchctl
+   print system/com.archivis.serve` for a system service) before starting
    Caddy, or the site would be published without a password.
 3. Then install Caddy and point it at Archivis:
 
