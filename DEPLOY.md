@@ -209,6 +209,82 @@ launchctl bootout gui/$(id -u)/com.archivis.serve        # stop and disable
 tail -f ~/Library/Logs/archivis-serve.log ~/Library/Logs/archivis-index.log
 ```
 
+### Start at boot, with nobody logged in
+
+The agents above live in your login session: after a restart they start
+only once you log in at the Mac's screen (or with Screen Sharing). A
+Terminal over `ssh` is not that session, and there `launchctl` answers
+`125: Domain does not support specified action`. On a Mac that serves
+Archivis all the time, make them system services instead: they start at
+boot and still run as you, with your catalogue and Full Disk Access.
+
+With FileVault on, a restart still stops at the unlock screen until someone
+types the password; this helps only with FileVault off.
+
+This moves your existing agents, with any settings you added (a password
+in `ARCHIVIS_AUTH`, other folders), and works over `ssh`:
+
+```sh
+old=~/.archivis/launchagents-old; mkdir -p "$old"
+for j in serve index; do
+  src=~/Library/LaunchAgents/com.archivis.$j.plist
+  dst=/Library/LaunchDaemons/com.archivis.$j.plist
+  [ -f "$src" ] || continue
+  launchctl bootout gui/$(id -u)/com.archivis.$j 2>/dev/null   # if running in a login session
+  sudo cp "$src" "$dst"
+  sudo /usr/libexec/PlistBuddy -c "Add :UserName string $(id -un)" "$dst"
+  sudo /usr/libexec/PlistBuddy -c "Add :GroupName string staff" "$dst"
+  sudo /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$dst" 2>/dev/null
+  sudo /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:HOME" "$dst" 2>/dev/null
+  sudo /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:HOME string $HOME" "$dst"
+  sudo chown root:wheel "$dst"; sudo chmod 600 "$dst"   # launchd's rule; 600 also hides a password
+  mv "$src" "$old/"          # so logging in does not start a second copy
+  sudo launchctl bootstrap system "$dst"
+done
+sudo launchctl print system/com.archivis.serve | grep -E '^[[:space:]]*(state|last exit)'
+```
+
+`HOME` tells Archivis where your catalogue is (`~/.archivis`); a system
+service may start without one.
+
+**Drives.** macOS mounts external drives when someone logs in. To mount
+them at boot, so the nightly index finds them:
+
+```sh
+sudo defaults write /Library/Preferences/SystemConfiguration/autodiskmount AutomountDisksWithoutUserLogin -bool true
+```
+
+It applies from the next restart; until then, `diskutil mount Archive1`
+mounts a drive by name. Network shares still need a login.
+
+**Caddy.** Started with `brew services start caddy` (no `sudo`), Caddy is
+an agent too, and the site stays down after a restart until you log in.
+Run it as a system service instead:
+
+```sh
+rm -f ~/Library/LaunchAgents/homebrew.mxcl.caddy.plist
+sudo brew services start caddy
+```
+
+**Managing them** takes `sudo` and `system/` in place of `gui/$(id -u)/`:
+
+```sh
+sudo launchctl kickstart -k system/com.archivis.serve   # restart
+sudo launchctl kickstart system/com.archivis.index      # run the index now
+sudo launchctl bootout system/com.archivis.serve        # stop and disable
+```
+
+To change a setting (the password, say), edit
+`/Library/LaunchDaemons/com.archivis.serve.plist` with `sudo` (`sudo
+/usr/libexec/PlistBuddy …`, as above), then `sudo launchctl bootout
+system/com.archivis.serve` and `sudo launchctl bootstrap system
+/Library/LaunchDaemons/com.archivis.serve.plist`. The logs stay in
+`~/Library/Logs`.
+
+To go back to agents: `sudo launchctl bootout system/com.archivis.$j`,
+`sudo rm /Library/LaunchDaemons/com.archivis.$j.plist`, move the plists in
+`~/.archivis/launchagents-old` back to `~/Library/LaunchAgents`, and log in.
+
 ## Ubuntu
 
 Tested on Ubuntu 24.04; 22.04 works the same way. These steps run Archivis
@@ -463,7 +539,8 @@ Things to know:
 - **Stay awake.** The web interface is a per-user agent, so it runs only
   while you are logged in. Locking the screen keeps it running; after a
   restart, log in again (automatic login would leave the Mac open to anyone
-  who can reach it). Stop the Mac sleeping (System Settings → Energy).
+  who can reach it), or [start it at boot](#start-at-boot-with-nobody-logged-in)
+  so no login is needed. Stop the Mac sleeping (System Settings → Energy).
 - **Without opening ports.** Tailscale or a Cloudflare Tunnel give encrypted
   remote access with nothing forwarded on the router.
 
