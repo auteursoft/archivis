@@ -562,11 +562,17 @@ certificate itself.
    brew services start caddy
    ```
 
-   If Caddy cannot bind ports 80 and 443, start it with
-   `sudo brew services start caddy` instead. Do the same if Archivis runs as
-   [system services](#start-at-boot-with-nobody-logged-in): started without
-   `sudo`, Caddy waits for a login after a restart. Allow incoming
-   connections if macOS asks.
+   If Caddy cannot bind ports 80 and 443, or Archivis runs as
+   [system services](#start-at-boot-with-nobody-logged-in) (started without
+   `sudo`, Caddy waits for a login after a restart), stop the agent and
+   start Caddy as a system service instead:
+
+   ```sh
+   brew services stop caddy        # the agent would keep ports 80 and 443, and start again at login
+   sudo brew services start caddy
+   ```
+
+   Allow incoming connections if macOS asks.
 4. From outside your network (a phone off Wi-Fi, say), check that a password
    is required, then log in with a browser:
 
