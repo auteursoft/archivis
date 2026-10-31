@@ -205,7 +205,8 @@ Mac is asleep at 2:30, launchd runs the job when it wakes.
 ```sh
 launchctl kickstart -k gui/$(id -u)/com.archivis.serve   # restart
 launchctl kickstart gui/$(id -u)/com.archivis.index      # run the index now
-launchctl bootout gui/$(id -u)/com.archivis.serve        # stop and disable
+launchctl bootout gui/$(id -u)/com.archivis.serve        # stop (it starts again at the next login)
+launchctl disable gui/$(id -u)/com.archivis.serve        # keep it from starting again (undo: enable, then bootstrap)
 tail -f ~/Library/Logs/archivis-serve.log ~/Library/Logs/archivis-index.log
 ```
 
@@ -280,7 +281,8 @@ as well.
 ```sh
 sudo launchctl kickstart -k system/com.archivis.serve   # restart
 sudo launchctl kickstart system/com.archivis.index      # run the index now
-sudo launchctl bootout system/com.archivis.serve        # stop and disable
+sudo launchctl bootout system/com.archivis.serve        # stop (it starts again at the next boot)
+sudo launchctl disable system/com.archivis.serve        # keep it from starting again (undo: enable, then bootstrap)
 ```
 
 To change a setting, edit `/Library/LaunchDaemons/com.archivis.serve.plist`
@@ -561,8 +563,10 @@ certificate itself.
    ```
 
    If Caddy cannot bind ports 80 and 443, start it with
-   `sudo brew services start caddy` instead. Allow incoming connections if
-   macOS asks.
+   `sudo brew services start caddy` instead. Do the same if Archivis runs as
+   [system services](#start-at-boot-with-nobody-logged-in): started without
+   `sudo`, Caddy waits for a login after a restart. Allow incoming
+   connections if macOS asks.
 4. From outside your network (a phone off Wi-Fi, say), check that a password
    is required, then log in with a browser:
 
