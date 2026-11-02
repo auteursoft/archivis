@@ -929,27 +929,36 @@ done
   tolerances allow.
 - **Speed.** The last lines time one CLIP image, one CLIP text and one
   group photo's faces on each.
-- **To switch the services,** put `--provider coreml-gpu` (or `cpu`) right
-  after `serve` and after `index` in their plists, and load them again (a
-  restart with `kickstart` keeps the old arguments):
+- **To switch the services,** set `--provider` right after `serve` and
+  after `index` in their plists, replacing any there already (the last one
+  given wins), and load them again (a restart with `kickstart` keeps the old
+  arguments):
 
   ```sh
+  prov=coreml-gpu   # or cpu; auto (the default) to go back
   d=~/Library/LaunchAgents; dom=gui/$(id -u); s=        # agents
   # d=/Library/LaunchDaemons; dom=system; s=sudo        # services started at boot
   for j in serve index; do
     p=$d/com.archivis.$j.plist
+    n=0   # drop any --provider and its value
+    while v=$($s /usr/libexec/PlistBuddy -c "Print :ProgramArguments:$n" "$p" 2>/dev/null); do
+      if [ "$v" = --provider ]; then
+        $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" -c "Delete :ProgramArguments:$n" "$p"
+      else
+        n=$((n+1))
+      fi
+    done
     [ $j = serve ] && i=2 || i=4   # after "archivis serve", or "caffeinate -i archivis index"
     $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:$i string --provider" \
-      -c "Add :ProgramArguments:$((i+1)) string coreml-gpu" "$p"
+      -c "Add :ProgramArguments:$((i+1)) string $prov" "$p"
     $s launchctl bootout $dom/com.archivis.$j
     while $s launchctl print $dom/com.archivis.$j >/dev/null 2>&1; do sleep 1; done   # until it has stopped
     $s launchctl bootstrap $dom "$p"
   done
   ```
 
-  To go back to `auto`, the same loop with `-c "Delete :ProgramArguments:$i"`
-  twice in place of the two `Add`s. Embeddings already catalogued stay as
-  they are; at a cos near 1 they mix fine with new ones.
+  Embeddings already catalogued stay as they are; at a cos near 1 they mix
+  fine with new ones.
 
 `coreml` runs on the Neural Engine, so a Mac whose Neural Engine driver
 panics may panic during this run too: save your work first.
