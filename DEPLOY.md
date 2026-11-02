@@ -1078,8 +1078,10 @@ done
 - **To switch the services,** set `--provider` right after `serve` and
   after `index` in their plists, replacing any there already (the last one
   given wins), and load them again (a restart with `kickstart` keeps the old
-  arguments):
+  arguments; the second line is for services that [start at
+  boot](#start-at-boot-with-nobody-logged-in)):
 
+  <!-- ci: switch-provider (run as written by the deploy job in .github/workflows/ci.yml) -->
   ```sh
   prov=coreml-gpu   # or cpu; auto (the default) to go back
   d=~/Library/LaunchAgents; dom=gui/$(id -u); s=        # agents

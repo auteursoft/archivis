@@ -129,6 +129,16 @@ jobs:
           tools/deploy-test/block.sh index-agent | zsh
           tools/deploy-test/block.sh password-agent | zsh
           tools/deploy-test/check.sh agents
+      - name: Switch the provider, twice, then back to auto
+        shell: zsh {0}
+        run: |
+          tools/deploy-test/block.sh switch-provider | zsh
+          tools/deploy-test/provider.sh coreml-gpu
+          tools/deploy-test/block.sh switch-provider | sed 's/^prov=coreml-gpu/prov=cpu/' | zsh
+          tools/deploy-test/provider.sh cpu
+          tools/deploy-test/block.sh switch-provider | sed 's/^prov=coreml-gpu/prov=auto/' | zsh
+          tools/deploy-test/provider.sh auto
+          tools/deploy-test/check.sh agents
       - name: Move to system services
         shell: zsh {0}
         run: |
