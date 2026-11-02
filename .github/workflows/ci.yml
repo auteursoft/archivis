@@ -93,6 +93,63 @@ jobs:
             if grep -q 'CoreML unavailable' test-$p.log; then echo "::error::$p: CoreML refused, the CPU ran instead"; exit 1; fi
           done
 
+  # DEPLOY.md's macOS services, run as written (the blocks it marks
+  # <!-- ci: ... -->, in zsh, the macOS shell): the agents with a password,
+  # the move to system services (they run as the user, with the password),
+  # a new password on them, and the way back (the agents keep it). Starting
+  # before anyone logs in, Full Disk Access and external drives need a real
+  # Mac and a restart, which CI has not.
+  deploy:
+    name: services (macOS)
+    runs-on: macos-latest
+    env:
+      DATA: ${{ github.workspace }}/../archivis-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: models-${{ runner.os }}-${{ hashFiles('cmd/archivis/setup.go') }}
+      - name: Download ONNX Runtime and models
+        run: go run ./cmd/archivis setup --data "$DATA"
+      - name: Install Archivis as the guide does
+        run: |
+          go build -o archivis ./cmd/archivis
+          sudo install -m 755 archivis /usr/local/bin/archivis
+          mkdir -p ~/.archivis
+          ln -s "$DATA/lib" ~/.archivis/lib
+          ln -s "$DATA/models" ~/.archivis/models
+      - name: Agents with a password (steps 6 and 7, HTTPS step 2)
+        shell: zsh {0}
+        run: |
+          { echo 'open() { :; }'; tools/deploy-test/block.sh serve-agent; } | zsh
+          tools/deploy-test/block.sh index-agent | zsh
+          tools/deploy-test/block.sh password-agent | zsh
+          tools/deploy-test/check.sh agents
+      - name: Move to system services
+        shell: zsh {0}
+        run: |
+          tools/deploy-test/block.sh migrate | zsh
+          tools/deploy-test/check.sh services
+      - name: A new password on the system service
+        shell: zsh {0}
+        run: |
+          tools/deploy-test/block.sh password-daemon | zsh
+          tools/deploy-test/check.sh services
+      - name: Back to agents
+        shell: zsh {0}
+        run: |
+          tools/deploy-test/block.sh rollback | zsh
+          launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.archivis.serve.plist   # what logging in does
+          launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.archivis.index.plist
+          tools/deploy-test/check.sh agents
+      - name: Logs
+        if: always()
+        run: tail -n 40 ~/Library/Logs/archivis-serve.log || true
+
   # Real camera files (Canon CR2 and CR3, Nikon NEF, Sony ARW, DNG, iPhone
   # HEIC; ~1 GB, cached), downloaded with pinned checksums by
   # tools/samples/fetch.sh. On macOS, HEIC goes through sips; on Linux
