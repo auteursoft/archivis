@@ -235,6 +235,7 @@ for j in serve index; do
   dst=/Library/LaunchDaemons/com.archivis.$j.plist
   [ -f "$src" ] || continue
   launchctl bootout gui/$(id -u)/com.archivis.$j 2>/dev/null   # if running in a login session
+  while launchctl print gui/$(id -u)/com.archivis.$j >/dev/null 2>&1; do sleep 1; done   # until it has stopped
   sudo cp "$src" "$dst"
   sudo /usr/libexec/PlistBuddy -c "Add :UserName string $(id -un)" "$dst"
   sudo /usr/libexec/PlistBuddy -c "Add :GroupName string staff" "$dst"
@@ -289,11 +290,14 @@ sudo launchctl disable system/com.archivis.serve        # keep it from starting 
 ```
 
 To change a setting, edit `/Library/LaunchDaemons/com.archivis.serve.plist`
-with `sudo` (`sudo /usr/libexec/PlistBuddy …`, as above), then `sudo
-launchctl bootout system/com.archivis.serve` and `sudo launchctl bootstrap
-system /Library/LaunchDaemons/com.archivis.serve.plist`. For the password,
-the [HTTPS steps](#using-it-from-other-devices) give the commands for both kinds of
-service. The logs stay in `~/Library/Logs`.
+with `sudo` (`sudo /usr/libexec/PlistBuddy …`, as above), then load it
+again: `sudo launchctl bootout system/com.archivis.serve`, wait until `sudo
+launchctl print system/com.archivis.serve` no longer finds it (`bootout`
+returns before Archivis has stopped, and loading it sooner fails with
+`5: Input/output error`), then `sudo launchctl bootstrap system
+/Library/LaunchDaemons/com.archivis.serve.plist`. For the password, the
+[HTTPS steps](#using-it-from-other-devices) give the commands for both
+kinds of service. The logs stay in `~/Library/Logs`.
 
 To go back to agents, turn each service back into an agent, then log in at
 the Mac. The agents are made from the services as they are now, so a
@@ -531,8 +535,11 @@ certificate itself.
    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ARCHIVIS_AUTH string yourname:$pw" "$plist"
    chmod 600 "$plist"
    launchctl bootout gui/$(id -u)/com.archivis.serve       # a restart alone keeps the old settings
+   while launchctl print gui/$(id -u)/com.archivis.serve >/dev/null 2>&1; do sleep 1; done   # until it has stopped
    launchctl bootstrap gui/$(id -u) "$plist"
-   sleep 2; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088   # must print 401
+   for i in $(seq 150); do   # starting takes about 25 s per million photos
+     code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8088); [ "$code" != 000 ] && break; sleep 2
+   done; echo "$code"                                     # must print 401
    ```
 
    If you have already moved Archivis to [system services that start at
@@ -547,8 +554,11 @@ certificate itself.
    sudo /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:ARCHIVIS_AUTH" "$plist" 2>/dev/null
    sudo /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ARCHIVIS_AUTH string yourname:$pw" "$plist"
    sudo launchctl bootout system/com.archivis.serve       # a restart alone keeps the old settings
+   while sudo launchctl print system/com.archivis.serve >/dev/null 2>&1; do sleep 1; done   # until it has stopped
    sudo launchctl bootstrap system "$plist"
-   sleep 2; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088   # must print 401
+   for i in $(seq 150); do   # starting takes about 25 s per million photos
+     code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8088); [ "$code" != 000 ] && break; sleep 2
+   done; echo "$code"                                     # must print 401
    ```
 
    Go on only if that prints `401`. Anything else (`000`, `200`) means
