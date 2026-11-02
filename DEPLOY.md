@@ -940,13 +940,13 @@ done
   # d=/Library/LaunchDaemons; dom=system; s=sudo        # services started at boot
   for j in serve index; do
     p=$d/com.archivis.$j.plist
-    n=0   # drop any --provider and its value
+    n=0   # drop any provider flag: -provider or --provider, with its value or =value
     while v=$($s /usr/libexec/PlistBuddy -c "Print :ProgramArguments:$n" "$p" 2>/dev/null); do
-      if [ "$v" = --provider ]; then
-        $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" -c "Delete :ProgramArguments:$n" "$p"
-      else
-        n=$((n+1))
-      fi
+      case "$v" in
+        -provider|--provider) $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" -c "Delete :ProgramArguments:$n" "$p" ;;
+        -provider=*|--provider=*) $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" "$p" ;;
+        *) n=$((n+1)) ;;
+      esac
     done
     [ $j = serve ] && i=2 || i=4   # after "archivis serve", or "caffeinate -i archivis index"
     $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:$i string --provider" \
