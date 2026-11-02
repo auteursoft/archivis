@@ -1,6 +1,7 @@
 package ml
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,6 +125,9 @@ func TestProviderMatchesCPU(t *testing.T) {
 		t.Logf("face %d: score cpu %.3f %s %.3f, embedding cos %.4f", i, f.Score, prov, g.Score, bc)
 		if bc < 0.98 {
 			t.Errorf("face %d: %s embedding differs from the CPU (cos %.4f)", i, prov, bc)
+		}
+		if d := math.Abs(float64(f.Score - g.Score)); d > 0.03 { // as TestFacesMatchInsightFace allows
+			t.Errorf("face %d: %s detection score %.3f, the CPU's %.3f", i, prov, g.Score, f.Score)
 		}
 	}
 

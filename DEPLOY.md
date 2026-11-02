@@ -929,10 +929,25 @@ done
   tolerances allow.
 - **Speed.** The last lines time one CLIP image, one CLIP text and one
   group photo's faces on each.
-- **To switch the services,** add `--provider coreml-gpu` (or `cpu`) right
-  after `serve` and after `index` in the services' plists, then restart
-  them. Embeddings already catalogued stay as they are; at a cos near 1
-  they mix fine with new ones.
+- **To switch the services,** put `--provider coreml-gpu` (or `cpu`) right
+  after `serve` and after `index` in their plists, and load them again (a
+  restart with `kickstart` keeps the old arguments):
+
+  ```sh
+  d=~/Library/LaunchAgents; dom=gui/$(id -u); s=        # agents
+  # d=/Library/LaunchDaemons; dom=system; s=sudo        # services started at boot
+  for j in serve index; do
+    p=$d/com.archivis.$j.plist
+    [ $j = serve ] && i=2 || i=4   # after "archivis serve", or "caffeinate -i archivis index"
+    $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:$i string --provider" \
+      -c "Add :ProgramArguments:$((i+1)) string coreml-gpu" "$p"
+    $s launchctl bootout $dom/com.archivis.$j; $s launchctl bootstrap $dom "$p"
+  done
+  ```
+
+  To go back to `auto`, the same loop with `-c "Delete :ProgramArguments:$i"`
+  twice in place of the two `Add`s. Embeddings already catalogued stay as
+  they are; at a cos near 1 they mix fine with new ones.
 
 `coreml` runs on the Neural Engine, so a Mac whose Neural Engine driver
 panics may panic during this run too: save your work first.

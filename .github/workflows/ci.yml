@@ -86,6 +86,7 @@ jobs:
           ARCHIVIS_REQUIRE_MODELS: "1"
           ARCHIVIS_TEST_MODELS: ${{ env.DATA }}/models
           ONNXRUNTIME_LIB: ${{ env.DATA }}/lib/${{ matrix.lib }}
+        shell: bash # -eo pipefail: a failing go test fails the step through tee
         run: |
           for p in coreml coreml-gpu; do
             ARCHIVIS_TEST_PROVIDER=$p go test -count=1 -v -run 'ProviderMatchesCPU' ./internal/ml/ 2>&1 | tee test-$p.log
