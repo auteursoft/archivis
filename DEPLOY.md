@@ -941,7 +941,9 @@ done
     [ $j = serve ] && i=2 || i=4   # after "archivis serve", or "caffeinate -i archivis index"
     $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:$i string --provider" \
       -c "Add :ProgramArguments:$((i+1)) string coreml-gpu" "$p"
-    $s launchctl bootout $dom/com.archivis.$j; $s launchctl bootstrap $dom "$p"
+    $s launchctl bootout $dom/com.archivis.$j
+    while $s launchctl print $dom/com.archivis.$j >/dev/null 2>&1; do sleep 1; done   # until it has stopped
+    $s launchctl bootstrap $dom "$p"
   done
   ```
 
