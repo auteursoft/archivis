@@ -67,7 +67,16 @@ func TestTokenizerMatchesReference(t *testing.T) {
 	}
 }
 
-func cos(a, b []float32) float64 { return float64(Dot(a, b)) }
+// cos is the cosine of two unit-length embeddings. NaN or infinite (a
+// broken embedding, as half-precision overflow gives) counts as -2, which
+// fails every threshold: compared directly, NaN would pass them all.
+func cos(a, b []float32) float64 {
+	c := float64(Dot(a, b))
+	if math.IsNaN(c) || math.IsInf(c, 0) {
+		return -2
+	}
+	return c
+}
 
 func TestFacesMatchInsightFace(t *testing.T) {
 	dir := modelsDir(t)
@@ -111,10 +120,14 @@ func TestFacesMatchInsightFace(t *testing.T) {
 					best, bd = i, dd
 				}
 			}
+			if best < 0 { // every box NaN
+				t.Errorf("%s: no face near %v", name, w.BBox)
+				continue
+			}
 			f := faces[best]
 			c := cos(f.Embedding, w.Emb)
 			t.Logf("%s face: box dist %.2fpx score %.3f/%.3f emb cos %.4f yaw %.2f", name, math.Sqrt(bd), f.Score, w.Score, c, f.Yaw())
-			if math.Sqrt(bd) > 3 || math.Abs(float64(f.Score)-w.Score) > 0.03 || c < 0.98 {
+			if !(math.Sqrt(bd) <= 3) || !(math.Abs(float64(f.Score)-w.Score) <= 0.03) || c < 0.98 { // written so NaN fails
 				t.Errorf("%s: mismatch vs insightface", name)
 			}
 		}
@@ -137,9 +150,9 @@ func TestFacesMatchInsightFace(t *testing.T) {
 	if len(hf) == 0 {
 		t.Fatal("no faces at half scale")
 	}
-	bestSim := float32(0)
+	bestSim := -2.0
 	for _, f := range faces {
-		bestSim = max(bestSim, Dot(f.Embedding, hf[0].Embedding))
+		bestSim = max(bestSim, cos(f.Embedding, hf[0].Embedding))
 	}
 	t.Logf("same face at half resolution: cos %.3f", bestSim)
 	if bestSim < 0.6 {

@@ -115,7 +115,7 @@ func TestProviderMatchesCPU(t *testing.T) {
 		t.Fatalf("faces in t1.jpg: cpu %d, %s %d", len(found["cpu"]), prov, len(found[prov]))
 	}
 	for i, f := range found["cpu"] {
-		best, bc := -1, -2.0 // the same person: the closest embedding
+		best, bc := -1, math.Inf(-1) // the same person: the closest embedding (a broken one, -2, still picked, and failed below)
 		for j, g := range found[prov] {
 			if c := cos(f.Embedding, g.Embedding); c > bc {
 				best, bc = j, c
@@ -126,7 +126,7 @@ func TestProviderMatchesCPU(t *testing.T) {
 		if bc < 0.98 {
 			t.Errorf("face %d: %s embedding differs from the CPU (cos %.4f)", i, prov, bc)
 		}
-		if d := math.Abs(float64(f.Score - g.Score)); d > 0.03 { // as TestFacesMatchInsightFace allows
+		if d := math.Abs(float64(f.Score - g.Score)); !(d <= 0.03) { // as TestFacesMatchInsightFace allows; NaN fails
 			t.Errorf("face %d: %s detection score %.3f, the CPU's %.3f", i, prov, g.Score, f.Score)
 		}
 	}
@@ -158,5 +158,19 @@ func TestProviderMatchesCPU(t *testing.T) {
 			return err
 		})
 		t.Logf("%-10s CLIP image %v, CLIP text %v, faces (detect + embed, %d faces) %v", name, img, txt, len(found[name]), faces)
+	}
+}
+
+// A broken embedding (NaN or infinite values, as half-precision overflow
+// gives) must fail the similarity checks rather than slip past them.
+func TestCosRejectsBrokenEmbeddings(t *testing.T) {
+	unit := []float32{0.6, 0.8}
+	if c := cos(unit, unit); math.Abs(c-1) > 1e-6 {
+		t.Errorf("cos of a unit vector with itself: %v", c)
+	}
+	for _, bad := range [][]float32{{float32(math.NaN()), 0}, {float32(math.Inf(1)), 0}} {
+		if c := cos(bad, unit); c != -2 {
+			t.Errorf("cos(%v, unit) = %v, want -2", bad, c)
+		}
 	}
 }
