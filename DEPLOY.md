@@ -316,6 +316,7 @@ for j in serve index; do
   /usr/libexec/PlistBuddy -c "Delete :GroupName" "$src"
   /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:HOME" "$src"
   sudo launchctl bootout system/com.archivis.$j
+  while sudo launchctl print system/com.archivis.$j >/dev/null 2>&1; do sleep 1; done   # until it has stopped
   sudo rm "$dst"
 done
 grep -c ARCHIVIS_AUTH ~/Library/LaunchAgents/com.archivis.serve.plist   # 1 if you use a shared password

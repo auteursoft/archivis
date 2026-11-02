@@ -20,7 +20,7 @@ if [ "$kind" = services ]; then
   done
   [ "$(get UserName)" = "$user" ] || fail "UserName is '$(get UserName)', want $user"
   [ "$(get EnvironmentVariables:HOME)" = "$HOME" ] || fail "HOME is '$(get EnvironmentVariables:HOME)', want $HOME"
-  sudo launchctl print system/com.archivis.serve | grep -q 'state = running' || fail "serve is not running"
+  running() { sudo launchctl print system/com.archivis.serve | grep -q 'state = running'; }
 else
   plist=~/Library/LaunchAgents/com.archivis.serve.plist
   get() { /usr/libexec/PlistBuddy -c "Print :$1" "$plist" 2>/dev/null; }
@@ -30,8 +30,11 @@ else
     [ -e /Library/LaunchDaemons/com.archivis.$j.plist ] && fail "the system service's plist is still there"
   done
   get UserName >/dev/null && fail "the agent has a UserName"
-  launchctl print gui/$uid/com.archivis.serve | grep -q 'state = running' || fail "serve is not running"
+  running() { launchctl print gui/$uid/com.archivis.serve | grep -q 'state = running'; }
 fi
+# just loaded, or relaunched by KeepAlive after an exit: give it a while
+for _ in $(seq 90); do running && break; sleep 2; done
+running || fail "serve is not running"
 
 auth=$(get EnvironmentVariables:ARCHIVIS_AUTH) || fail "no ARCHIVIS_AUTH in $plist"
 # serve loads the search indexes before it listens; a changed password
