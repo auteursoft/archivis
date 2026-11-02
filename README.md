@@ -120,9 +120,10 @@ detection 0.3–0.5 s, ArcFace ≈0.33 s per face, CLIP 0.2 s, quality metrics
 expect 4–6 photos/s on an 8–10 core machine. That is several days for a few
 million photos: let it run overnight, interrupt freely, it resumes.
 
-* `--provider auto` uses CoreML on macOS (Apple Neural Engine/GPU) and the CPU
-  elsewhere; `--provider cuda` with `archivis setup --cuda` uses an NVIDIA GPU
-  (CUDA 12 build; Linux and Windows x64).
+* `--provider auto` uses CoreML on macOS (Neural Engine, GPU and CPU) and the
+  CPU elsewhere; `--provider coreml-gpu` keeps CoreML off the Neural Engine
+  (GPU and CPU only); `--provider cuda` with `archivis setup --cuda` uses an
+  NVIDIA GPU (CUDA 12 build; Linux and Windows x64).
   If an accelerator gives trouble, `--provider cpu` always works.
 * Network drives: run the indexer on the machine with the disks if you can;
   JPEG decoding needs the whole file.
@@ -171,7 +172,10 @@ ARCHIVIS_TEST_MODELS=~/.archivis/models ONNXRUNTIME_LIB=~/.archivis/lib/libonnxr
 ```
 
 Add `ARCHIVIS_REQUIRE_MODELS=1` to make a missing model or library a failure
-instead of a skip (CI does).
+instead of a skip (CI does). `ARCHIVIS_TEST_PROVIDER` runs them with another
+provider (`coreml`, `coreml-gpu`, ...) against the same references, and
+compares its outputs and speed with the CPU's (see DEPLOY.md, "Comparing
+the Neural Engine, GPU and CPU").
 
 The earlier Python prototype lives in the `legacy/` folder of
 [auteursoft/DoFISaC](https://github.com/auteursoft/DoFISaC) for reference.

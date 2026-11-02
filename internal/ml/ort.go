@@ -20,7 +20,8 @@ import (
 type Options struct {
 	// Path to the onnxruntime shared library. Empty = search common locations.
 	LibraryPath string
-	// Execution provider: "cpu", "coreml", "cuda", "directml" or "auto".
+	// Execution provider: "cpu", "coreml" (Neural Engine, GPU and CPU),
+	// "coreml-gpu" (GPU and CPU), "cuda", "directml" or "auto".
 	Provider string
 	// Threads used inside a single model invocation. With many parallel
 	// workers, 1 is usually the best throughput on CPU.
@@ -114,6 +115,32 @@ func LibraryIn(dir string) string {
 	return ""
 }
 
+// resolveProvider maps "auto" to the platform's provider: CoreML on macOS,
+// the CPU elsewhere.
+func resolveProvider(p, goos string) string {
+	p = strings.ToLower(p)
+	if p == "auto" {
+		if goos == "darwin" {
+			return "coreml"
+		}
+		return "cpu"
+	}
+	return p
+}
+
+// coreMLUnits are the compute units each CoreML provider may use: "coreml"
+// every unit, the Neural Engine too (fastest where it takes the model);
+// "coreml-gpu" the CPU and GPU only, for a Mac whose Neural Engine driver
+// misbehaves (an M2 Pro on macOS 27.0.1 had a kernel panic in it). flags
+// is the same for ORT's older CoreML call (COREML_FLAG_USE_CPU_AND_GPU).
+var coreMLUnits = map[string]struct {
+	units string
+	flags uint32
+}{
+	"coreml":     {"ALL", 0},
+	"coreml-gpu": {"CPUAndGPU", 0x020},
+}
+
 func newSessionOptions(o Options) (*ort.SessionOptions, error) {
 	so, err := ort.NewSessionOptions()
 	if err != nil {
@@ -128,20 +155,13 @@ func newSessionOptions(o Options) (*ort.SessionOptions, error) {
 		return nil, err
 	}
 	so.SetInterOpNumThreads(1)
-	prov := strings.ToLower(o.Provider)
-	if prov == "auto" {
-		switch runtime.GOOS {
-		case "darwin":
-			prov = "coreml"
-		default:
-			prov = "cpu"
-		}
-	}
+	prov := resolveProvider(o.Provider, runtime.GOOS)
 	switch prov {
 	case "", "cpu":
-	case "coreml":
-		if err := so.AppendExecutionProviderCoreMLV2(map[string]string{"MLComputeUnits": "ALL"}); err != nil {
-			if err := so.AppendExecutionProviderCoreML(0); err != nil {
+	case "coreml", "coreml-gpu":
+		u := coreMLUnits[prov]
+		if err := so.AppendExecutionProviderCoreMLV2(map[string]string{"MLComputeUnits": u.units}); err != nil {
+			if err := so.AppendExecutionProviderCoreML(u.flags); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: CoreML unavailable (%v); using CPU\n", err)
 			}
 		}

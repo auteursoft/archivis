@@ -54,7 +54,7 @@ Commands:
 
 Global flags (all commands):
   --data DIR       data directory (default $ARCHIVIS_DATA or ~/.archivis)
-  --provider P     cpu | coreml | cuda | directml | auto (default auto)
+  --provider P     cpu | coreml | coreml-gpu | cuda | directml | auto (default auto)
   --ort-lib PATH   path to the onnxruntime shared library
 
 Run "archivis <command> -h" for command flags.
@@ -115,7 +115,7 @@ func adoptOldDataDir(old, dir string) string {
 
 func (g *globals) register(fs *flag.FlagSet) {
 	fs.StringVar(&g.data, "data", defaultData(), "data directory")
-	fs.StringVar(&g.provider, "provider", "auto", "execution provider: cpu, coreml, cuda, directml, auto")
+	fs.StringVar(&g.provider, "provider", "auto", "execution provider: cpu, coreml (Neural Engine, GPU, CPU), coreml-gpu (GPU, CPU), cuda, directml, auto")
 	fs.StringVar(&g.ortLib, "ort-lib", "", "onnxruntime shared library path")
 	fs.IntVar(&g.threads, "threads", 0, "threads per model invocation (0 = automatic)")
 }

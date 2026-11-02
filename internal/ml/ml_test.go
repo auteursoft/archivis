@@ -13,11 +13,18 @@ import (
 	"github.com/auteursoft/archivis/internal/imageio"
 )
 
+// testOptions are the model options of the model tests: the CPU, or the
+// provider ARCHIVIS_TEST_PROVIDER names (coreml, coreml-gpu, ...), to check
+// that one against the same references.
+func testOptions() Options {
+	return Options{IntraOpThreads: 2, Provider: os.Getenv("ARCHIVIS_TEST_PROVIDER")}
+}
+
 // Model-dependent tests run when ARCHIVIS_TEST_MODELS points at a directory
 // containing buffalo_l/ and clip/ (and ONNXRUNTIME_LIB is set if needed).
 // Otherwise they are skipped, or with ARCHIVIS_REQUIRE_MODELS=1 (as in CI)
 // they fail, so a missing model or library cannot pass unnoticed.
-func modelsDir(t *testing.T) string {
+func modelsDir(t testing.TB) string {
 	skip := t.Skip
 	if os.Getenv("ARCHIVIS_REQUIRE_MODELS") != "" {
 		skip = t.Fatal
@@ -64,7 +71,7 @@ func cos(a, b []float32) float64 { return float64(Dot(a, b)) }
 
 func TestFacesMatchInsightFace(t *testing.T) {
 	dir := modelsDir(t)
-	eng, err := NewFaceEngine(filepath.Join(dir, "buffalo_l"), Options{IntraOpThreads: 2})
+	eng, err := NewFaceEngine(filepath.Join(dir, "buffalo_l"), testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +149,7 @@ func TestFacesMatchInsightFace(t *testing.T) {
 
 func TestCLIPMatchesReference(t *testing.T) {
 	dir := modelsDir(t)
-	c, err := NewCLIP(filepath.Join(dir, "clip"), Options{IntraOpThreads: 2})
+	c, err := NewCLIP(filepath.Join(dir, "clip"), testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +168,9 @@ func TestCLIPMatchesReference(t *testing.T) {
 			t.Fatal(err)
 		}
 		texts = append(texts, e)
-		if cs := cos(e, ref.TextEmb[i]); cs < 0.999 {
+		cs := cos(e, ref.TextEmb[i])
+		t.Logf("text %q: cos vs python %.5f", s, cs)
+		if cs < 0.999 {
 			t.Errorf("text %q cos %.5f", s, cs)
 		}
 	}
