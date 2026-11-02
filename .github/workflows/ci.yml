@@ -130,7 +130,7 @@ jobs:
           tools/deploy-test/block.sh password-agent | zsh
           tools/deploy-test/check.sh agents
       - name: Switch the provider, twice, then back to auto
-        shell: zsh {0}
+        shell: zsh -e -o pipefail {0} # any failed check or extraction fails the step
         run: |
           tools/deploy-test/block.sh switch-provider | zsh
           tools/deploy-test/provider.sh coreml-gpu
