@@ -138,6 +138,7 @@ log reports what was removed and kept.
 This creates a per-user launchd agent that starts when you log in and
 restarts if it stops:
 
+<!-- ci: serve-agent (run as written by the deploy job in .github/workflows/ci.yml) -->
 ```sh
 mkdir -p ~/Library/LaunchAgents ~/Library/Logs
 cat > ~/Library/LaunchAgents/com.archivis.serve.plist <<EOF
@@ -168,6 +169,7 @@ while the search indexes load.
 
 ### 7. Index new photos every night
 
+<!-- ci: index-agent (run as written by the deploy job in .github/workflows/ci.yml) -->
 ```sh
 cat > ~/Library/LaunchAgents/com.archivis.index.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -225,6 +227,7 @@ types the password; this helps only with FileVault off.
 This moves your existing agents, with any settings you added (a password
 in `ARCHIVIS_AUTH`, other folders), and works over `ssh`:
 
+<!-- ci: migrate (run as written by the deploy job in .github/workflows/ci.yml) -->
 ```sh
 old=~/.archivis/launchagents-old; mkdir -p "$old"
 for j in serve index; do
@@ -298,6 +301,7 @@ password set since the move (`ARCHIVIS_AUTH`) comes back with them; the
 copies in `~/.archivis/launchagents-old` are from before the move and may
 lack it.
 
+<!-- ci: rollback (run as written by the deploy job in .github/workflows/ci.yml) -->
 ```sh
 for j in serve index; do
   dst=/Library/LaunchDaemons/com.archivis.$j.plist
@@ -518,6 +522,7 @@ certificate itself.
    long random password: the shared login has no lockout after failed
    attempts.
 
+   <!-- ci: password-agent (run as written by the deploy job in .github/workflows/ci.yml) -->
    ```sh
    pw=$(openssl rand -base64 24); echo "password: $pw"     # note it down
    plist=~/Library/LaunchAgents/com.archivis.serve.plist
@@ -534,6 +539,7 @@ certificate itself.
    boot](#start-at-boot-with-nobody-logged-in), the plist is elsewhere and
    needs `sudo`:
 
+   <!-- ci: password-daemon (run as written by the deploy job in .github/workflows/ci.yml) -->
    ```sh
    pw=$(openssl rand -base64 24); echo "password: $pw"     # note it down
    plist=/Library/LaunchDaemons/com.archivis.serve.plist
