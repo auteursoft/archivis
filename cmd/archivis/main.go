@@ -55,6 +55,8 @@ Commands:
 Global flags (all commands):
   --data DIR       data directory (default $ARCHIVIS_DATA or ~/.archivis)
   --provider P     cpu | coreml | coreml-gpu | cuda | directml | auto (default auto)
+  --clip-provider P, --face-provider P
+                   that model alone on another provider (default --provider)
   --ort-lib PATH   path to the onnxruntime shared library
 
 Run "archivis <command> -h" for command flags.
@@ -63,8 +65,11 @@ Run "archivis <command> -h" for command flags.
 type globals struct {
 	data     string
 	provider string
-	ortLib   string
-	threads  int
+	// clipProvider and faceProvider, when set, run that model on another
+	// provider than the rest (each model where it is fastest)
+	clipProvider, faceProvider string
+	ortLib                     string
+	threads                    int
 }
 
 func defaultData() string {
@@ -116,6 +121,8 @@ func adoptOldDataDir(old, dir string) string {
 func (g *globals) register(fs *flag.FlagSet) {
 	fs.StringVar(&g.data, "data", defaultData(), "data directory")
 	fs.StringVar(&g.provider, "provider", "auto", "execution provider: cpu, coreml (Neural Engine, GPU, CPU), coreml-gpu (GPU, CPU), cuda, directml, auto")
+	fs.StringVar(&g.clipProvider, "clip-provider", "", "execution provider for CLIP alone (search, tags); default --provider")
+	fs.StringVar(&g.faceProvider, "face-provider", "", "execution provider for face detection and recognition alone; default --provider")
 	fs.StringVar(&g.ortLib, "ort-lib", "", "onnxruntime shared library path")
 	fs.IntVar(&g.threads, "threads", 0, "threads per model invocation (0 = automatic)")
 }
@@ -171,6 +178,19 @@ func parseInterleaved(fs *flag.FlagSet, args []string) []string {
 
 type need struct{ faces, clip bool }
 
+// modelOptions are the face and CLIP models' options: opts, with the
+// provider --face-provider or --clip-provider names, if any.
+func (g *globals) modelOptions(opts ml.Options) (faces, clip ml.Options) {
+	faces, clip = opts, opts
+	if g.faceProvider != "" {
+		faces.Provider = g.faceProvider
+	}
+	if g.clipProvider != "" {
+		clip.Provider = g.clipProvider
+	}
+	return faces, clip
+}
+
 // engines loads the requested models.
 func (g *globals) engines(n need, workers int) (*indexer.Engines, error) {
 	lib := g.ortLib
@@ -187,15 +207,16 @@ func (g *globals) engines(n need, workers int) (*indexer.Engines, error) {
 	if err := ml.Init(opts); err != nil {
 		return nil, err
 	}
+	faceOpts, clipOpts := g.modelOptions(opts)
 	eng := &indexer.Engines{}
 	var err error
 	if n.faces {
-		if eng.Faces, err = ml.NewFaceEngine(filepath.Join(g.modelsDir(), "buffalo_l"), opts); err != nil {
+		if eng.Faces, err = ml.NewFaceEngine(filepath.Join(g.modelsDir(), "buffalo_l"), faceOpts); err != nil {
 			return nil, fmt.Errorf("%w\n(run `archivis setup` first)", err)
 		}
 	}
 	if n.clip {
-		if eng.CLIP, err = ml.NewCLIP(filepath.Join(g.modelsDir(), "clip"), opts); err != nil {
+		if eng.CLIP, err = ml.NewCLIP(filepath.Join(g.modelsDir(), "clip"), clipOpts); err != nil {
 			return nil, fmt.Errorf("%w\n(run `archivis setup` first)", err)
 		}
 		if eng.CLIP.HasText() {

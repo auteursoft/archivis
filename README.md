@@ -125,6 +125,9 @@ million photos: let it run overnight, interrupt freely, it resumes.
   (GPU and CPU only); `--provider cuda` with `archivis setup --cuda` uses an
   NVIDIA GPU (CUDA 12 build; Linux and Windows x64).
   If an accelerator gives trouble, `--provider cpu` always works.
+  `--clip-provider` and `--face-provider` put CLIP or the face models alone
+  on another provider (each where it is fastest; see DEPLOY.md, "Comparing
+  the Neural Engine, GPU and CPU").
 * Network drives: run the indexer on the machine with the disks if you can;
   JPEG decoding needs the whole file.
 * Searching is brute-force and exact: about 0.12 s per million faces on 4
