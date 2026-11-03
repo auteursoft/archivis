@@ -280,7 +280,7 @@ func main() {
 // splitCommand finds the command word even when global flags come first
 // ("archivis --data /x stats"), moving those flags after the command.
 func splitCommand(argv []string) (string, []string) {
-	valued := map[string]bool{"data": true, "provider": true, "ort-lib": true, "threads": true}
+	valued := valuedGlobals()
 	var pre []string
 	for i := 0; i < len(argv); i++ {
 		a := argv[i]
@@ -295,6 +295,21 @@ func splitCommand(argv []string) (string, []string) {
 		}
 	}
 	return "", pre
+}
+
+// valuedGlobals are the global flags that take a value (all but booleans),
+// read from register so that a flag added there is never missed here.
+func valuedGlobals() map[string]bool {
+	var g globals
+	fs := flag.NewFlagSet("", flag.ContinueOnError)
+	g.register(fs)
+	valued := map[string]bool{}
+	fs.VisitAll(func(f *flag.Flag) {
+		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
+			valued[f.Name] = true
+		}
+	})
+	return valued
 }
 
 func signalContext() (context.Context, context.CancelFunc) {

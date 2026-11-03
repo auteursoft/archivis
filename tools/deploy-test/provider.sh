@@ -22,18 +22,17 @@ print(len(idx), *(a[i] + " " + (a[i + 1] if i + 1 < len(a) else "") for i in idx
     [ "$got" = 0 ] || fail "$j: $(echo "$args" | tr -d '\n'), want no --$flag"
   fi
 done
-# the restarted serve runs with it (or without it)
-pid=
+# the restarted serve runs with it (or without it); a serve that is not
+# running, or exits meanwhile, fails rather than passing the absence check
+args() { pid=$(pgrep -f '/usr/local/bin/archivis serve' | head -1); [ -n "$pid" ] && a="$(ps -o args= -p "$pid")" && [ -n "$a" ] && a="$a "; }
 for _ in $(seq 90); do
-  pid=$(pgrep -f '/usr/local/bin/archivis serve' | head -1)
-  if [ -n "$pid" ]; then
-    a="$(ps -o args= -p "$pid") "
+  if args; then
     if [ -n "$want" ]; then case "$a" in *" --$flag $want "*) break ;; esac
     else case "$a" in *" --$flag "*) ;; *) break ;; esac; fi
   fi
   sleep 2
 done
-a="$(ps -o args= -p "$pid") "
+args || fail "serve is not running"
 if [ -n "$want" ]; then
   case "$a" in *" --$flag $want "*) ;; *) fail "serve runs as: $a" ;; esac
 else

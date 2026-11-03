@@ -21,6 +21,10 @@ func TestSplitCommand(t *testing.T) {
 		{[]string{"--data", "/x", "stats", "-limit", "3"}, "stats", []string{"-limit", "3", "--data", "/x"}},
 		{[]string{"--data=/x", "index", "/p"}, "index", []string{"/p", "--data=/x"}},
 		{[]string{"--provider", "cpu"}, "", []string{"--provider", "cpu"}},
+		// every valued global flag, its value apart, before the command
+		{[]string{"--clip-provider", "cpu", "serve"}, "serve", []string{"--clip-provider", "cpu"}},
+		{[]string{"-face-provider", "coreml-gpu", "--provider", "auto", "index", "/p"}, "index", []string{"/p", "-face-provider", "coreml-gpu", "--provider", "auto"}},
+		{[]string{"--ort-lib", "/l", "--threads", "2", "stats"}, "stats", []string{"--ort-lib", "/l", "--threads", "2"}},
 	} {
 		cmd, args := splitCommand(tc.in)
 		if cmd != tc.cmd || !reflect.DeepEqual(args, tc.args) {
