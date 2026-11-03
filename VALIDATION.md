@@ -512,8 +512,10 @@ vectors in memory.
   Canon bodies; lens names from other makers' maker notes. Kodak KDC and
   Sigma X3F files carry no usable preview and are reported as errors.
 * **macOS / CoreML** — CI runs the whole test suite and the model
-  comparisons on macOS (Apple Silicon, CPU). CoreML itself is not
-  exercised.
+  comparisons on macOS (Apple Silicon, CPU), and checks that CoreML (every
+  unit, and the CPU and GPU only) gives the CPU's outputs; the runners have
+  no Neural Engine or GPU, so neither is exercised there. On a Mac,
+  `ARCHIVIS_TEST_PROVIDER` runs the same comparison on them.
 * **Aesthetics of documentary work** — EVA's photos are contest entries
   rated by general viewers. How well "appeal" matches news value or a
   picture editor's judgement has not been measured. Training on an editor's

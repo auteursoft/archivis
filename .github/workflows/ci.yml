@@ -76,6 +76,22 @@ jobs:
           ARCHIVIS_TEST_MODELS: ${{ env.DATA }}/models
           ONNXRUNTIME_LIB: ${{ env.DATA }}/lib/${{ matrix.lib }}
         run: go test -count=1 -v -run 'Faces|CLIP|Tokenizer' ./internal/ml/
+      # CoreML, with every unit and with the CPU and GPU only, gives what the
+      # CPU gives (runners have no Neural Engine or GPU to use, but ORT must
+      # take each setting: a refused one falls back to the CPU with a warning,
+      # which fails here rather than comparing the CPU with itself)
+      - name: CoreML matches the CPU
+        if: runner.os == 'macOS'
+        env:
+          ARCHIVIS_REQUIRE_MODELS: "1"
+          ARCHIVIS_TEST_MODELS: ${{ env.DATA }}/models
+          ONNXRUNTIME_LIB: ${{ env.DATA }}/lib/${{ matrix.lib }}
+        shell: bash # -eo pipefail: a failing go test fails the step through tee
+        run: |
+          for p in coreml coreml-gpu; do
+            ARCHIVIS_TEST_PROVIDER=$p go test -count=1 -v -run 'ProviderMatchesCPU' ./internal/ml/ 2>&1 | tee test-$p.log
+            if grep -q 'CoreML unavailable' test-$p.log; then echo "::error::$p: CoreML refused, the CPU ran instead"; exit 1; fi
+          done
 
   # DEPLOY.md's macOS services, run as written (the blocks it marks
   # <!-- ci: ... -->, in zsh, the macOS shell): the agents with a password,
@@ -112,6 +128,16 @@ jobs:
           { echo 'open() { :; }'; tools/deploy-test/block.sh serve-agent; } | zsh
           tools/deploy-test/block.sh index-agent | zsh
           tools/deploy-test/block.sh password-agent | zsh
+          tools/deploy-test/check.sh agents
+      - name: Switch the provider, twice, then back to auto
+        shell: zsh -e -o pipefail {0} # any failed check or extraction fails the step
+        run: |
+          tools/deploy-test/block.sh switch-provider | zsh
+          tools/deploy-test/provider.sh coreml-gpu
+          tools/deploy-test/block.sh switch-provider | sed 's/^prov=coreml-gpu/prov=cpu/' | zsh
+          tools/deploy-test/provider.sh cpu
+          tools/deploy-test/block.sh switch-provider | sed 's/^prov=coreml-gpu/prov=auto/' | zsh
+          tools/deploy-test/provider.sh auto
           tools/deploy-test/check.sh agents
       - name: Move to system services
         shell: zsh {0}

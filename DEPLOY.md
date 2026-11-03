@@ -1050,10 +1050,72 @@ aesthetic model adds it next to the old one, and it scores your photos from
 their stored embeddings. Earlier scores, and models you trained, are kept. On macOS, check Full Disk
 Access afterwards (step 4).
 
+## Comparing the Neural Engine, GPU and CPU
+
+On a Mac, `--provider auto` is CoreML on every unit: the Neural Engine,
+GPU and CPU. `--provider coreml-gpu` keeps it off the Neural Engine, and
+`--provider cpu` uses ONNX Runtime alone. To see what each gives on your
+Mac, run the model tests with each one, from a checkout of the source:
+
+```sh
+cd ~/src/archivis
+export ARCHIVIS_TEST_MODELS=~/.archivis/models ONNXRUNTIME_LIB=~/.archivis/lib/libonnxruntime.dylib
+for p in coreml-gpu coreml; do
+  ARCHIVIS_TEST_PROVIDER=$p go test -count=1 -v -run 'ProviderMatchesCPU|Faces|CLIP' ./internal/ml/ 2>&1 |
+    grep -E 'cos|faces|CLIP image .*,|PASS|FAIL|unavailable'
+done
+```
+
+- **Quality.** Each provider's CLIP and face embeddings are compared with
+  the CPU's on the same photos (`cos` 1.0000 is identical), and with the
+  Python models' references. The Neural Engine computes in 16-bit floats,
+  so a cos a little under 1 is expected there; above about 0.99, search
+  results and face matches barely change. A `FAIL` against the references
+  means a provider strays further from the Python models than the CPU's
+  tolerances allow.
+- **Speed.** The last lines time one CLIP image, one CLIP text and one
+  group photo's faces on each.
+- **To switch the services,** set `--provider` right after `serve` and
+  after `index` in their plists, replacing any there already (the last one
+  given wins), and load them again (a restart with `kickstart` keeps the old
+  arguments; the second line is for services that [start at
+  boot](#start-at-boot-with-nobody-logged-in)):
+
+  <!-- ci: switch-provider (run as written by the deploy job in .github/workflows/ci.yml) -->
+  ```sh
+  prov=coreml-gpu   # or cpu; auto (the default) to go back
+  d=~/Library/LaunchAgents; dom=gui/$(id -u); s=        # agents
+  # d=/Library/LaunchDaemons; dom=system; s=sudo        # services started at boot
+  for j in serve index; do
+    p=$d/com.archivis.$j.plist
+    n=0   # drop any provider flag: -provider or --provider, with its value or =value
+    while v=$($s /usr/libexec/PlistBuddy -c "Print :ProgramArguments:$n" "$p" 2>/dev/null); do
+      case "$v" in
+        -provider|--provider) $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" -c "Delete :ProgramArguments:$n" "$p" ;;
+        -provider=*|--provider=*) $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" "$p" ;;
+        *) n=$((n+1)) ;;
+      esac
+    done
+    [ $j = serve ] && i=2 || i=4   # after "archivis serve", or "caffeinate -i archivis index"
+    $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:$i string --provider" \
+      -c "Add :ProgramArguments:$((i+1)) string $prov" "$p"
+    $s launchctl bootout $dom/com.archivis.$j
+    while $s launchctl print $dom/com.archivis.$j >/dev/null 2>&1; do sleep 1; done   # until it has stopped
+    $s launchctl bootstrap $dom "$p"
+  done
+  ```
+
+  Embeddings already catalogued stay as they are; at a cos near 1 they mix
+  fine with new ones.
+
+`coreml` runs on the Neural Engine, so a Mac whose Neural Engine driver
+panics may panic during this run too: save your work first.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
+| The Mac restarts by itself, and `/Library/Logs/DiagnosticReports/*.panic` names `AppleH11ANEInterface` | A kernel panic in macOS's Neural Engine driver, which Archivis uses through CoreML. Install macOS updates first. If it happens again, keep Archivis off the Neural Engine with `--provider coreml-gpu` (or `--provider cpu`) on both services; see [Comparing the Neural Engine, GPU and CPU](#comparing-the-neural-engine-gpu-and-cpu). A panic naming other drivers points to hardware: run Apple Diagnostics (hold the power button at start-up, then ⌘D). Either way, send the `.panic` file to Apple with Feedback Assistant. |
 | `onnxruntime shared library not found` | Run `archivis setup`. On Intel Macs install it with Homebrew (macOS step 3). A custom location can be given with `--ort-lib` or `ONNXRUNTIME_LIB`. |
 | HEIC files listed by `archivis errors` with "Unsupported codec" | Ubuntu: `sudo apt install libheif-plugin-libde265`, then `archivis index --retry-errors <folders>`. |
 | macOS: the index finds no files on `/Volumes/...`, or "operation not permitted" | Full Disk Access is missing (macOS step 4). |

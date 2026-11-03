@@ -13,11 +13,18 @@ import (
 	"github.com/auteursoft/archivis/internal/imageio"
 )
 
+// testOptions are the model options of the model tests: the CPU, or the
+// provider ARCHIVIS_TEST_PROVIDER names (coreml, coreml-gpu, ...), to check
+// that one against the same references.
+func testOptions() Options {
+	return Options{IntraOpThreads: 2, Provider: os.Getenv("ARCHIVIS_TEST_PROVIDER")}
+}
+
 // Model-dependent tests run when ARCHIVIS_TEST_MODELS points at a directory
 // containing buffalo_l/ and clip/ (and ONNXRUNTIME_LIB is set if needed).
 // Otherwise they are skipped, or with ARCHIVIS_REQUIRE_MODELS=1 (as in CI)
 // they fail, so a missing model or library cannot pass unnoticed.
-func modelsDir(t *testing.T) string {
+func modelsDir(t testing.TB) string {
 	skip := t.Skip
 	if os.Getenv("ARCHIVIS_REQUIRE_MODELS") != "" {
 		skip = t.Fatal
@@ -60,11 +67,20 @@ func TestTokenizerMatchesReference(t *testing.T) {
 	}
 }
 
-func cos(a, b []float32) float64 { return float64(Dot(a, b)) }
+// cos is the cosine of two unit-length embeddings. NaN or infinite (a
+// broken embedding, as half-precision overflow gives) counts as -2, which
+// fails every threshold: compared directly, NaN would pass them all.
+func cos(a, b []float32) float64 {
+	c := float64(Dot(a, b))
+	if math.IsNaN(c) || math.IsInf(c, 0) {
+		return -2
+	}
+	return c
+}
 
 func TestFacesMatchInsightFace(t *testing.T) {
 	dir := modelsDir(t)
-	eng, err := NewFaceEngine(filepath.Join(dir, "buffalo_l"), Options{IntraOpThreads: 2})
+	eng, err := NewFaceEngine(filepath.Join(dir, "buffalo_l"), testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,10 +120,14 @@ func TestFacesMatchInsightFace(t *testing.T) {
 					best, bd = i, dd
 				}
 			}
+			if best < 0 { // every box NaN
+				t.Errorf("%s: no face near %v", name, w.BBox)
+				continue
+			}
 			f := faces[best]
 			c := cos(f.Embedding, w.Emb)
 			t.Logf("%s face: box dist %.2fpx score %.3f/%.3f emb cos %.4f yaw %.2f", name, math.Sqrt(bd), f.Score, w.Score, c, f.Yaw())
-			if math.Sqrt(bd) > 3 || math.Abs(float64(f.Score)-w.Score) > 0.03 || c < 0.98 {
+			if !(math.Sqrt(bd) <= 3) || !(math.Abs(float64(f.Score)-w.Score) <= 0.03) || c < 0.98 { // written so NaN fails
 				t.Errorf("%s: mismatch vs insightface", name)
 			}
 		}
@@ -130,9 +150,9 @@ func TestFacesMatchInsightFace(t *testing.T) {
 	if len(hf) == 0 {
 		t.Fatal("no faces at half scale")
 	}
-	bestSim := float32(0)
+	bestSim := -2.0
 	for _, f := range faces {
-		bestSim = max(bestSim, Dot(f.Embedding, hf[0].Embedding))
+		bestSim = max(bestSim, cos(f.Embedding, hf[0].Embedding))
 	}
 	t.Logf("same face at half resolution: cos %.3f", bestSim)
 	if bestSim < 0.6 {
@@ -142,7 +162,7 @@ func TestFacesMatchInsightFace(t *testing.T) {
 
 func TestCLIPMatchesReference(t *testing.T) {
 	dir := modelsDir(t)
-	c, err := NewCLIP(filepath.Join(dir, "clip"), Options{IntraOpThreads: 2})
+	c, err := NewCLIP(filepath.Join(dir, "clip"), testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +181,9 @@ func TestCLIPMatchesReference(t *testing.T) {
 			t.Fatal(err)
 		}
 		texts = append(texts, e)
-		if cs := cos(e, ref.TextEmb[i]); cs < 0.999 {
+		cs := cos(e, ref.TextEmb[i])
+		t.Logf("text %q: cos vs python %.5f", s, cs)
+		if cs < 0.999 {
 			t.Errorf("text %q cos %.5f", s, cs)
 		}
 	}
