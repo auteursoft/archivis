@@ -129,15 +129,22 @@ jobs:
           tools/deploy-test/block.sh index-agent | zsh
           tools/deploy-test/block.sh password-agent | zsh
           tools/deploy-test/check.sh agents
-      - name: Switch the provider, twice, then back to auto
+      - name: Switch providers (all, then CLIP alone), then back to auto
         shell: zsh -e -o pipefail {0} # any failed check or extraction fails the step
         run: |
-          tools/deploy-test/block.sh switch-provider | zsh
-          tools/deploy-test/provider.sh coreml-gpu
-          tools/deploy-test/block.sh switch-provider | sed 's/^prov=coreml-gpu/prov=cpu/' | zsh
-          tools/deploy-test/provider.sh cpu
-          tools/deploy-test/block.sh switch-provider | sed 's/^prov=coreml-gpu/prov=auto/' | zsh
-          tools/deploy-test/provider.sh auto
+          sw() { tools/deploy-test/block.sh switch-provider | sed "s/^flag=provider; val=coreml-gpu/flag=$1; val=$2/" | zsh; }
+          tools/deploy-test/block.sh switch-provider | zsh   # as written
+          tools/deploy-test/provider.sh provider coreml-gpu
+          sw clip-provider cpu
+          tools/deploy-test/provider.sh clip-provider cpu
+          tools/deploy-test/provider.sh provider coreml-gpu
+          sw provider cpu
+          tools/deploy-test/provider.sh provider cpu
+          tools/deploy-test/provider.sh clip-provider cpu
+          sw clip-provider ''
+          tools/deploy-test/provider.sh clip-provider ''
+          sw provider auto
+          tools/deploy-test/provider.sh provider auto
           tools/deploy-test/check.sh agents
       - name: Move to system services
         shell: zsh {0}

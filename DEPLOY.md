@@ -267,14 +267,19 @@ too, or the site stays down until someone logs in. Started with `sudo brew
 services` (as the [nginx steps](#using-it-from-other-devices) do), it is
 already a system service. Started without `sudo`, it is an agent; move it:
 
+Homebrew names the service `homebrew.mxcl.nginx` in older versions and
+`sh.brew.nginx` in newer ones; this checks both:
+
 ```sh
 svc=nginx    # or caddy
-if [ -f ~/Library/LaunchAgents/homebrew.mxcl.$svc.plist ]; then
+for p in ~/Library/LaunchAgents/{homebrew.mxcl,sh.brew}.$svc.plist; do
+  [ -f "$p" ] || continue   # an agent: move it
   brew services stop $svc   # a running agent would hold ports 80 and 443 (over ssh, with nobody logged in, none is running)
-  rm -f ~/Library/LaunchAgents/homebrew.mxcl.$svc.plist
+  rm -f "$p"
   sudo brew services start $svc
-fi
-ls /Library/LaunchDaemons/homebrew.mxcl.$svc.plist    # there: it starts at boot
+done
+ls /Library/LaunchDaemons/{homebrew.mxcl,sh.brew}.$svc.plist 2>/dev/null   # one listed: it starts at boot
+sudo launchctl list | grep -i "$svc"                                        # and is loaded there
 ```
 
 With nginx, the certificate renewal in root's crontab runs without a login
@@ -1074,31 +1079,42 @@ done
   means a provider strays further from the Python models than the CPU's
   tolerances allow.
 - **Speed.** The last lines time one CLIP image, one CLIP text and one
-  group photo's faces on each.
-- **To switch the services,** set `--provider` right after `serve` and
-  after `index` in their plists, replacing any there already (the last one
-  given wins), and load them again (a restart with `kickstart` keeps the old
-  arguments; the second line is for services that [start at
+  group photo's faces on each. On an M2 Pro, for example: CLIP image 56 ms
+  on the CPU and about 80 ms on CoreML, CLIP text 33 and 56 ms, and faces
+  612 ms on the CPU but about 50 ms on CoreML (GPU or Neural Engine alike).
+  These are single calls; indexing runs several photos at once, so judge
+  a change by how many photos an index run does per second.
+- **Each model on its own provider.** `--clip-provider` and
+  `--face-provider` run CLIP (search, tags) or the face models on another
+  provider than `--provider` gives the rest, for instance CLIP on the CPU
+  and faces on CoreML: `--clip-provider cpu`.
+- **To switch the services,** set the flag right after `serve` and after
+  `index` in their plists, replacing any there already (the last one given
+  wins), and load them again (a restart with `kickstart` keeps the old
+  arguments; the third line is for services that [start at
   boot](#start-at-boot-with-nobody-logged-in)):
 
   <!-- ci: switch-provider (run as written by the deploy job in .github/workflows/ci.yml) -->
   ```sh
-  prov=coreml-gpu   # or cpu; auto (the default) to go back
+  flag=provider; val=coreml-gpu   # or cpu; auto (the default) to go back
+  # flag=clip-provider; val=cpu   # CLIP alone (or face-provider); val= (empty) to follow --provider again
   d=~/Library/LaunchAgents; dom=gui/$(id -u); s=        # agents
   # d=/Library/LaunchDaemons; dom=system; s=sudo        # services started at boot
   for j in serve index; do
     p=$d/com.archivis.$j.plist
-    n=0   # drop any provider flag: -provider or --provider, with its value or =value
+    n=0   # drop the flag: -flag or --flag, with its value or =value
     while v=$($s /usr/libexec/PlistBuddy -c "Print :ProgramArguments:$n" "$p" 2>/dev/null); do
       case "$v" in
-        -provider|--provider) $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" -c "Delete :ProgramArguments:$n" "$p" ;;
-        -provider=*|--provider=*) $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" "$p" ;;
+        -$flag|--$flag) $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" -c "Delete :ProgramArguments:$n" "$p" ;;
+        -$flag=*|--$flag=*) $s /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$n" "$p" ;;
         *) n=$((n+1)) ;;
       esac
     done
     [ $j = serve ] && i=2 || i=4   # after "archivis serve", or "caffeinate -i archivis index"
-    $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:$i string --provider" \
-      -c "Add :ProgramArguments:$((i+1)) string $prov" "$p"
+    if [ -n "$val" ]; then
+      $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:$i string --$flag" \
+        -c "Add :ProgramArguments:$((i+1)) string $val" "$p"
+    fi
     $s launchctl bootout $dom/com.archivis.$j
     while $s launchctl print $dom/com.archivis.$j >/dev/null 2>&1; do sleep 1; done   # until it has stopped
     $s launchctl bootstrap $dom "$p"
