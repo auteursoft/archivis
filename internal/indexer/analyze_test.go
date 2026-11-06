@@ -426,3 +426,45 @@ func TestRunWalksLinkedRoot(t *testing.T) {
 		st.Close()
 	}
 }
+
+// A file under --min-bytes isn't indexed; if it is a catalogued photo moved
+// there (catalogued with a lower --min-bytes, its old file gone), the run
+// counts a gap so index --prune keeps the old record. Small files that
+// match nothing, or a photo still at its old path, don't hold pruning off.
+func TestRunCountsSmallMoves(t *testing.T) {
+	root := t.TempDir()
+	small := []byte("a small image, under --min-bytes")
+	old := filepath.Join(root, "old.jpg")
+	os.WriteFile(old, small, 0o644)
+	os.WriteFile(filepath.Join(root, "icon.jpg"), []byte("an icon nobody catalogued"), 0o644)
+	st, _ := store.Open(filepath.Join(t.TempDir(), "c.db"))
+	defer st.Close()
+	fp, err := Fingerprint(old, int64(len(small)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Save([]*store.Result{{Photo: store.Photo{Path: old, Size: int64(len(small)), MTime: 1, Fingerprint: fp, Version: store.SchemaVersion}}}); err != nil {
+		t.Fatal(err)
+	}
+	run := func() int64 {
+		ix := New(Config{Roots: []string{root}, Workers: 1, MinBytes: 4096}, st, &Engines{}, Layout{Dir: t.TempDir()})
+		if err := ix.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return ix.Stats.Gaps.Load()
+	}
+	if g := run(); g != 0 {
+		t.Fatalf("photo still at its catalogued path: gaps %d, want 0", g)
+	}
+	os.WriteFile(filepath.Join(root, "copy.jpg"), small, 0o644) // a copy, the original still there
+	if g := run(); g != 0 {
+		t.Fatalf("a small copy beside its original: gaps %d, want 0", g)
+	}
+	os.Remove(filepath.Join(root, "copy.jpg"))
+	if err := os.Rename(old, filepath.Join(root, "new.jpg")); err != nil {
+		t.Fatal(err)
+	}
+	if g := run(); g != 1 {
+		t.Fatalf("a catalogued small photo renamed: gaps %d, want 1", g)
+	}
+}

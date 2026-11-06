@@ -43,8 +43,8 @@ type Stats struct {
 	Seen, Queued, Indexed, Copied, Moved, Unchanged, Errors, Faces atomic.Int64
 	// Gaps counts what the run could not read or record: folders and
 	// files it could not read (or that went between listing and reading),
-	// catalogue lookups that failed, failed files, and moves or photos it
-	// could not save. A run with gaps cannot show which files were deleted (a
+	// catalogue lookups that failed, failed files, moves or photos it could
+	// not save, and catalogued photos moved to a file under --min-bytes. A run with gaps cannot show which files were deleted (a
 	// photo moved where it could not look still has its old path), so
 	// index --prune waits for one without.
 	Gaps     atomic.Int64
@@ -201,6 +201,10 @@ func (ix *Indexer) Run(ctx context.Context) error {
 					return nil
 				}
 				if info.Size() < ix.cfg.MinBytes {
+					if why := ix.skippedMove(p, info.Size()); why != "" {
+						ix.logf("warning: %s is under --min-bytes, so not indexed, but %s\n", p, why)
+						ix.Stats.Gaps.Add(1)
+					}
 					return nil
 				}
 				ix.Stats.Seen.Add(1)
@@ -366,6 +370,38 @@ func (ix *Indexer) process(j job) (o outcome) {
 	ix.Stats.Indexed.Add(1)
 	o.res, o.faces = a.Result, len(a.Faces)
 	return
+}
+
+// skippedMove says why a file skipped for its size may be a catalogued
+// photo moved there (one catalogued with a lower --min-bytes, its old file
+// now gone), or "" if it isn't one. Such a move is a gap: pruning would
+// drop the old record, names and ratings, though the photo is still there.
+// Small files are cheap to fingerprint, so icons and tiny thumbnails that
+// match nothing don't hold pruning off.
+func (ix *Indexer) skippedMove(path string, size int64) string {
+	fps := []func(string, int64) (string, error){Fingerprint}
+	if ix.legacy {
+		fps = append(fps, LegacyFingerprint)
+	}
+	for _, f := range fps {
+		fp, err := f(path, size)
+		if err != nil {
+			return fmt.Sprintf("it couldn't be read to check it isn't a catalogued photo moved there: %v", err)
+		}
+		prev, err := ix.store.ByFingerprint(fp)
+		if err != nil {
+			return fmt.Sprintf("looking up catalogued copies of it failed: %v", err)
+		}
+		for _, p := range prev {
+			if p.Size != size || p.Path == path {
+				continue
+			}
+			if _, err := os.Stat(p.Path); os.IsNotExist(err) {
+				return fmt.Sprintf("it is the catalogued %s, moved (index it with a lower --min-bytes to keep its record)", p.Path)
+			}
+		}
+	}
+	return ""
 }
 
 // reuse looks for an existing record of this content (moved file or copy)
