@@ -354,6 +354,7 @@ func runIndex(g *globals, args []string) error {
 	noFaces := fs.Bool("no-faces", false, "skip face detection")
 	noMatch := fs.Bool("no-match", false, "don't auto-label people after indexing")
 	minBytes := fs.Int64("min-bytes", 4096, "skip files smaller than this many bytes (icons, tiny thumbnails)")
+	prune := fs.Bool("prune", false, "afterwards, remove photos deleted from these folders from the catalogue; only when every folder is there and not empty (an unmounted drive's is not), else an error says which and nothing is removed")
 	g.register(fs)
 	roots := parseInterleaved(fs, args)
 	if len(roots) == 0 {
@@ -362,10 +363,11 @@ func runIndex(g *globals, args []string) error {
 	fmt.Fprintf(os.Stderr, "%s %s: indexing %s\n", time.Now().Format("2006-01-02 15:04:05"), versionInfo(), strings.Join(roots, ", "))
 	// A drive that isn't mounted shouldn't stop the others from being
 	// indexed (e.g. a nightly job over several archive drives).
-	var avail []string
+	var avail, missing []string
 	for _, r := range roots {
 		if st, err := os.Stat(r); err != nil || !st.IsDir() {
 			fmt.Fprintf(os.Stderr, "warning: skipping %s: not a folder (drive not mounted?)\n", r)
+			missing = append(missing, r)
 			continue
 		}
 		avail = append(avail, r)
@@ -407,6 +409,11 @@ func runIndex(g *globals, args []string) error {
 	runErr := ix.Run(ctx)
 	if runErr != nil && runErr != context.Canceled {
 		return runErr
+	}
+	if *prune && ctx.Err() == nil && runErr == nil {
+		// after the whole run, so moved files have their new paths; before
+		// the clean-ups and auto-labelling, so they don't count the deleted
+		pruneAfterIndex(cat.Store, asked, missing, os.Stderr)
 	}
 	if ctx.Err() == nil {
 		// Apple's copies catalogued from inside Photos libraries by older

@@ -38,7 +38,9 @@ everything runs locally, nothing leaves your machine.
   RW2, PEF, …); HEIC via `sips` on macOS (or libheif/ImageMagick/libvips).
   `prune` keeps entries on drives that look offline: a folder whose
   catalogued files are all missing and that is itself gone or empty is held
-  back unless you pass `--all-missing`.
+  back unless you pass `--all-missing`. `index --prune` prunes after each
+  complete run, and only when every folder it indexes is there and not
+  empty; otherwise it logs which are missing and prunes nothing.
 
 Your original files are only ever read, never modified.
 
@@ -108,6 +110,7 @@ archivis aesthetic train   # learn your taste from ratings given in the web UI
 archivis aesthetic models  # every aesthetic model used, and the current blend
 archivis retag          # after editing ~/.archivis/categories.txt
 archivis prune /Volumes/Archive1   # forget files deleted from that drive
+archivis index --prune /Volumes/Archive1 /Volumes/Archive2   # index, then forget deleted files if both drives are there
 archivis stats ; archivis errors
 archivis inspect --previews ~/Desktop/check /Volumes/Card/DCIM   # what Archivis reads from your camera's files
 ```
