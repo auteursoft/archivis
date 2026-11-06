@@ -68,12 +68,15 @@ func pruneAfterIndex(st *store.Store, folders []string, atStart map[string]strin
 			strings.Join(reasons, "\n  "))
 		return store.PruneResult{}, false
 	}
-	res, err := st.Prune(folders, false, false)
+	res, err := st.PruneSparingCopies(folders)
 	if err != nil {
 		fmt.Fprintf(w, "error: removing deleted photos: %v (retried on the next run)\n", err)
 		return res, false
 	}
 	fmt.Fprintf(w, "pruned: removed %d deleted photos from the catalogue", len(res.Gone))
+	if len(res.Spared) > 0 {
+		fmt.Fprintf(w, "; kept %d copies photo apps made, whose hand-given names, ratings or stars would go with them (archivis prune removes them)", len(res.Spared))
+	}
 	if len(res.Held) > 0 {
 		fmt.Fprintf(w, "; kept %d folders whose files are all missing and that are gone or empty, as an offline drive looks (archivis prune --all-missing removes them): %s",
 			len(res.Held), strings.Join(res.Held, ", "))

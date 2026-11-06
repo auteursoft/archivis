@@ -419,6 +419,9 @@ func (s *Store) Count(faces bool) int64 {
 type PruneResult struct {
 	Gone []string // entries removed (or that would be, in a dry run)
 	Held []string // folders whose files all look missing, kept as possibly offline
+	// Spared are missing copies photo apps made, kept because hand-named
+	// faces, ratings or stars on them would go with them (PruneSparingCopies)
+	Spared []string
 }
 
 // Prune deletes catalogue entries whose files no longer exist, but only under
@@ -427,6 +430,31 @@ type PruneResult struct {
 // all catalogued files of a folder are missing and the folder is gone or
 // empty, those entries are held back unless allMissing is set.
 func (s *Store) Prune(roots []string, dryRun, allMissing bool) (PruneResult, error) {
+	return s.prune(roots, dryRun, allMissing, false)
+}
+
+// PruneSparingCopies prunes as Prune does (not a dry run, offline folders
+// held), but keeps a missing copy a photo app made (InAppCache) that
+// carries hand-named faces, ratings or stars: the clean-ups keep such copies
+// when they have no original or twin to hand them to, so pruning one would
+// lose them, and Photos can drop a preview while the photo is still there.
+// For the nightly index --prune; archivis prune removes them.
+func (s *Store) PruneSparingCopies(roots []string) (PruneResult, error) {
+	return s.prune(roots, false, false, true)
+}
+
+// personal reports whether the photo at path carries anything a person
+// gave it: a hand-named face, a rating or a star (true if it can't tell).
+func (s *Store) personal(path string) bool {
+	var yes bool
+	err := s.DB.QueryRow(`SELECT EXISTS (SELECT 1 FROM photos p WHERE p.path = ? AND (
+		EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = p.id AND f.person_source = 'manual')
+		OR EXISTS (SELECT 1 FROM aesthetic_feedback a WHERE a.photo_id = p.id)
+		OR EXISTS (SELECT 1 FROM stars t WHERE t.photo_id = p.id)))`, path).Scan(&yes)
+	return err != nil || yes
+}
+
+func (s *Store) prune(roots []string, dryRun, allMissing, spareCopies bool) (PruneResult, error) {
 	var res PruneResult
 	for _, root := range roots {
 		root, _ = filepath.Abs(root)
@@ -464,11 +492,18 @@ func (s *Store) Prune(roots []string, dryRun, allMissing bool) (PruneResult, err
 				res.Held = append(res.Held, dir)
 				continue
 			}
-			res.Gone = append(res.Gone, d.missing...)
+			for _, p := range d.missing {
+				if spareCopies && InAppCache(p) && s.personal(p) {
+					res.Spared = append(res.Spared, p)
+					continue
+				}
+				res.Gone = append(res.Gone, p)
+			}
 		}
 	}
 	sort.Strings(res.Gone)
 	sort.Strings(res.Held)
+	sort.Strings(res.Spared)
 	if dryRun || len(res.Gone) == 0 {
 		return res, nil
 	}

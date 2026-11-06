@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 )
 
@@ -550,4 +551,72 @@ func TestTextFiltersAreLiteral(t *testing.T) {
 	if n, _ := st.FilterCount(Filter{Lens: "L%II"}); n != 0 {
 		t.Errorf("lens wildcard matched %d", n)
 	}
+}
+
+// The nightly prune keeps a missing copy a photo app made when it carries a
+// hand-named face, a rating or a star (nothing else holds them); a plain
+// copy, and ordinary photos however rated, are pruned; Prune (archivis
+// prune) removes them all.
+func TestPruneSparesLabelledCopies(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "Photos Library.photoslibrary")
+	der := filepath.Join(lib, "resources", "derivatives", "A")
+	os.MkdirAll(der, 0o755)
+	os.WriteFile(filepath.Join(der, "still-there.jpeg"), []byte("x"), 0o644) // the folder isn't empty
+	named := filepath.Join(der, "named.jpeg")
+	rated := filepath.Join(der, "rated.jpeg")
+	starred := filepath.Join(der, "starred.jpeg")
+	plain := filepath.Join(der, "plain.jpeg")
+	os.MkdirAll(filepath.Join(root, "trip"), 0o755)
+	os.WriteFile(filepath.Join(root, "trip", "keep.jpg"), []byte("x"), 0o644)
+	ratedPhoto := filepath.Join(root, "trip", "rated.jpg")
+	setup := func(t *testing.T) (*Store, map[string]*Result) {
+		st, err := Open(filepath.Join(t.TempDir(), "p.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		rs := map[string]*Result{}
+		var all []*Result
+		for i, p := range []string{named, rated, starred, plain, ratedPhoto} {
+			r := &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: fmt.Sprint(i), Version: SchemaVersion, FaceCount: 1},
+				Faces: []Face{{X1: .1, Y1: .1, X2: .3, Y2: .4, Score: .9, Embedding: []byte{1}}}}
+			rs[p] = r
+			all = append(all, r)
+		}
+		if err := st.Save(all); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.LabelFaces("Ada", []int64{rs[named].Faces[0].ID}); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{rated, ratedPhoto} {
+			st.DB.Exec(`INSERT INTO aesthetic_feedback (photo_id, rater, rating, created_at) VALUES (?, 'sean', 8, 1)`, rs[p].Photo.ID)
+		}
+		st.DB.Exec(`INSERT INTO stars (user_id, photo_id, at) VALUES (0, ?, 1)`, rs[starred].Photo.ID)
+		return st, rs
+	}
+
+	st, _ := setup(t)
+	res, err := st.PruneSparingCopies([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{named, rated, starred}; fmt.Sprint(res.Spared) != fmt.Sprint(sortedCopy(want)) {
+		t.Errorf("spared %v, want %v", res.Spared, sortedCopy(want))
+	}
+	if want := []string{plain, ratedPhoto}; fmt.Sprint(res.Gone) != fmt.Sprint(sortedCopy(want)) {
+		t.Errorf("removed %v, want %v", res.Gone, sortedCopy(want))
+	}
+
+	st, _ = setup(t)
+	if res, err := st.Prune([]string{root}, false, false); err != nil || len(res.Gone) != 5 || len(res.Spared) != 0 {
+		t.Errorf("archivis prune: removed %v, spared %v (err %v), want all 5 removed", res.Gone, res.Spared, err)
+	}
+}
+
+func sortedCopy(s []string) []string {
+	c := append([]string{}, s...)
+	sort.Strings(c)
+	return c
 }

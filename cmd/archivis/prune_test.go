@@ -265,3 +265,30 @@ func TestIndexRefusesForcePrune(t *testing.T) {
 		t.Error("the data folder was created")
 	}
 }
+
+// The nightly prune keeps a missing Photos copy with a rating on it (no
+// original catalogued to take it), and says so.
+func TestPruneAfterIndexSparesLabelledCopies(t *testing.T) {
+	lib := filepath.Join(t.TempDir(), "Photos Library.photoslibrary")
+	der := filepath.Join(lib, "resources", "derivatives", "A")
+	os.MkdirAll(der, 0o755)
+	os.WriteFile(filepath.Join(der, "other.jpeg"), []byte("x"), 0o644)
+	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &store.Result{Photo: store.Photo{Path: filepath.Join(der, "rated.jpeg"), Size: 1, MTime: 1, Fingerprint: "f", Version: store.SchemaVersion}}
+	if err := st.Save([]*store.Result{r}); err != nil {
+		t.Fatal(err)
+	}
+	st.DB.Exec(`INSERT INTO aesthetic_feedback (photo_id, rater, rating, created_at) VALUES (?, 'sean', 8, 1)`, r.Photo.ID)
+	var log bytes.Buffer
+	res, ok := pruneAfterIndex(st, []string{lib}, nil, 0, &log)
+	if !ok || len(res.Gone) != 0 || len(res.Spared) != 1 {
+		t.Fatalf("ok=%v gone=%v spared=%v; log: %s", ok, res.Gone, res.Spared, &log)
+	}
+	if !strings.Contains(log.String(), "kept 1 copies photo apps made") {
+		t.Errorf("log: %s", &log)
+	}
+}

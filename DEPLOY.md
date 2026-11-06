@@ -209,7 +209,10 @@ when every folder is there and not empty, before the run and after it (an
 unmounted drive, or several after a restart, would look like deleted
 photos), and the run read every folder and recorded every change. Otherwise
 the log has an `error: not removing deleted photos` line with each reason,
-nothing is removed, and the next run that sees everything catches up. To turn it on for a service set up without it:
+nothing is removed, and the next run that sees everything catches up. A
+missing copy that Photos or another photo app made is kept if you named
+faces on it, rated it or starred it (nothing else holds those);
+`archivis prune` removes it. To turn it on for a service set up without it:
 
 <!-- ci: prune-on (run as written by the deploy job in .github/workflows/ci.yml) -->
 ```sh
