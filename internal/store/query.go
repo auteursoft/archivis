@@ -422,6 +422,9 @@ type PruneResult struct {
 	// Spared are missing copies photo apps made, kept because hand-named
 	// faces, ratings or stars on them would go with them (PruneSparingCopies)
 	Spared []string
+	// what a person gave removed photos, moved to an identical photo still
+	// there: hand-named faces, ratings, stars (not in a dry run)
+	LabelsMoved, RatingsMoved, StarsMoved int
 }
 
 // Prune deletes catalogue entries whose files no longer exist, but only under
@@ -512,12 +515,70 @@ func (s *Store) prune(roots []string, dryRun, allMissing, spareCopies bool) (Pru
 		return res, err
 	}
 	defer tx.Rollback()
+	gone := map[string]bool{}
 	for _, p := range res.Gone {
+		gone[p] = true
+	}
+	for _, p := range res.Gone {
+		if err := moveToTwin(tx, p, gone, &res); err != nil {
+			return res, err
+		}
 		if _, err := tx.Exec(`DELETE FROM photos WHERE path = ?`, p); err != nil {
 			return res, err
 		}
 	}
 	return res, tx.Commit()
+}
+
+// moveToTwin hands what a person gave the deleted photo at path (its
+// hand-named faces, ratings and stars) to an identical catalogued photo
+// whose file is still there, if any: one copy of two deleted, or a moved
+// photo that index --force catalogued afresh at its new path.
+func moveToTwin(tx *sql.Tx, path string, gone map[string]bool, res *PruneResult) error {
+	var id int64
+	var fp string
+	if err := tx.QueryRow(`SELECT id, fingerprint FROM photos WHERE path = ?`, path).Scan(&id, &fp); err != nil || fp == "" {
+		return nil // gone meanwhile, or nothing to match by
+	}
+	rows, err := tx.Query(`SELECT id, path FROM photos WHERE fingerprint = ? AND id != ? ORDER BY id`, fp, id)
+	if err != nil {
+		return err
+	}
+	var twin int64
+	for rows.Next() {
+		var tid int64
+		var tp string
+		if err := rows.Scan(&tid, &tp); err != nil {
+			rows.Close()
+			return err
+		}
+		if _, err := os.Lstat(tp); err == nil && !gone[tp] {
+			twin = tid
+			break
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || twin == 0 {
+		return err
+	}
+	n, err := moveManualLabels(tx, id, twin)
+	if err != nil {
+		return err
+	}
+	res.LabelsMoved += n
+	r, err := tx.Exec(`UPDATE aesthetic_feedback SET photo_id = ? WHERE photo_id = ?`, twin, id)
+	if err != nil {
+		return err
+	}
+	m, _ := r.RowsAffected()
+	res.RatingsMoved += int(m)
+	r, err = tx.Exec(`INSERT OR IGNORE INTO stars (user_id, photo_id, at) SELECT user_id, ?, at FROM stars WHERE photo_id = ?`, twin, id)
+	if err != nil {
+		return err
+	}
+	m, _ = r.RowsAffected()
+	res.StarsMoved += int(m)
+	return nil
 }
 
 // pathsUnder lists catalogued paths starting with prefix. SQLite's substr

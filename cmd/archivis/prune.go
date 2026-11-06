@@ -74,6 +74,9 @@ func pruneAfterIndex(st *store.Store, folders []string, atStart map[string]strin
 		return res, false
 	}
 	fmt.Fprintf(w, "pruned: removed %d deleted photos from the catalogue", len(res.Gone))
+	if m := movedToTwins(res); m != "" {
+		fmt.Fprintf(w, "; %s", m)
+	}
 	if len(res.Spared) > 0 {
 		fmt.Fprintf(w, "; kept %d copies photo apps made, whose hand-given names, ratings or stars would go with them (archivis prune removes them)", len(res.Spared))
 	}
@@ -125,4 +128,14 @@ func cleanUpAfterIndex(ctx context.Context, st *store.Store, pj *pruneJob, w io.
 	if pj != nil && ctx.Err() == nil {
 		pruneAfterIndex(st, pj.folders, pj.notReady, pj.gaps, w, failed...)
 	}
+}
+
+// movedToTwins says what prune handed from removed photos to identical
+// photos still there, or "" if nothing.
+func movedToTwins(res store.PruneResult) string {
+	if res.LabelsMoved+res.RatingsMoved+res.StarsMoved == 0 {
+		return ""
+	}
+	return fmt.Sprintf("moved %d face names, %d ratings and %d stars to identical photos still there",
+		res.LabelsMoved, res.RatingsMoved, res.StarsMoved)
 }

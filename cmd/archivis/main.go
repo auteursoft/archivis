@@ -983,6 +983,9 @@ func runPrune(g *globals, args []string) error {
 		verb = "would remove"
 	}
 	fmt.Fprintf(os.Stderr, "%s %d entries\n", verb, len(res.Gone))
+	if m := movedToTwins(res); m != "" {
+		fmt.Fprintln(os.Stderr, m)
+	}
 	if len(res.Held) > 0 {
 		fmt.Fprintf(os.Stderr, "kept %d folder(s) whose files are all missing and that are gone or empty — an offline drive looks the same:\n", len(res.Held))
 		for _, d := range res.Held {

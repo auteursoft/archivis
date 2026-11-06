@@ -620,3 +620,86 @@ func sortedCopy(s []string) []string {
 	sort.Strings(c)
 	return c
 }
+
+// Before a missing photo is removed, its hand-named faces, ratings and
+// stars move to an identical catalogued photo still there (a photo moved
+// and catalogued afresh by index --force, or one copy of two deleted);
+// never onto a face already named by hand, nor onto a copy also missing,
+// and not in a dry run.
+func TestPruneMovesLabelsToTwin(t *testing.T) {
+	root := t.TempDir()
+	keep := filepath.Join(root, "new.jpg")
+	os.WriteFile(keep, []byte("x"), 0o644)
+	old := filepath.Join(root, "old.jpg")        // missing, labelled
+	alsoGone := filepath.Join(root, "other.jpg") // missing, same content
+	box := func(x float64) Face { return Face{X1: x, Y1: .1, X2: x + .2, Y2: .4, Score: .9, Embedding: []byte{1}} }
+	setup := func(t *testing.T, withKeep bool) (*Store, map[string]*Result) {
+		st, err := Open(filepath.Join(t.TempDir(), "p.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		rs := map[string]*Result{}
+		paths := []string{old, alsoGone}
+		if withKeep {
+			paths = append(paths, keep)
+		}
+		var all []*Result
+		for _, p := range paths {
+			r := &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: "same", Version: SchemaVersion, FaceCount: 2},
+				Faces: []Face{box(.1), box(.6)}}
+			rs[p] = r
+			all = append(all, r)
+		}
+		if err := st.Save(all); err != nil {
+			t.Fatal(err)
+		}
+		st.LabelFaces("Ada", []int64{rs[old].Faces[0].ID})
+		st.LabelFaces("Bo", []int64{rs[old].Faces[1].ID})
+		if withKeep {
+			st.LabelFaces("Cy", []int64{rs[keep].Faces[1].ID}) // already named by hand: stays Cy
+		}
+		st.DB.Exec(`INSERT INTO aesthetic_feedback (photo_id, rater, rating, created_at) VALUES (?, 'sean', 8, 1)`, rs[old].Photo.ID)
+		st.DB.Exec(`INSERT INTO stars (user_id, photo_id, at) VALUES (0, ?, 1)`, rs[old].Photo.ID)
+		return st, rs
+	}
+	nameOn := func(st *Store, faceID int64) string {
+		var n sql.NullString
+		st.DB.QueryRow(`SELECT p.name FROM faces f LEFT JOIN people p ON p.id = f.person_id WHERE f.id = ?`, faceID).Scan(&n)
+		return n.String
+	}
+
+	t.Run("an identical photo still there", func(t *testing.T) {
+		st, rs := setup(t, true)
+		res, err := st.Prune([]string{root}, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Gone) != 2 || res.LabelsMoved != 1 || res.RatingsMoved != 1 || res.StarsMoved != 1 {
+			t.Fatalf("gone %v, moved names %d ratings %d stars %d; want 2 gone and 1 of each moved", res.Gone, res.LabelsMoved, res.RatingsMoved, res.StarsMoved)
+		}
+		if a, c := nameOn(st, rs[keep].Faces[0].ID), nameOn(st, rs[keep].Faces[1].ID); a != "Ada" || c != "Cy" {
+			t.Errorf("names on the photo still there: %q, %q; want Ada, and Cy kept", a, c)
+		}
+		var ratings, stars int
+		st.DB.QueryRow(`SELECT COUNT(*) FROM aesthetic_feedback WHERE photo_id = ?`, rs[keep].Photo.ID).Scan(&ratings)
+		st.DB.QueryRow(`SELECT COUNT(*) FROM stars WHERE photo_id = ?`, rs[keep].Photo.ID).Scan(&stars)
+		if ratings != 1 || stars != 1 {
+			t.Errorf("on the photo still there: %d ratings, %d stars; want 1 each", ratings, stars)
+		}
+	})
+	t.Run("every copy missing", func(t *testing.T) {
+		st, _ := setup(t, false)
+		res, err := st.Prune([]string{root}, false, false)
+		if err != nil || len(res.Gone) != 2 || res.LabelsMoved+res.RatingsMoved+res.StarsMoved != 0 {
+			t.Fatalf("gone %v, moved %d/%d/%d (err %v); want both gone, nothing moved", res.Gone, res.LabelsMoved, res.RatingsMoved, res.StarsMoved, err)
+		}
+	})
+	t.Run("a dry run", func(t *testing.T) {
+		st, rs := setup(t, true)
+		res, err := st.Prune([]string{root}, true, false)
+		if err != nil || res.LabelsMoved+res.RatingsMoved+res.StarsMoved != 0 || nameOn(st, rs[keep].Faces[0].ID) != "" {
+			t.Fatalf("a dry run moved something: %+v (err %v)", res, err)
+		}
+	})
+}

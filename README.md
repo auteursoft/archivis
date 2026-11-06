@@ -38,7 +38,8 @@ everything runs locally, nothing leaves your machine.
   RW2, PEF, …); HEIC via `sips` on macOS (or libheif/ImageMagick/libvips).
   `prune` keeps entries on drives that look offline: a folder whose
   catalogued files are all missing and that is itself gone or empty is held
-  back unless you pass `--all-missing`. `index --prune` prunes after each
+  back unless you pass `--all-missing`. A removed photo's hand-given names,
+  ratings and stars move to an identical photo still catalogued, if any. `index --prune` prunes after each
   complete run, and only when every folder it indexes is there and not
   empty, before and after the run, and the run read and recorded
   everything; otherwise it logs why and prunes nothing (not with `--force`,

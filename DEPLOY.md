@@ -212,7 +212,8 @@ the log has an `error: not removing deleted photos` line with each reason,
 nothing is removed, and the next run that sees everything catches up. A
 missing copy that Photos or another photo app made is kept if you named
 faces on it, rated it or starred it (nothing else holds those);
-`archivis prune` removes it. To turn it on for a service set up without it:
+`archivis prune` removes it. A deleted photo's names, ratings and stars
+move to an identical photo still catalogued, if there is one. To turn it on for a service set up without it:
 
 <!-- ci: prune-on (run as written by the deploy job in .github/workflows/ci.yml) -->
 ```sh
