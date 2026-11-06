@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/auteursoft/archivis/internal/store"
@@ -13,8 +14,13 @@ import (
 // folderProblem says why a folder to index can't be trusted to show which
 // of its files were deleted, or "" if it can. A drive that isn't mounted
 // leaves its folder gone, or an empty mount point; one the service may not
-// read (no Full Disk Access) can't be listed.
+// read (no Full Disk Access) can't be listed; one that is a symbolic link
+// is not followed by the indexer, so photos moved into it aren't seen.
 func folderProblem(dir string) string {
+	dir = filepath.Clean(dir) // a trailing separator would make Lstat follow a link
+	if l, err := os.Lstat(dir); err == nil && l.Mode()&os.ModeSymlink != 0 {
+		return "is a symbolic link, which indexing doesn't follow (give the folder it points to)"
+	}
 	st, err := os.Stat(dir)
 	switch {
 	case err != nil && os.IsNotExist(err):
@@ -50,8 +56,8 @@ func folderProblem(dir string) string {
 // sees everything (after a restart, several drives can be late). Prune
 // itself also keeps any folder whose files are all gone and that is itself
 // gone or empty.
-func pruneAfterIndex(st *store.Store, folders []string, atStart map[string]string, gaps int64, w io.Writer) (store.PruneResult, bool) {
-	var reasons []string
+func pruneAfterIndex(st *store.Store, folders []string, atStart map[string]string, gaps int64, w io.Writer, also ...string) (store.PruneResult, bool) {
+	reasons := append([]string{}, also...)
 	for _, f := range folders {
 		if p, ok := atStart[f]; ok {
 			reasons = append(reasons, fmt.Sprintf("%s: when indexing started, it %s", f, p))
@@ -97,9 +103,11 @@ type pruneJob struct {
 func cleanUpAfterIndex(ctx context.Context, st *store.Store, pj *pruneJob, w io.Writer) {
 	// Apple's copies catalogued from inside Photos libraries by older
 	// versions: removed once their originals are in (names moved first)
+	var failed []string // a copy whose names and ratings weren't moved must not be pruned
 	res, err := st.CleanPhotosLibraries(ctx)
 	if err != nil {
 		fmt.Fprintf(w, "warning: cleaning up Photos library copies: %v (retried on the next run)\n", err)
+		failed = append(failed, "the clean-up of Photos library copies failed (see the warning above); their names and ratings must be moved before pruning")
 	}
 	if res.Removed > 0 || res.Kept > 0 {
 		fmt.Fprintf(w, "Photos libraries: removed %d of Apple's copies (moved %d face names, %d ratings to the originals); kept %d with no original catalogued\n",
@@ -110,12 +118,13 @@ func cleanUpAfterIndex(ctx context.Context, st *store.Store, pj *pruneJob, w io.
 	cres, err := st.CleanAppCaches(ctx)
 	if err != nil {
 		fmt.Fprintf(w, "warning: cleaning up photo apps' copies: %v (retried on the next run)\n", err)
+		failed = append(failed, "the clean-up of photo apps' copies failed (see the warning above); their names and ratings must be moved before pruning")
 	}
 	if cres.Removed > 0 || cres.Kept > 0 {
 		fmt.Fprintf(w, "app copies: removed %d thumbnails and previews of photo apps (moved %d face names, %d ratings to the photos they copy); kept %d (no other copy, or hand-named faces or ratings on them)\n",
 			cres.Removed, cres.LabelsMoved, cres.FeedbackMoved, cres.Kept)
 	}
 	if pj != nil && ctx.Err() == nil {
-		pruneAfterIndex(st, pj.folders, pj.notReady, pj.gaps, w)
+		pruneAfterIndex(st, pj.folders, pj.notReady, pj.gaps, w, failed...)
 	}
 }

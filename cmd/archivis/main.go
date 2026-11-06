@@ -357,6 +357,9 @@ func runIndex(g *globals, args []string) error {
 	prune := fs.Bool("prune", false, "afterwards, remove photos deleted from these folders from the catalogue; only when every folder is there and not empty (an unmounted drive's is not) before and after the run, and the run read and recorded everything; else an error says why and nothing is removed")
 	g.register(fs)
 	roots := parseInterleaved(fs, args)
+	if *prune && *force {
+		return fmt.Errorf("--prune can't be used with --force: re-analysing every photo doesn't recognise moved ones, so pruning would drop their old records with their names and ratings; run --force without --prune, and --prune on a later run")
+	}
 	if len(roots) == 0 {
 		return fmt.Errorf("give at least one folder to index")
 	}

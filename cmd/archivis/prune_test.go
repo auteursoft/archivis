@@ -87,6 +87,14 @@ func TestPruneAfterIndex(t *testing.T) {
 			os.WriteFile(b, []byte("x"), 0o644)
 			return nil, 0
 		}, []string{"Archive2 is not a folder"}},
+		// the indexer doesn't follow a folder that is a symbolic link, with
+		// or without a trailing separator: photos moved into it aren't seen
+		{"a symbolic link", func(a, b string) (map[string]string, int64) { symlinkFolder(t, b); return nil, 0 },
+			[]string{"Archive2 is a symbolic link"}},
+		{"a symbolic link, named with a trailing separator", func(a, b string) (map[string]string, int64) {
+			symlinkFolder(t, b)
+			return map[string]string{b: folderProblemOf(t, b+string(filepath.Separator))}, 0
+		}, []string{"Archive2: when indexing started, it is a symbolic link"}},
 		// a subfolder it couldn't read, a move it couldn't save: a photo
 		// moved there still has its old path
 		{"every folder there, but the run had gaps", func(a, b string) (map[string]string, int64) { return nil, 2 },
@@ -169,5 +177,79 @@ func TestCleanUpBeforePrune(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "pruned: removed 0 deleted photos") {
 		t.Errorf("log: %s", &log)
+	}
+}
+
+// symlinkFolder replaces dir with a link to a folder holding the same file.
+func symlinkFolder(t *testing.T, dir string) {
+	t.Helper()
+	target := filepath.Join(t.TempDir(), "real")
+	os.MkdirAll(target, 0o755)
+	os.WriteFile(filepath.Join(target, "keep.jpg"), []byte("x"), 0o644)
+	os.RemoveAll(dir)
+	if err := os.Symlink(target, dir); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+}
+
+// A clean-up that fails leaves copies whose names and ratings weren't
+// moved; pruning waits rather than remove them.
+func TestCleanUpFailureHoldsPrune(t *testing.T) {
+	lib := filepath.Join(t.TempDir(), "Photos Library.photoslibrary")
+	const u = "AAAA1111-0000-4000-8000-000000000001"
+	orig := filepath.Join(lib, "originals", "A", u+".heic")
+	copyPath := filepath.Join(lib, "resources", "derivatives", "A", u+"_1_105_c.jpeg") // its file deleted
+	other := filepath.Join(lib, "resources", "derivatives", "A", "other.jpeg")
+	for _, p := range []string{orig, other} {
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte("x"), 0o644)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*store.Result
+	for i, p := range []string{orig, copyPath} {
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: fmt.Sprint(i), Version: store.SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	st.DB.Exec(`INSERT INTO aesthetic_feedback (photo_id, rater, rating, created_at) VALUES (?, 'sean', 8, 1)`, rs[1].Photo.ID)
+	// the Photos clean-up can't remove the copy (a busy database, say)
+	if _, err := st.DB.Exec(`CREATE TRIGGER busy BEFORE DELETE ON photos WHEN OLD.path LIKE '%derivatives%'
+		BEGIN SELECT RAISE(ABORT, 'database is locked (simulated)'); END`); err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	cleanUpAfterIndex(context.Background(), st, &pruneJob{folders: []string{lib}}, &log)
+	out := log.String()
+	for _, w := range []string{"error: not removing deleted photos", "the clean-up of Photos library copies failed"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("log lacks %q:\n%s", w, out)
+		}
+	}
+	if strings.Contains(out, "error: removing deleted photos") || strings.Contains(out, "pruned:") {
+		t.Errorf("pruned after a failed clean-up:\n%s", out)
+	}
+	var n int
+	st.DB.QueryRow(`SELECT COUNT(*) FROM aesthetic_feedback WHERE photo_id = ?`, rs[1].Photo.ID).Scan(&n)
+	if n != 1 {
+		t.Errorf("the copy's rating is gone")
+	}
+}
+
+// --force analyses moved photos as new ones, so their old records would
+// be pruned with their names and ratings: the two are refused together,
+// before anything is opened or indexed.
+func TestIndexRefusesForcePrune(t *testing.T) {
+	data := filepath.Join(t.TempDir(), "data")
+	err := runIndex(&globals{data: data}, []string{"--force", "--prune", t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "--prune can't be used with --force") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(data); err == nil {
+		t.Error("the data folder was created")
 	}
 }

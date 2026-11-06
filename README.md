@@ -41,7 +41,8 @@ everything runs locally, nothing leaves your machine.
   back unless you pass `--all-missing`. `index --prune` prunes after each
   complete run, and only when every folder it indexes is there and not
   empty, before and after the run, and the run read and recorded
-  everything; otherwise it logs why and prunes nothing.
+  everything; otherwise it logs why and prunes nothing (not with `--force`,
+  which doesn't recognise moved photos).
 
 Your original files are only ever read, never modified.
 
