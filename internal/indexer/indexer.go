@@ -42,8 +42,9 @@ type Config struct {
 type Stats struct {
 	Seen, Queued, Indexed, Copied, Moved, Unchanged, Errors, Faces atomic.Int64
 	// Gaps counts what the run could not read or record: folders and
-	// files it could not read, failed files, and moves or photos it could
-	// not save. A run with gaps cannot show which files were deleted (a
+	// files it could not read (or that went between listing and reading),
+	// catalogue lookups that failed, failed files, and moves or photos it
+	// could not save. A run with gaps cannot show which files were deleted (a
 	// photo moved where it could not look still has its old path), so
 	// index --prune waits for one without.
 	Gaps     atomic.Int64
@@ -147,7 +148,17 @@ func (ix *Indexer) Run(ctx context.Context) error {
 				walkErr = err
 				return
 			}
-			err = filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
+			// WalkDir doesn't follow a root that is a link (Abs drops a
+			// trailing separator, which would): name a linked folder with
+			// one, so it is walked and its photos keep the folder's name
+			// as given (links inside it are still not followed)
+			walkRoot := abs
+			if l, err := os.Lstat(abs); err == nil && l.Mode()&fs.ModeSymlink != 0 {
+				if t, err := os.Stat(abs); err == nil && t.IsDir() {
+					walkRoot = abs + string(filepath.Separator)
+				}
+			}
+			err = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
@@ -160,7 +171,7 @@ func (ix *Indexer) Run(ctx context.Context) error {
 					return nil
 				}
 				if d.IsDir() {
-					if p != abs && ix.excluded(p, true) {
+					if p != walkRoot && ix.excluded(p, true) {
 						return fs.SkipDir
 					}
 					return nil
@@ -183,10 +194,10 @@ func (ix *Indexer) Run(ctx context.Context) error {
 					return nil
 				}
 				if err != nil {
-					if !os.IsNotExist(err) { // gone since it was listed: nothing missed
-						ix.logf("warning: %v\n", err)
-						ix.Stats.Gaps.Add(1)
-					}
+					// gone since it was listed: deleted, or renamed into a
+					// folder already walked, which this run can't tell apart
+					ix.logf("warning: %v\n", err)
+					ix.Stats.Gaps.Add(1)
 					return nil
 				}
 				if info.Size() < ix.cfg.MinBytes {
@@ -195,6 +206,10 @@ func (ix *Indexer) Run(ctx context.Context) error {
 				ix.Stats.Seen.Add(1)
 				if !ix.cfg.Force {
 					k, err := ix.store.Lookup(p)
+					if err != nil { // analysed again; whether it moved is checked then
+						ix.logf("warning: looking up %s: %v\n", p, err)
+						ix.Stats.Gaps.Add(1)
+					}
 					if err == nil && k != nil && k.Size == info.Size() && k.MTime == info.ModTime().Unix() && k.Version >= store.SchemaVersion {
 						ix.Stats.Unchanged.Add(1)
 						return nil
@@ -360,6 +375,9 @@ func (ix *Indexer) process(j job) (o outcome) {
 func (ix *Indexer) reuse(j job, fp string, legacy bool, o *outcome) bool {
 	prev, err := ix.store.ByFingerprint(fp)
 	if err != nil {
+		// analysed as new: if it moved, its old record wasn't found
+		ix.logf("warning: looking up earlier copies of %s: %v\n", j.path, err)
+		ix.Stats.Gaps.Add(1)
 		return false
 	}
 	for _, p := range prev {

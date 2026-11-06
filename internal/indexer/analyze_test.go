@@ -387,3 +387,42 @@ func TestRunCountsGaps(t *testing.T) {
 		t.Fatalf("a folder it could not list: gaps %d, want 1", ix.Stats.Gaps.Load())
 	}
 }
+
+// A folder to index that is a link is walked (WalkDir alone wouldn't), as
+// given or with a trailing separator, and its photos keep the link's name;
+// links to folders inside it are still not followed.
+func TestRunWalksLinkedRoot(t *testing.T) {
+	jpg, _ := os.ReadFile("../imageio/testdata/coffee.jpg")
+	base := t.TempDir()
+	real := filepath.Join(base, "drive")
+	os.MkdirAll(filepath.Join(real, "2019"), 0o755)
+	os.WriteFile(filepath.Join(real, "2019", "a.jpg"), jpg, 0o644)
+	elsewhere := filepath.Join(base, "elsewhere")
+	os.MkdirAll(elsewhere, 0o755)
+	os.WriteFile(filepath.Join(elsewhere, "b.jpg"), append(bytes.Clone(jpg), 'b'), 0o644)
+	link := filepath.Join(base, "Archive")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(real, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{link, link + string(filepath.Separator)} {
+		st, _ := store.Open(filepath.Join(t.TempDir(), "c.db"))
+		ix := New(Config{Roots: []string{root}, Workers: 1}, st, &Engines{}, Layout{Dir: t.TempDir()})
+		if err := ix.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(link, "2019", "a.jpg")
+		if k, err := st.Lookup(want); err != nil || k == nil {
+			t.Errorf("root %q: %s not catalogued (indexed %d)", root, want, ix.Stats.Indexed.Load())
+		}
+		if n := st.Count(false); n != 1 {
+			t.Errorf("root %q: %d photos, want 1 (the link inside it not followed)", root, n)
+		}
+		if g := ix.Stats.Gaps.Load(); g != 0 {
+			t.Errorf("root %q: gaps %d", root, g)
+		}
+		st.Close()
+	}
+}

@@ -49,6 +49,18 @@ func TestPruneAfterIndex(t *testing.T) {
 		return s.Photos
 	}
 
+	// a folder named by a link is walked like any other (with or without a
+	// trailing separator), so its deleted photos are pruned too
+	t.Run("a folder that is a link", func(t *testing.T) {
+		st, a, b := setup(t)
+		symlinkFolder(t, b)
+		var log bytes.Buffer
+		res, ok := pruneAfterIndex(st, []string{a, b + string(filepath.Separator)}, nil, 0, &log)
+		if !ok || len(res.Gone) != 2 || count(t, st) != 2 {
+			t.Fatalf("ok=%v gone=%v photos=%d, want both deleted.jpg removed; log: %s", ok, res.Gone, count(t, st), &log)
+		}
+	})
+
 	t.Run("every folder there", func(t *testing.T) {
 		st, a, b := setup(t)
 		var log bytes.Buffer
@@ -87,14 +99,12 @@ func TestPruneAfterIndex(t *testing.T) {
 			os.WriteFile(b, []byte("x"), 0o644)
 			return nil, 0
 		}, []string{"Archive2 is not a folder"}},
-		// the indexer doesn't follow a folder that is a symbolic link, with
-		// or without a trailing separator: photos moved into it aren't seen
-		{"a symbolic link", func(a, b string) (map[string]string, int64) { symlinkFolder(t, b); return nil, 0 },
-			[]string{"Archive2 is a symbolic link"}},
-		{"a symbolic link, named with a trailing separator", func(a, b string) (map[string]string, int64) {
-			symlinkFolder(t, b)
-			return map[string]string{b: folderProblemOf(t, b+string(filepath.Separator))}, 0
-		}, []string{"Archive2: when indexing started, it is a symbolic link"}},
+		// a link to a folder on a drive that isn't mounted
+		{"a link to a folder that isn't there", func(a, b string) (map[string]string, int64) {
+			target := symlinkFolder(t, b)
+			os.RemoveAll(target)
+			return nil, 0
+		}, []string{"Archive2 is not there"}},
 		// a subfolder it couldn't read, a move it couldn't save: a photo
 		// moved there still has its old path
 		{"every folder there, but the run had gaps", func(a, b string) (map[string]string, int64) { return nil, 2 },
@@ -180,8 +190,9 @@ func TestCleanUpBeforePrune(t *testing.T) {
 	}
 }
 
-// symlinkFolder replaces dir with a link to a folder holding the same file.
-func symlinkFolder(t *testing.T, dir string) {
+// symlinkFolder replaces dir with a link to a folder holding the same
+// file, and returns that folder.
+func symlinkFolder(t *testing.T, dir string) string {
 	t.Helper()
 	target := filepath.Join(t.TempDir(), "real")
 	os.MkdirAll(target, 0o755)
@@ -190,6 +201,7 @@ func symlinkFolder(t *testing.T, dir string) {
 	if err := os.Symlink(target, dir); err != nil {
 		t.Skipf("no symbolic links here: %v", err)
 	}
+	return target
 }
 
 // A clean-up that fails leaves copies whose names and ratings weren't

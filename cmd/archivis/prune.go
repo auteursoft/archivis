@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/auteursoft/archivis/internal/store"
@@ -14,13 +13,9 @@ import (
 // folderProblem says why a folder to index can't be trusted to show which
 // of its files were deleted, or "" if it can. A drive that isn't mounted
 // leaves its folder gone, or an empty mount point; one the service may not
-// read (no Full Disk Access) can't be listed; one that is a symbolic link
-// is not followed by the indexer, so photos moved into it aren't seen.
+// read (no Full Disk Access) can't be listed. A folder that is a link is
+// judged by the folder it points to, which the indexer walks.
 func folderProblem(dir string) string {
-	dir = filepath.Clean(dir) // a trailing separator would make Lstat follow a link
-	if l, err := os.Lstat(dir); err == nil && l.Mode()&os.ModeSymlink != 0 {
-		return "is a symbolic link, which indexing doesn't follow (give the folder it points to)"
-	}
 	st, err := os.Stat(dir)
 	switch {
 	case err != nil && os.IsNotExist(err):
