@@ -1027,6 +1027,41 @@ sudo install -m 755 archivis /usr/local/bin/archivis
 archivis setup                       # fetches anything new; skips what's already there
 ```
 
+Then restart the web interface, so it runs the new version:
+
+```sh
+# Ubuntu
+sudo systemctl restart archivis
+# macOS, services started at login (steps 6 and 7)
+launchctl kickstart -k gui/$(id -u)/com.archivis.serve
+# macOS, services started at boot (Start at boot, with nobody logged in)
+sudo launchctl kickstart -k system/com.archivis.serve
+```
+
+It loads its search indexes before it answers, so for a minute or so pages
+don't load (nginx or Caddy answer 502). Once it is ready it logs the version
+it runs, which should match the one you installed:
+
+```sh
+archivis version
+tail -n 3 ~/Library/Logs/archivis-serve.log   # Ubuntu: journalctl -u archivis -n 3
+```
+
+The nightly index needs nothing: each run starts the installed `archivis`.
+To index now, start it without `-k` (`launchctl kickstart
+gui/$(id -u)/com.archivis.index`, with `sudo` and `system/` for services
+started at boot; on Ubuntu `sudo systemctl start --no-block
+archivis-index`): `-k` would kill a run in progress. On macOS, check Full
+Disk Access afterwards (step 4). If you also changed a service's settings,
+`kickstart` keeps the old ones: load it again as in [Start at boot, with
+nobody logged in](#start-at-boot-with-nobody-logged-in).
+
+Catalogue changes are applied automatically when Archivis opens it; nothing
+needs re-indexing unless the release notes say so. A release with a new
+built-in aesthetic model adds it next to the old one, and it scores your
+photos from their stored embeddings. Earlier scores, and models you
+trained, are kept.
+
 **Coming from photodex** (the project's earlier name): your catalogue moves
 from `~/.photodex` to `~/.archivis` by itself the first time `archivis`
 runs, and `photodex.db` becomes `archivis.db`; nothing is re-indexed. The
@@ -1046,14 +1081,6 @@ sudo rm -f /usr/local/bin/photodex
 
 then follow the service steps above. On macOS, give `/usr/local/bin/archivis`
 Full Disk Access (step 4).
-
-Then restart the web interface (`sudo systemctl restart archivis`, or
-`launchctl kickstart -k gui/$(id -u)/com.archivis.serve`). Catalogue changes
-are applied automatically when Archivis opens it; nothing needs
-re-indexing unless the release notes say so. A release with a new built-in
-aesthetic model adds it next to the old one, and it scores your photos from
-their stored embeddings. Earlier scores, and models you trained, are kept. On macOS, check Full Disk
-Access afterwards (step 4).
 
 ## Comparing the Neural Engine, GPU and CPU
 
