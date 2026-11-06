@@ -354,7 +354,7 @@ func runIndex(g *globals, args []string) error {
 	noFaces := fs.Bool("no-faces", false, "skip face detection")
 	noMatch := fs.Bool("no-match", false, "don't auto-label people after indexing")
 	minBytes := fs.Int64("min-bytes", 4096, "skip files smaller than this many bytes (icons, tiny thumbnails)")
-	prune := fs.Bool("prune", false, "afterwards, remove photos deleted from these folders from the catalogue; only when every folder is there and not empty (an unmounted drive's is not), else an error says which and nothing is removed")
+	prune := fs.Bool("prune", false, "afterwards, remove photos deleted from these folders from the catalogue; only when every folder is there and not empty (an unmounted drive's is not) before and after the run, and the run read and recorded everything; else an error says why and nothing is removed")
 	g.register(fs)
 	roots := parseInterleaved(fs, args)
 	if len(roots) == 0 {
@@ -363,11 +363,14 @@ func runIndex(g *globals, args []string) error {
 	fmt.Fprintf(os.Stderr, "%s %s: indexing %s\n", time.Now().Format("2006-01-02 15:04:05"), versionInfo(), strings.Join(roots, ", "))
 	// A drive that isn't mounted shouldn't stop the others from being
 	// indexed (e.g. a nightly job over several archive drives).
-	var avail, missing []string
+	var avail []string
+	notReady := map[string]string{} // for --prune: why a folder can't show deletions, as indexing starts
 	for _, r := range roots {
+		if p := folderProblem(r); p != "" {
+			notReady[r] = p
+		}
 		if st, err := os.Stat(r); err != nil || !st.IsDir() {
 			fmt.Fprintf(os.Stderr, "warning: skipping %s: not a folder (drive not mounted?)\n", r)
-			missing = append(missing, r)
 			continue
 		}
 		avail = append(avail, r)
@@ -410,33 +413,12 @@ func runIndex(g *globals, args []string) error {
 	if runErr != nil && runErr != context.Canceled {
 		return runErr
 	}
-	if *prune && ctx.Err() == nil && runErr == nil {
-		// after the whole run, so moved files have their new paths; before
-		// the clean-ups and auto-labelling, so they don't count the deleted
-		pruneAfterIndex(cat.Store, asked, missing, os.Stderr)
-	}
 	if ctx.Err() == nil {
-		// Apple's copies catalogued from inside Photos libraries by older
-		// versions: removed once their originals are in (names moved first),
-		// before auto-labelling so moved names count as examples.
-		res, err := cat.Store.CleanPhotosLibraries(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: cleaning up Photos library copies: %v (retried on the next run)\n", err)
+		var pj *pruneJob
+		if *prune && runErr == nil {
+			pj = &pruneJob{folders: asked, notReady: notReady, gaps: ix.Stats.Gaps.Load()}
 		}
-		if res.Removed > 0 || res.Kept > 0 {
-			fmt.Fprintf(os.Stderr, "Photos libraries: removed %d of Apple's copies (moved %d face names, %d ratings to the originals); kept %d with no original catalogued\n",
-				res.Removed, res.LabelsMoved, res.FeedbackMoved, res.Kept)
-		}
-		// then any app copies left: Photos copies with a twin elsewhere,
-		// iPhoto, Aperture and Capture One caches
-		cres, err := cat.Store.CleanAppCaches(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: cleaning up photo apps' copies: %v (retried on the next run)\n", err)
-		}
-		if cres.Removed > 0 || cres.Kept > 0 {
-			fmt.Fprintf(os.Stderr, "app copies: removed %d thumbnails and previews of photo apps (moved %d face names, %d ratings to the photos they copy); kept %d (no other copy, or hand-named faces or ratings on them)\n",
-				cres.Removed, cres.LabelsMoved, cres.FeedbackMoved, cres.Kept)
-		}
+		cleanUpAfterIndex(ctx, cat.Store, pj, os.Stderr)
 	}
 	if !*noMatch && ctx.Err() == nil {
 		// The photos are indexed either way; a failure here only means named

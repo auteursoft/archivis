@@ -205,11 +205,11 @@ Mac is asleep at 2:30, launchd runs the job when it wakes.
 
 `--prune` removes photos you deleted from these folders from the catalogue,
 after each complete run (so moved files are found first). It does that only
-when every folder is there and not empty, before the run and after it: an
+when every folder is there and not empty, before the run and after it (an
 unmounted drive, or several after a restart, would look like deleted
-photos. Then the log has an `error: not removing deleted photos` line
-naming each folder, nothing is removed, and the next run that finds every
-folder catches up. To turn it on for a service set up without it:
+photos), and the run read every folder and recorded every change. Otherwise
+the log has an `error: not removing deleted photos` line with each reason,
+nothing is removed, and the next run that sees everything catches up. To turn it on for a service set up without it:
 
 <!-- ci: prune-on (run as written by the deploy job in .github/workflows/ci.yml) -->
 ```sh
@@ -491,8 +491,9 @@ mounted is skipped with a warning.
 
 `--prune` removes photos you deleted from these folders from the catalogue,
 but only when every folder is there and not empty (an unmounted drive's
-mount point is empty); otherwise the log says which folders, nothing is
-removed, and the next run that finds them all catches up. To add it to a
+mount point is empty), before the run and after it, and the run read every
+folder and recorded every change; otherwise the log says why, nothing is
+removed, and the next run that sees everything catches up. To add it to a
 service set up without it:
 
 ```sh

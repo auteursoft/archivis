@@ -41,7 +41,13 @@ type Config struct {
 // Stats are live counters for a run.
 type Stats struct {
 	Seen, Queued, Indexed, Copied, Moved, Unchanged, Errors, Faces atomic.Int64
-	WalkDone                                                       atomic.Bool
+	// Gaps counts what the run could not read or record: folders and
+	// files it could not read, failed files, and moves or photos it could
+	// not save. A run with gaps cannot show which files were deleted (a
+	// photo moved where it could not look still has its old path), so
+	// index --prune waits for one without.
+	Gaps     atomic.Int64
+	WalkDone atomic.Bool
 }
 
 // Indexer runs the pipeline.
@@ -147,6 +153,7 @@ func (ix *Indexer) Run(ctx context.Context) error {
 				}
 				if err != nil {
 					ix.logf("warning: %v\n", err)
+					ix.Stats.Gaps.Add(1)
 					if d != nil && d.IsDir() {
 						return fs.SkipDir
 					}
@@ -175,7 +182,14 @@ func (ix *Indexer) Run(ctx context.Context) error {
 				default:
 					return nil
 				}
-				if err != nil || info.Size() < ix.cfg.MinBytes {
+				if err != nil {
+					if !os.IsNotExist(err) { // gone since it was listed: nothing missed
+						ix.logf("warning: %v\n", err)
+						ix.Stats.Gaps.Add(1)
+					}
+					return nil
+				}
+				if info.Size() < ix.cfg.MinBytes {
 					return nil
 				}
 				ix.Stats.Seen.Add(1)
@@ -247,6 +261,7 @@ func (ix *Indexer) Run(ctx context.Context) error {
 			for _, r := range batch {
 				if err := ix.store.Save([]*store.Result{r}); err != nil {
 					ix.Stats.Errors.Add(1)
+					ix.Stats.Gaps.Add(1)
 					ix.logf("error saving %s: %v (will retry next run)\n", r.Photo.Path, err)
 					continue
 				}
@@ -272,6 +287,7 @@ loop:
 			switch {
 			case o.err != nil:
 				ix.Stats.Errors.Add(1)
+				ix.Stats.Gaps.Add(1) // it may be a moved photo whose new path wasn't recorded
 				msg := o.err.Error()
 				if err := ix.store.RecordError(o.path, o.info.Size(), o.info.ModTime().Unix(), msg); err != nil {
 					ix.logf("\nerror recording failure of %s: %v\n", o.path, err)
@@ -279,6 +295,7 @@ loop:
 			case o.move != nil:
 				ix.Stats.Moved.Add(1)
 				if err := ix.store.MovePath(o.move.id, o.move.path, o.move.mtime); err != nil {
+					ix.Stats.Gaps.Add(1)
 					ix.logf("\nerror recording move of %s: %v\n", o.path, err)
 				}
 			default:

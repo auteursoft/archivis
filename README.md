@@ -40,7 +40,8 @@ everything runs locally, nothing leaves your machine.
   catalogued files are all missing and that is itself gone or empty is held
   back unless you pass `--all-missing`. `index --prune` prunes after each
   complete run, and only when every folder it indexes is there and not
-  empty; otherwise it logs which are missing and prunes nothing.
+  empty, before and after the run, and the run read and recorded
+  everything; otherwise it logs why and prunes nothing.
 
 Your original files are only ever read, never modified.
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,7 +52,7 @@ func TestPruneAfterIndex(t *testing.T) {
 	t.Run("every folder there", func(t *testing.T) {
 		st, a, b := setup(t)
 		var log bytes.Buffer
-		res, ok := pruneAfterIndex(st, []string{a + "/", b}, nil, &log)
+		res, ok := pruneAfterIndex(st, []string{a + "/", b}, nil, 0, &log)
 		if !ok || len(res.Gone) != 2 || count(t, st) != 2 {
 			t.Fatalf("ok=%v gone=%v photos=%d, want both deleted.jpg removed; log: %s", ok, res.Gone, count(t, st), &log)
 		}
@@ -62,35 +63,45 @@ func TestPruneAfterIndex(t *testing.T) {
 
 	for _, c := range []struct {
 		name   string
-		break_ func(a, b string) (missing []string) // what happens to the drives
-		want   []string                             // in the error, per folder
+		break_ func(a, b string) (notReady map[string]string, gaps int64) // what happens to the drives and the run
+		want   []string                                                   // in the error
 	}{
-		{"one drive unmounted (folder gone)", func(a, b string) []string { os.RemoveAll(b); return nil },
-			[]string{"1 of the 2 folders", "Archive2 is not there"}},
-		{"one drive unmounted (empty mount point)", func(a, b string) []string {
+		{"one drive unmounted (folder gone)", func(a, b string) (map[string]string, int64) { os.RemoveAll(b); return nil, 0 },
+			[]string{"Archive2 is not there"}},
+		{"one drive unmounted (empty mount point)", func(a, b string) (map[string]string, int64) {
 			os.Remove(filepath.Join(b, "keep.jpg"))
-			return nil
+			return nil, 0
 		}, []string{"Archive2 is empty"}},
-		{"both missing after a restart", func(a, b string) []string { os.RemoveAll(a); os.RemoveAll(b); return nil },
-			[]string{"2 of the 2 folders", "Archive1 is not there", "Archive2 is not there"}},
-		{"skipped at the start, mounted by the end", func(a, b string) []string { return []string{b} },
-			[]string{"Archive2 was not there when indexing started"}},
-		{"a file, not a folder", func(a, b string) []string {
+		{"both missing after a restart", func(a, b string) (map[string]string, int64) { os.RemoveAll(a); os.RemoveAll(b); return nil, 0 },
+			[]string{"Archive1 is not there", "Archive2 is not there"}},
+		// not walked, or walked while empty: photos moved onto it weren't
+		// seen, though it is ready by the end
+		{"not there at the start, mounted by the end", func(a, b string) (map[string]string, int64) {
+			return map[string]string{b: folderProblemOf(t, filepath.Join(t.TempDir(), "gone"))}, 0
+		}, []string{"Archive2: when indexing started, it is not there"}},
+		{"an empty mount point at the start, mounted by the end", func(a, b string) (map[string]string, int64) {
+			return map[string]string{b: folderProblemOf(t, t.TempDir())}, 0
+		}, []string{"Archive2: when indexing started, it is empty"}},
+		{"a file, not a folder", func(a, b string) (map[string]string, int64) {
 			os.RemoveAll(b)
 			os.WriteFile(b, []byte("x"), 0o644)
-			return nil
+			return nil, 0
 		}, []string{"Archive2 is not a folder"}},
+		// a subfolder it couldn't read, a move it couldn't save: a photo
+		// moved there still has its old path
+		{"every folder there, but the run had gaps", func(a, b string) (map[string]string, int64) { return nil, 2 },
+			[]string{"could not read or record 2 folders or files"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			st, a, b := setup(t)
-			missing := c.break_(a, b)
+			notReady, gaps := c.break_(a, b)
 			var log bytes.Buffer
-			res, ok := pruneAfterIndex(st, []string{a, b}, missing, &log)
+			res, ok := pruneAfterIndex(st, []string{a, b}, notReady, gaps, &log)
 			if ok || len(res.Gone) != 0 || count(t, st) != 4 {
 				t.Fatalf("ok=%v gone=%v photos=%d, want nothing removed from either folder", ok, res.Gone, count(t, st))
 			}
 			out := log.String()
-			for _, w := range append([]string{"error: not removing deleted photos", "next run that finds every folder"}, c.want...) {
+			for _, w := range append([]string{"error: not removing deleted photos", "after a run that finds every folder and reads every file"}, c.want...) {
 				if !strings.Contains(out, w) {
 					t.Errorf("log lacks %q:\n%s", w, out)
 				}
@@ -106,11 +117,57 @@ func TestPruneAfterIndex(t *testing.T) {
 		os.Chmod(b, 0)
 		t.Cleanup(func() { os.Chmod(b, 0o755) })
 		var log bytes.Buffer
-		if _, ok := pruneAfterIndex(st, []string{a, b}, nil, &log); ok || count(t, st) != 4 {
+		if _, ok := pruneAfterIndex(st, []string{a, b}, nil, 0, &log); ok || count(t, st) != 4 {
 			t.Fatalf("pruned with an unreadable folder; log: %s", &log)
 		}
 		if !strings.Contains(log.String(), "Archive2 can't be read") {
 			t.Errorf("log: %q", &log)
 		}
 	})
+}
+
+func folderProblemOf(t *testing.T, dir string) string {
+	t.Helper()
+	p := folderProblem(dir)
+	if p == "" {
+		t.Fatalf("%s: no problem found", dir)
+	}
+	return p
+}
+
+// The clean-ups run before pruning: a Photos copy whose file is gone, while
+// its folder still has others, hands its rating to its original instead of
+// losing it to the prune.
+func TestCleanUpBeforePrune(t *testing.T) {
+	lib := filepath.Join(t.TempDir(), "Photos Library.photoslibrary")
+	const u = "AAAA1111-0000-4000-8000-000000000001"
+	orig := filepath.Join(lib, "originals", "A", u+".heic")
+	copyPath := filepath.Join(lib, "resources", "derivatives", "A", u+"_1_105_c.jpeg") // its file deleted
+	other := filepath.Join(lib, "resources", "derivatives", "A", "other.jpeg")         // still there
+	for _, p := range []string{orig, other} {
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte("x"), 0o644)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var rs []*store.Result
+	for i, p := range []string{orig, copyPath} {
+		rs = append(rs, &store.Result{Photo: store.Photo{Path: p, Size: 1, MTime: 1, Fingerprint: fmt.Sprint(i), Version: store.SchemaVersion}})
+	}
+	if err := st.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	st.DB.Exec(`INSERT INTO aesthetic_feedback (photo_id, rater, rating, created_at) VALUES (?, 'sean', 8, 1)`, rs[1].Photo.ID)
+	var log bytes.Buffer
+	cleanUpAfterIndex(context.Background(), st, &pruneJob{folders: []string{lib}}, &log)
+	var on int64
+	if err := st.DB.QueryRow(`SELECT photo_id FROM aesthetic_feedback WHERE rater = 'sean'`).Scan(&on); err != nil || on != rs[0].Photo.ID {
+		t.Fatalf("the copy's rating is on photo %d (err %v), want the original %d; log:\n%s", on, err, rs[0].Photo.ID, &log)
+	}
+	if !strings.Contains(log.String(), "pruned: removed 0 deleted photos") {
+		t.Errorf("log: %s", &log)
+	}
 }

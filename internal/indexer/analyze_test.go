@@ -8,6 +8,7 @@ import (
 	"image/jpeg"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -257,8 +258,8 @@ func TestFailedBatchSavesTheRest(t *testing.T) {
 	if n := st.Count(false); n != 2 {
 		t.Fatalf("%d photos saved, want the 2 good ones", n)
 	}
-	if ix.Stats.Errors.Load() != 1 {
-		t.Fatalf("errors %d, want 1", ix.Stats.Errors.Load())
+	if ix.Stats.Errors.Load() != 1 || ix.Stats.Gaps.Load() != 1 {
+		t.Fatalf("errors %d, gaps %d, want 1 each (an unsaved photo is a gap for index --prune)", ix.Stats.Errors.Load(), ix.Stats.Gaps.Load())
 	}
 	bad := filepath.Join(root, "bad.jpg")
 	info, _ := os.Stat(bad)
@@ -353,4 +354,36 @@ func alterMiddle(t *testing.T, src []byte) []byte {
 	}
 	t.Fatal("could not alter the test JPEG and keep it decodable")
 	return nil
+}
+
+// A run counts what it could not read or record (index --prune waits for a
+// run without): a folder it may not list is a gap; a clean run has none.
+func TestRunCountsGaps(t *testing.T) {
+	jpg, _ := os.ReadFile("../imageio/testdata/coffee.jpg")
+	root := t.TempDir()
+	locked := filepath.Join(root, "locked")
+	for i, d := range []string{root, locked} {
+		os.MkdirAll(d, 0o755)
+		os.WriteFile(filepath.Join(d, "p.jpg"), append(bytes.Clone(jpg), byte(i)), 0o644)
+	}
+	run := func() *Indexer {
+		st, _ := store.Open(filepath.Join(t.TempDir(), "c.db"))
+		t.Cleanup(func() { st.Close() })
+		ix := New(Config{Roots: []string{root}, Workers: 1}, st, &Engines{}, Layout{Dir: t.TempDir()})
+		if err := ix.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return ix
+	}
+	if ix := run(); ix.Stats.Gaps.Load() != 0 || ix.Stats.Indexed.Load() != 2 {
+		t.Fatalf("clean run: gaps %d, indexed %d, want 0 and 2", ix.Stats.Gaps.Load(), ix.Stats.Indexed.Load())
+	}
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("folder permissions are not enforced here")
+	}
+	os.Chmod(locked, 0)
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	if ix := run(); ix.Stats.Gaps.Load() != 1 {
+		t.Fatalf("a folder it could not list: gaps %d, want 1", ix.Stats.Gaps.Load())
+	}
 }
