@@ -8,6 +8,7 @@ import (
 	"image/jpeg"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -257,8 +258,8 @@ func TestFailedBatchSavesTheRest(t *testing.T) {
 	if n := st.Count(false); n != 2 {
 		t.Fatalf("%d photos saved, want the 2 good ones", n)
 	}
-	if ix.Stats.Errors.Load() != 1 {
-		t.Fatalf("errors %d, want 1", ix.Stats.Errors.Load())
+	if ix.Stats.Errors.Load() != 1 || ix.Stats.Gaps.Load() != 1 {
+		t.Fatalf("errors %d, gaps %d, want 1 each (an unsaved photo is a gap for index --prune)", ix.Stats.Errors.Load(), ix.Stats.Gaps.Load())
 	}
 	bad := filepath.Join(root, "bad.jpg")
 	info, _ := os.Stat(bad)
@@ -353,4 +354,117 @@ func alterMiddle(t *testing.T, src []byte) []byte {
 	}
 	t.Fatal("could not alter the test JPEG and keep it decodable")
 	return nil
+}
+
+// A run counts what it could not read or record (index --prune waits for a
+// run without): a folder it may not list is a gap; a clean run has none.
+func TestRunCountsGaps(t *testing.T) {
+	jpg, _ := os.ReadFile("../imageio/testdata/coffee.jpg")
+	root := t.TempDir()
+	locked := filepath.Join(root, "locked")
+	for i, d := range []string{root, locked} {
+		os.MkdirAll(d, 0o755)
+		os.WriteFile(filepath.Join(d, "p.jpg"), append(bytes.Clone(jpg), byte(i)), 0o644)
+	}
+	run := func() *Indexer {
+		st, _ := store.Open(filepath.Join(t.TempDir(), "c.db"))
+		t.Cleanup(func() { st.Close() })
+		ix := New(Config{Roots: []string{root}, Workers: 1}, st, &Engines{}, Layout{Dir: t.TempDir()})
+		if err := ix.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return ix
+	}
+	if ix := run(); ix.Stats.Gaps.Load() != 0 || ix.Stats.Indexed.Load() != 2 {
+		t.Fatalf("clean run: gaps %d, indexed %d, want 0 and 2", ix.Stats.Gaps.Load(), ix.Stats.Indexed.Load())
+	}
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("folder permissions are not enforced here")
+	}
+	os.Chmod(locked, 0)
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	if ix := run(); ix.Stats.Gaps.Load() != 1 {
+		t.Fatalf("a folder it could not list: gaps %d, want 1", ix.Stats.Gaps.Load())
+	}
+}
+
+// A folder to index that is a link is walked (WalkDir alone wouldn't), as
+// given or with a trailing separator, and its photos keep the link's name;
+// links to folders inside it are still not followed.
+func TestRunWalksLinkedRoot(t *testing.T) {
+	jpg, _ := os.ReadFile("../imageio/testdata/coffee.jpg")
+	base := t.TempDir()
+	real := filepath.Join(base, "drive")
+	os.MkdirAll(filepath.Join(real, "2019"), 0o755)
+	os.WriteFile(filepath.Join(real, "2019", "a.jpg"), jpg, 0o644)
+	elsewhere := filepath.Join(base, "elsewhere")
+	os.MkdirAll(elsewhere, 0o755)
+	os.WriteFile(filepath.Join(elsewhere, "b.jpg"), append(bytes.Clone(jpg), 'b'), 0o644)
+	link := filepath.Join(base, "Archive")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(real, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{link, link + string(filepath.Separator)} {
+		st, _ := store.Open(filepath.Join(t.TempDir(), "c.db"))
+		ix := New(Config{Roots: []string{root}, Workers: 1}, st, &Engines{}, Layout{Dir: t.TempDir()})
+		if err := ix.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(link, "2019", "a.jpg")
+		if k, err := st.Lookup(want); err != nil || k == nil {
+			t.Errorf("root %q: %s not catalogued (indexed %d)", root, want, ix.Stats.Indexed.Load())
+		}
+		if n := st.Count(false); n != 1 {
+			t.Errorf("root %q: %d photos, want 1 (the link inside it not followed)", root, n)
+		}
+		if g := ix.Stats.Gaps.Load(); g != 0 {
+			t.Errorf("root %q: gaps %d", root, g)
+		}
+		st.Close()
+	}
+}
+
+// A file under --min-bytes isn't indexed; if it is a catalogued photo moved
+// there (catalogued with a lower --min-bytes, its old file gone), the run
+// counts a gap so index --prune keeps the old record. Small files that
+// match nothing, or a photo still at its old path, don't hold pruning off.
+func TestRunCountsSmallMoves(t *testing.T) {
+	root := t.TempDir()
+	small := []byte("a small image, under --min-bytes")
+	old := filepath.Join(root, "old.jpg")
+	os.WriteFile(old, small, 0o644)
+	os.WriteFile(filepath.Join(root, "icon.jpg"), []byte("an icon nobody catalogued"), 0o644)
+	st, _ := store.Open(filepath.Join(t.TempDir(), "c.db"))
+	defer st.Close()
+	fp, err := Fingerprint(old, int64(len(small)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Save([]*store.Result{{Photo: store.Photo{Path: old, Size: int64(len(small)), MTime: 1, Fingerprint: fp, Version: store.SchemaVersion}}}); err != nil {
+		t.Fatal(err)
+	}
+	run := func() int64 {
+		ix := New(Config{Roots: []string{root}, Workers: 1, MinBytes: 4096}, st, &Engines{}, Layout{Dir: t.TempDir()})
+		if err := ix.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return ix.Stats.Gaps.Load()
+	}
+	if g := run(); g != 0 {
+		t.Fatalf("photo still at its catalogued path: gaps %d, want 0", g)
+	}
+	os.WriteFile(filepath.Join(root, "copy.jpg"), small, 0o644) // a copy, the original still there
+	if g := run(); g != 0 {
+		t.Fatalf("a small copy beside its original: gaps %d, want 0", g)
+	}
+	os.Remove(filepath.Join(root, "copy.jpg"))
+	if err := os.Rename(old, filepath.Join(root, "new.jpg")); err != nil {
+		t.Fatal(err)
+	}
+	if g := run(); g != 1 {
+		t.Fatalf("a catalogued small photo renamed: gaps %d, want 1", g)
+	}
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -419,6 +420,12 @@ func (s *Store) Count(faces bool) int64 {
 type PruneResult struct {
 	Gone []string // entries removed (or that would be, in a dry run)
 	Held []string // folders whose files all look missing, kept as possibly offline
+	// Spared are missing copies photo apps made, kept because hand-named
+	// faces, ratings or stars on them would go with them (PruneSparingCopies)
+	Spared []string
+	// what a person gave removed photos, moved to an identical photo still
+	// there: hand-named faces, ratings, stars (not in a dry run)
+	LabelsMoved, RatingsMoved, StarsMoved int
 }
 
 // Prune deletes catalogue entries whose files no longer exist, but only under
@@ -427,6 +434,31 @@ type PruneResult struct {
 // all catalogued files of a folder are missing and the folder is gone or
 // empty, those entries are held back unless allMissing is set.
 func (s *Store) Prune(roots []string, dryRun, allMissing bool) (PruneResult, error) {
+	return s.prune(roots, dryRun, allMissing, false)
+}
+
+// PruneSparingCopies prunes as Prune does (not a dry run, offline folders
+// held), but keeps a missing copy a photo app made (InAppCache) that
+// carries hand-named faces, ratings or stars: the clean-ups keep such copies
+// when they have no original or twin to hand them to, so pruning one would
+// lose them, and Photos can drop a preview while the photo is still there.
+// For the nightly index --prune; archivis prune removes them.
+func (s *Store) PruneSparingCopies(roots []string) (PruneResult, error) {
+	return s.prune(roots, false, false, true)
+}
+
+// personal reports whether the photo at path carries anything a person
+// gave it: a hand-named face, a rating or a star (true if it can't tell).
+func (s *Store) personal(path string) bool {
+	var yes bool
+	err := s.DB.QueryRow(`SELECT EXISTS (SELECT 1 FROM photos p WHERE p.path = ? AND (
+		EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = p.id AND f.person_source = 'manual')
+		OR EXISTS (SELECT 1 FROM aesthetic_feedback a WHERE a.photo_id = p.id)
+		OR EXISTS (SELECT 1 FROM stars t WHERE t.photo_id = p.id)))`, path).Scan(&yes)
+	return err != nil || yes
+}
+
+func (s *Store) prune(roots []string, dryRun, allMissing, spareCopies bool) (PruneResult, error) {
 	var res PruneResult
 	for _, root := range roots {
 		root, _ = filepath.Abs(root)
@@ -464,11 +496,18 @@ func (s *Store) Prune(roots []string, dryRun, allMissing bool) (PruneResult, err
 				res.Held = append(res.Held, dir)
 				continue
 			}
-			res.Gone = append(res.Gone, d.missing...)
+			for _, p := range d.missing {
+				if spareCopies && InAppCache(p) && s.personal(p) {
+					res.Spared = append(res.Spared, p)
+					continue
+				}
+				res.Gone = append(res.Gone, p)
+			}
 		}
 	}
 	sort.Strings(res.Gone)
 	sort.Strings(res.Held)
+	sort.Strings(res.Spared)
 	if dryRun || len(res.Gone) == 0 {
 		return res, nil
 	}
@@ -477,12 +516,80 @@ func (s *Store) Prune(roots []string, dryRun, allMissing bool) (PruneResult, err
 		return res, err
 	}
 	defer tx.Rollback()
+	gone := map[string]bool{}
 	for _, p := range res.Gone {
+		gone[p] = true
+	}
+	for _, p := range res.Gone {
+		if err := moveToTwin(tx, p, gone, &res); err != nil {
+			return res, err
+		}
 		if _, err := tx.Exec(`DELETE FROM photos WHERE path = ?`, p); err != nil {
 			return res, err
 		}
 	}
 	return res, tx.Commit()
+}
+
+// moveToTwin hands what a person gave the deleted photo at path (its
+// hand-named faces, ratings and stars) to an identical catalogued photo
+// whose file is still there, if any: one copy of two deleted, or a moved
+// photo that index --force catalogued afresh at its new path.
+func moveToTwin(tx *sql.Tx, path string, gone map[string]bool, res *PruneResult) error {
+	var id int64
+	var fp string
+	err := tx.QueryRow(`SELECT id, fingerprint FROM photos WHERE path = ?`, path).Scan(&id, &fp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // gone meanwhile
+	}
+	if err != nil {
+		return err // the prune rolls back: nothing is deleted without its labels
+	}
+	// only a full-content fingerprint (32 hex digits) proves another photo
+	// identical: a legacy one (24) covers only the size and the edges, and
+	// the deleted file can't be compared byte for byte
+	if len(fp) != 32 {
+		return nil
+	}
+	rows, err := tx.Query(`SELECT id, path FROM photos WHERE fingerprint = ? AND id != ? ORDER BY id`, fp, id)
+	if err != nil {
+		return err
+	}
+	var twin int64
+	for rows.Next() {
+		var tid int64
+		var tp string
+		if err := rows.Scan(&tid, &tp); err != nil {
+			rows.Close()
+			return err
+		}
+		if _, err := os.Lstat(tp); err == nil && !gone[tp] {
+			twin = tid
+			break
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || twin == 0 {
+		return err
+	}
+	n, err := moveManualLabels(tx, id, twin)
+	if err != nil {
+		return err
+	}
+	res.LabelsMoved += n
+	r, err := tx.Exec(`UPDATE aesthetic_feedback SET photo_id = ? WHERE photo_id = ?`, twin, id)
+	if err != nil {
+		return err
+	}
+	m, _ := r.RowsAffected()
+	res.RatingsMoved += int(m)
+	r, err = tx.Exec(`INSERT OR IGNORE INTO stars (user_id, photo_id, at) SELECT user_id, ?, at FROM stars WHERE photo_id = ?`, twin, id)
+	if err != nil {
+		return err
+	}
+	m, _ = r.RowsAffected()
+	res.StarsMoved += int(m)
+	return nil
 }
 
 // pathsUnder lists catalogued paths starting with prefix. SQLite's substr

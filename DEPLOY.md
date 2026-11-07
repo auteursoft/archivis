@@ -182,6 +182,7 @@ cat > ~/Library/LaunchAgents/com.archivis.index.plist <<EOF
     <string>/usr/bin/caffeinate</string><string>-i</string>
     <string>/usr/local/bin/archivis</string>
     <string>index</string>
+    <string>--prune</string>
     <string>/Volumes/Archive1</string>
     <string>/Volumes/Archive2</string>
   </array>
@@ -201,6 +202,39 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.archivis.index.plist
 Edit the `/Volumes/...` lines to match your drives. A drive that isn't
 plugged in is skipped with a warning; the others are still indexed. If the
 Mac is asleep at 2:30, launchd runs the job when it wakes.
+
+`--prune` removes photos you deleted from these folders from the catalogue,
+after each complete run (so moved files are found first). It does that only
+when every folder is there and not empty, before the run and after it (an
+unmounted drive, or several after a restart, would look like deleted
+photos), and the run read every folder and recorded every change. Otherwise
+the log has an `error: not removing deleted photos` line with each reason,
+nothing is removed, and the next run that sees everything catches up. A
+missing copy that Photos or another photo app made is kept if you named
+faces on it, rated it or starred it (nothing else holds those);
+`archivis prune` removes it. A deleted photo's names, ratings and stars
+move to an identical photo still catalogued, if there is one. To turn it on for a service set up without it:
+
+<!-- ci: prune-on (run as written by the deploy job in .github/workflows/ci.yml) -->
+```sh
+d=~/Library/LaunchAgents; dom=gui/$(id -u); s=        # agents
+# d=/Library/LaunchDaemons; dom=system; s=sudo        # services started at boot
+p=$d/com.archivis.index.plist
+args=$($s /usr/libexec/PlistBuddy -c "Print :ProgramArguments" "$p")
+if [ -n "$args" ] && ! grep -qxE ' *--?prune' <<<"$args"; then
+  $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:4 string --prune" "$p"   # after "index"
+  $s launchctl bootout $dom/com.archivis.index
+  while $s launchctl print $dom/com.archivis.index >/dev/null 2>&1; do sleep 1; done
+  $s launchctl bootstrap $dom "$p"
+fi
+```
+
+Run it while the index isn't running (`launchctl print
+$dom/com.archivis.index | grep state` doesn't say `running`): reloading stops
+a run in progress, which picks up where it left off at 2:30. For services
+started at boot ([Start at boot, with nobody
+logged in](#start-at-boot-with-nobody-logged-in)), swap the comment marks on
+the first two lines.
 
 ### Managing the services
 
@@ -435,7 +469,7 @@ User=$(id -un)
 Environment=ARCHIVIS_DATA=$HOME/.archivis
 Nice=10
 IOSchedulingClass=idle
-ExecStart=/usr/local/bin/archivis index /mnt/archive1 /mnt/archive2
+ExecStart=/usr/local/bin/archivis index --prune /mnt/archive1 /mnt/archive2
 EOF
 
 sudo tee /etc/systemd/system/archivis-index.timer >/dev/null <<EOF
@@ -458,6 +492,19 @@ Edit the folders on the `ExecStart` line to match your mount points. The
 first index runs in the background and survives logging out; if it is still
 running at 2:30 the timer does not start a second copy. A drive that isn't
 mounted is skipped with a warning.
+
+`--prune` removes photos you deleted from these folders from the catalogue,
+but only when every folder is there and not empty (an unmounted drive's
+mount point is empty), before the run and after it, and the run read every
+folder and recorded every change; otherwise the log says why, nothing is
+removed, and the next run that sees everything catches up. To add it to a
+service set up without it:
+
+```sh
+grep -q 'archivis index --prune' /etc/systemd/system/archivis-index.service ||
+  sudo sed -i 's|archivis index |archivis index --prune |' /etc/systemd/system/archivis-index.service
+sudo systemctl daemon-reload
+```
 
 ### Managing the services
 
