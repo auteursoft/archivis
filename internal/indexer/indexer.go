@@ -41,7 +41,14 @@ type Config struct {
 // Stats are live counters for a run.
 type Stats struct {
 	Seen, Queued, Indexed, Copied, Moved, Unchanged, Errors, Faces atomic.Int64
-	WalkDone                                                       atomic.Bool
+	// Gaps counts what the run could not read or record: folders and
+	// files it could not read (or that went between listing and reading),
+	// catalogue lookups that failed, failed files, moves or photos it could
+	// not save, and catalogued photos moved to a file under --min-bytes. A run with gaps cannot show which files were deleted (a
+	// photo moved where it could not look still has its old path), so
+	// index --prune waits for one without.
+	Gaps     atomic.Int64
+	WalkDone atomic.Bool
 }
 
 // Indexer runs the pipeline.
@@ -141,19 +148,30 @@ func (ix *Indexer) Run(ctx context.Context) error {
 				walkErr = err
 				return
 			}
-			err = filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
+			// WalkDir doesn't follow a root that is a link (Abs drops a
+			// trailing separator, which would): name a linked folder with
+			// one, so it is walked and its photos keep the folder's name
+			// as given (links inside it are still not followed)
+			walkRoot := abs
+			if l, err := os.Lstat(abs); err == nil && l.Mode()&fs.ModeSymlink != 0 {
+				if t, err := os.Stat(abs); err == nil && t.IsDir() {
+					walkRoot = abs + string(filepath.Separator)
+				}
+			}
+			err = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				if err != nil {
 					ix.logf("warning: %v\n", err)
+					ix.Stats.Gaps.Add(1)
 					if d != nil && d.IsDir() {
 						return fs.SkipDir
 					}
 					return nil
 				}
 				if d.IsDir() {
-					if p != abs && ix.excluded(p, true) {
+					if p != walkRoot && ix.excluded(p, true) {
 						return fs.SkipDir
 					}
 					return nil
@@ -175,12 +193,27 @@ func (ix *Indexer) Run(ctx context.Context) error {
 				default:
 					return nil
 				}
-				if err != nil || info.Size() < ix.cfg.MinBytes {
+				if err != nil {
+					// gone since it was listed: deleted, or renamed into a
+					// folder already walked, which this run can't tell apart
+					ix.logf("warning: %v\n", err)
+					ix.Stats.Gaps.Add(1)
+					return nil
+				}
+				if info.Size() < ix.cfg.MinBytes {
+					if why := ix.skippedMove(p, info.Size()); why != "" {
+						ix.logf("warning: %s is under --min-bytes, so not indexed, but %s\n", p, why)
+						ix.Stats.Gaps.Add(1)
+					}
 					return nil
 				}
 				ix.Stats.Seen.Add(1)
 				if !ix.cfg.Force {
 					k, err := ix.store.Lookup(p)
+					if err != nil { // analysed again; whether it moved is checked then
+						ix.logf("warning: looking up %s: %v\n", p, err)
+						ix.Stats.Gaps.Add(1)
+					}
 					if err == nil && k != nil && k.Size == info.Size() && k.MTime == info.ModTime().Unix() && k.Version >= store.SchemaVersion {
 						ix.Stats.Unchanged.Add(1)
 						return nil
@@ -247,6 +280,7 @@ func (ix *Indexer) Run(ctx context.Context) error {
 			for _, r := range batch {
 				if err := ix.store.Save([]*store.Result{r}); err != nil {
 					ix.Stats.Errors.Add(1)
+					ix.Stats.Gaps.Add(1)
 					ix.logf("error saving %s: %v (will retry next run)\n", r.Photo.Path, err)
 					continue
 				}
@@ -272,6 +306,7 @@ loop:
 			switch {
 			case o.err != nil:
 				ix.Stats.Errors.Add(1)
+				ix.Stats.Gaps.Add(1) // it may be a moved photo whose new path wasn't recorded
 				msg := o.err.Error()
 				if err := ix.store.RecordError(o.path, o.info.Size(), o.info.ModTime().Unix(), msg); err != nil {
 					ix.logf("\nerror recording failure of %s: %v\n", o.path, err)
@@ -279,6 +314,7 @@ loop:
 			case o.move != nil:
 				ix.Stats.Moved.Add(1)
 				if err := ix.store.MovePath(o.move.id, o.move.path, o.move.mtime); err != nil {
+					ix.Stats.Gaps.Add(1)
 					ix.logf("\nerror recording move of %s: %v\n", o.path, err)
 				}
 			default:
@@ -336,6 +372,38 @@ func (ix *Indexer) process(j job) (o outcome) {
 	return
 }
 
+// skippedMove says why a file skipped for its size may be a catalogued
+// photo moved there (one catalogued with a lower --min-bytes, its old file
+// now gone), or "" if it isn't one. Such a move is a gap: pruning would
+// drop the old record, names and ratings, though the photo is still there.
+// Small files are cheap to fingerprint, so icons and tiny thumbnails that
+// match nothing don't hold pruning off.
+func (ix *Indexer) skippedMove(path string, size int64) string {
+	fps := []func(string, int64) (string, error){Fingerprint}
+	if ix.legacy {
+		fps = append(fps, LegacyFingerprint)
+	}
+	for _, f := range fps {
+		fp, err := f(path, size)
+		if err != nil {
+			return fmt.Sprintf("it couldn't be read to check it isn't a catalogued photo moved there: %v", err)
+		}
+		prev, err := ix.store.ByFingerprint(fp)
+		if err != nil {
+			return fmt.Sprintf("looking up catalogued copies of it failed: %v", err)
+		}
+		for _, p := range prev {
+			if p.Size != size || p.Path == path {
+				continue
+			}
+			if _, err := os.Stat(p.Path); os.IsNotExist(err) {
+				return fmt.Sprintf("it is the catalogued %s, moved (index it with a lower --min-bytes to keep its record)", p.Path)
+			}
+		}
+	}
+	return ""
+}
+
 // reuse looks for an existing record of this content (moved file or copy)
 // and fills o if one is found. A legacy fingerprint only proves equal size
 // and edges, so a legacy copy is accepted after a byte-for-byte comparison;
@@ -343,6 +411,9 @@ func (ix *Indexer) process(j job) (o outcome) {
 func (ix *Indexer) reuse(j job, fp string, legacy bool, o *outcome) bool {
 	prev, err := ix.store.ByFingerprint(fp)
 	if err != nil {
+		// analysed as new: if it moved, its old record wasn't found
+		ix.logf("warning: looking up earlier copies of %s: %v\n", j.path, err)
+		ix.Stats.Gaps.Add(1)
 		return false
 	}
 	for _, p := range prev {

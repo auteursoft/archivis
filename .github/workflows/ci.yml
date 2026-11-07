@@ -146,6 +146,25 @@ jobs:
           sw provider auto
           tools/deploy-test/provider.sh provider auto
           tools/deploy-test/check.sh agents
+      - name: Turn on pruning (already on, then on a job set up without it)
+        shell: zsh -e -o pipefail {0}
+        run: |
+          p=~/Library/LaunchAgents/com.archivis.index.plist
+          args() { plutil -extract ProgramArguments json -o - "$p" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)))'; }
+          check() {
+            a=$(args)
+            [ "$(grep -o -- ' --prune ' <<<" $a " | wc -l | tr -d ' ')" = 1 ] || { echo "::error::want one --prune: $a"; exit 1; }
+            case "$a" in *" index "*"--prune"*) ;; *) echo "::error::--prune not after index: $a"; exit 1 ;; esac
+            launchctl print gui/$(id -u)/com.archivis.index >/dev/null || { echo "::error::the index agent is not loaded"; exit 1; }
+            echo "prune: ok ($a)"
+          }
+          tools/deploy-test/block.sh prune-on | zsh   # the agent from step 7 has it: nothing changes
+          check
+          i=$(plutil -extract ProgramArguments json -o - "$p" | python3 -c 'import json,sys; print(json.load(sys.stdin).index("--prune"))')
+          /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$i" "$p"   # as set up before --prune
+          case "$(args)" in *--prune*) echo "::error::--prune not deleted"; exit 1 ;; esac
+          tools/deploy-test/block.sh prune-on | zsh
+          check
       - name: Move to system services
         shell: zsh {0}
         run: |
