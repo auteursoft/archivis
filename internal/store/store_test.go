@@ -633,7 +633,8 @@ func TestPruneMovesLabelsToTwin(t *testing.T) {
 	old := filepath.Join(root, "old.jpg")        // missing, labelled
 	alsoGone := filepath.Join(root, "other.jpg") // missing, same content
 	box := func(x float64) Face { return Face{X1: x, Y1: .1, X2: x + .2, Y2: .4, Score: .9, Embedding: []byte{1}} }
-	setup := func(t *testing.T, withKeep bool) (*Store, map[string]*Result) {
+	const full = "0123456789abcdef0123456789abcdef" // a full-content fingerprint (32 hex digits)
+	setupFP := func(t *testing.T, withKeep bool, fp string) (*Store, map[string]*Result) {
 		st, err := Open(filepath.Join(t.TempDir(), "p.db"))
 		if err != nil {
 			t.Fatal(err)
@@ -646,7 +647,7 @@ func TestPruneMovesLabelsToTwin(t *testing.T) {
 		}
 		var all []*Result
 		for _, p := range paths {
-			r := &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: "same", Version: SchemaVersion, FaceCount: 2},
+			r := &Result{Photo: Photo{Path: p, Size: 1, MTime: 1, Fingerprint: fp, Version: SchemaVersion, FaceCount: 2},
 				Faces: []Face{box(.1), box(.6)}}
 			rs[p] = r
 			all = append(all, r)
@@ -663,6 +664,7 @@ func TestPruneMovesLabelsToTwin(t *testing.T) {
 		st.DB.Exec(`INSERT INTO stars (user_id, photo_id, at) VALUES (0, ?, 1)`, rs[old].Photo.ID)
 		return st, rs
 	}
+	setup := func(t *testing.T, withKeep bool) (*Store, map[string]*Result) { return setupFP(t, withKeep, full) }
 	nameOn := func(st *Store, faceID int64) string {
 		var n sql.NullString
 		st.DB.QueryRow(`SELECT p.name FROM faces f LEFT JOIN people p ON p.id = f.person_id WHERE f.id = ?`, faceID).Scan(&n)
@@ -692,6 +694,15 @@ func TestPruneMovesLabelsToTwin(t *testing.T) {
 		st, _ := setup(t, false)
 		res, err := st.Prune([]string{root}, false, false)
 		if err != nil || len(res.Gone) != 2 || res.LabelsMoved+res.RatingsMoved+res.StarsMoved != 0 {
+			t.Fatalf("gone %v, moved %d/%d/%d (err %v); want both gone, nothing moved", res.Gone, res.LabelsMoved, res.RatingsMoved, res.StarsMoved, err)
+		}
+	})
+	// a legacy fingerprint covers only the size and the edges: another
+	// photo sharing it may differ, so nothing moves (both are still pruned)
+	t.Run("a legacy fingerprint", func(t *testing.T) {
+		st, rs := setupFP(t, true, "0123456789abcdef01234567")
+		res, err := st.Prune([]string{root}, false, false)
+		if err != nil || len(res.Gone) != 2 || res.LabelsMoved+res.RatingsMoved+res.StarsMoved != 0 || nameOn(st, rs[keep].Faces[0].ID) != "" {
 			t.Fatalf("gone %v, moved %d/%d/%d (err %v); want both gone, nothing moved", res.Gone, res.LabelsMoved, res.RatingsMoved, res.StarsMoved, err)
 		}
 	})

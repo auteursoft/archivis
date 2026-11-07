@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -537,8 +538,18 @@ func (s *Store) prune(roots []string, dryRun, allMissing, spareCopies bool) (Pru
 func moveToTwin(tx *sql.Tx, path string, gone map[string]bool, res *PruneResult) error {
 	var id int64
 	var fp string
-	if err := tx.QueryRow(`SELECT id, fingerprint FROM photos WHERE path = ?`, path).Scan(&id, &fp); err != nil || fp == "" {
-		return nil // gone meanwhile, or nothing to match by
+	err := tx.QueryRow(`SELECT id, fingerprint FROM photos WHERE path = ?`, path).Scan(&id, &fp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // gone meanwhile
+	}
+	if err != nil {
+		return err // the prune rolls back: nothing is deleted without its labels
+	}
+	// only a full-content fingerprint (32 hex digits) proves another photo
+	// identical: a legacy one (24) covers only the size and the edges, and
+	// the deleted file can't be compared byte for byte
+	if len(fp) != 32 {
+		return nil
 	}
 	rows, err := tx.Query(`SELECT id, path FROM photos WHERE fingerprint = ? AND id != ? ORDER BY id`, fp, id)
 	if err != nil {
