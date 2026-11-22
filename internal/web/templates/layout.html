@@ -66,7 +66,7 @@
 {{end}}
 
 {{/* stackcard: one card for a group of photos (a stack of burst frames, a
-   set of identical images): its top photo, with a count and offset edges. */}}
+   set of duplicates): its top photo, with a count and offset edges. */}}
 {{define "stackcard"}}{{$top := .Top}}
 <div class="cell">
 <a class="card stack" href="/photo/{{$top.ID}}" title="{{$top.Path}}">
@@ -79,7 +79,14 @@
 </div>
 {{end}}
 
-{{define "groupstate"}}{{if .Regrouping}}<p class="note">Bursts and identical images are being worked out now; this page fills in as they are.</p>{{else if .Stale}}<p class="note">Bursts and identical images are being worked out (for the first time, or by changed settings); this page shows the previous grouping until then.</p>{{end}}{{end}}
+{{/* albumtabs: an album's views (its photos, bursts and duplicates) */}}
+{{define "albumtabs"}}{{if .}}<nav class="albumtabs" aria-label="Album views">{{range .}}<a href="{{.Href}}"{{if .On}} class="on" aria-current="page"{{end}}>{{.Name}}</a>{{end}}</nav>{{end}}{{end}}
+
+{{/* albumhead: on a bursts or duplicates page limited to an album, the way
+   to it and its tabs */}}
+{{define "albumhead"}}{{with .Album}}<nav class="crumbs" aria-label="Folders">{{range .Crumbs}}<a href="{{.Href}}"{{with .Path}} title="{{.}}"{{end}}>{{.Name}}</a> › {{end}}<b{{with .Path}} title="{{.}}"{{end}}>{{.Name}}</b>{{with .Path}} <small class="path">{{.}}</small>{{end}}</nav>{{end}}{{template "albumtabs" .Tabs}}{{end}}
+
+{{define "groupstate"}}{{if .Regrouping}}<p class="note">Bursts and duplicates are being worked out now; this page fills in as they are.</p>{{else if .Stale}}<p class="note">Bursts and duplicates are being worked out (for the first time, or by changed settings); this page shows the previous grouping until then.</p>{{end}}{{end}}
 
 {{define "grouppager"}}{{if .Partial}}<p class="note">These filters were checked against the first 200,000 groups in this order only; more may match further on. Narrow them (a year range, camera or person) to look further.</p>{{end}}<div class="pager">
   {{with .Prev}}<a class="btn ghost" href="{{.}}">← Previous</a>{{end}}

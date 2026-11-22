@@ -21,21 +21,27 @@ type Settings struct {
 	// count as one scene, whose alike shots stack even when they are not
 	// one burst (0: stack only within bursts).
 	SceneGap int
+	// SimilarCLIP is how alike, in percent (the cosine of their CLIP
+	// embeddings times 100), two shots of one scene must look to count as
+	// one picture: they stack, and are listed as duplicates, even when
+	// reframing changed their perceptual hashes (0: hashes alone).
+	SimilarCLIP int
 }
 
 // DefaultSettings are used for any setting never changed.
-var DefaultSettings = Settings{StackBursts: true, BurstGap: 3, StackHamming: 10, SceneGap: 10}
+var DefaultSettings = Settings{StackBursts: true, BurstGap: 3, StackHamming: 10, SceneGap: 10, SimilarCLIP: 93}
 
 // Setting limits.
 const (
 	MinBurstGap, MaxBurstGap         = 1, 60
 	MinStackHamming, MaxStackHamming = 0, 16
 	MinSceneGap, MaxSceneGap         = 0, 120
+	MinSimilarCLIP, MaxSimilarCLIP   = 80, 99 // or 0: off
 )
 
 // settingKeys are the settings' names, as `archivis settings` and the meta
 // table use them.
-var settingKeys = []string{"burst_gap", "scene_gap", "stack_bursts", "stack_hamming"}
+var settingKeys = []string{"burst_gap", "scene_gap", "similar_clip", "stack_bursts", "stack_hamming"}
 
 // SettingNames lists the settings' names.
 func SettingNames() []string { return append([]string(nil), settingKeys...) }
@@ -80,6 +86,9 @@ func (v Settings) Validate() error {
 	if v.SceneGap < MinSceneGap || v.SceneGap > MaxSceneGap {
 		return fmt.Errorf("scene gap must be %d-%d minutes", MinSceneGap, MaxSceneGap)
 	}
+	if v.SimilarCLIP != 0 && (v.SimilarCLIP < MinSimilarCLIP || v.SimilarCLIP > MaxSimilarCLIP) {
+		return fmt.Errorf("visual similarity must be %d-%d%% (or 0: off)", MinSimilarCLIP, MaxSimilarCLIP)
+	}
 	return nil
 }
 
@@ -94,6 +103,8 @@ func (v Settings) Get(name string) string {
 		return strconv.Itoa(v.StackHamming)
 	case "scene_gap":
 		return strconv.Itoa(v.SceneGap)
+	case "similar_clip":
+		return strconv.Itoa(v.SimilarCLIP)
 	}
 	return ""
 }
@@ -113,7 +124,7 @@ func (v *Settings) Set(name, value string) error {
 			return fmt.Errorf("stack_bursts must be on or off")
 		}
 		return nil
-	case "burst_gap", "stack_hamming", "scene_gap":
+	case "burst_gap", "stack_hamming", "scene_gap", "similar_clip":
 		n, err := strconv.Atoi(value)
 		if err != nil {
 			return fmt.Errorf("%s must be a whole number", name)
@@ -124,6 +135,8 @@ func (v *Settings) Set(name, value string) error {
 			next.BurstGap = n
 		case "stack_hamming":
 			next.StackHamming = n
+		case "similar_clip":
+			next.SimilarCLIP = n
 		default:
 			next.SceneGap = n
 		}

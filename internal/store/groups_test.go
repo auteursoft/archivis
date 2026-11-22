@@ -88,8 +88,15 @@ func referenceGroups(ps []Photo, gap int64, hamming int) groupState {
 // scene gap, scenes into bursts at gaps over the burst gap, and a scene's
 // bursts packed in order into chunks of at most maxStackRun shots, each
 // stacked on its own (a burst over maxStackRun alone, unstacked, ending the
-// chunk before it).
+// chunk before it). Duplicates are the photos sharing a perceptual hash,
+// joined with the stacks.
 func referenceScenes(ps []Photo, o GroupOptions) groupState {
+	return referenceSimilar(ps, o, nil)
+}
+
+// referenceSimilar is referenceScenes with CLIP embeddings (unit length) by
+// photo id.
+func referenceSimilar(ps []Photo, o GroupOptions, clips map[int64][]float32) groupState {
 	gap, hamming, sceneGap := o.Gap, o.Hamming, max(o.Scene, o.Gap)
 	out := groupState{photos: map[int64][5]int64{}, groups: map[[2]int64][]int64{}}
 	for _, p := range ps {
@@ -115,15 +122,17 @@ func referenceScenes(ps []Photo, o GroupOptions) groupState {
 	for _, r := range open {
 		runs = append(runs, r)
 	}
+	stacks := map[int64][]int64{} // top -> its stack
 	stack := func(shots []Photo) {
 		var gs []*gphoto
 		for _, p := range shots {
-			gs = append(gs, &gphoto{id: p.ID, phash: p.PHash, overall: p.Overall})
+			gs = append(gs, &gphoto{id: p.ID, phash: p.PHash, overall: p.Overall, clip: clips[p.ID]})
 		}
-		for id, w := range stackFrames(gs, hamming) {
+		for id, w := range stackFrames(gs, GroupOptions{Hamming: hamming, Similar: o.Similar}) {
 			x := out.photos[id]
 			x[1], x[2], x[3] = w[0], w[1], w[2]
 			out.photos[id] = x
+			stacks[w[0]] = append(stacks[w[0]], id)
 		}
 	}
 	for _, r := range runs {
@@ -167,11 +176,31 @@ func referenceScenes(ps []Photo, o GroupOptions) groupState {
 			byHash[p.PHash] = append(byHash[p.PHash], p.ID)
 		}
 	}
+	// sets: each identical-hash set and each stack, merged while any two
+	// share a photo
+	var sets [][]int64
 	for _, ids := range byHash {
-		if len(ids) < 2 {
-			continue
+		if len(ids) >= 2 {
+			sets = append(sets, ids)
 		}
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	}
+	for _, ids := range stacks {
+		sets = append(sets, ids)
+	}
+	for merged := true; merged; {
+		merged = false
+		for i := 0; i < len(sets) && !merged; i++ {
+			for j := i + 1; j < len(sets) && !merged; j++ {
+				if sharesID(sets[i], sets[j]) {
+					sets[i] = append(sets[i], sets[j]...)
+					sets = append(sets[:j], sets[j+1:]...)
+					merged = true
+				}
+			}
+		}
+	}
+	for _, ids := range sets {
+		ids = dedupe(ids)
 		out.groups[[2]int64{GroupDuplicate, ids[0]}] = ids
 		for _, id := range ids {
 			x := out.photos[id]
@@ -180,6 +209,17 @@ func referenceScenes(ps []Photo, o GroupOptions) groupState {
 		}
 	}
 	return out
+}
+
+func sharesID(a, b []int64) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func storedGroups(t *testing.T, st *Store) groupState {
@@ -327,7 +367,7 @@ func TestStackFrames(t *testing.T) {
 		f(5, 0, 9),            // no hash
 		f(6, 0b1111<<8, 4),
 		f(7, 0b1111<<8, 4), // ties 6: 6 is top
-	}, 1)
+	}, GroupOptions{Hamming: 1})
 	want := map[int64][3]int64{
 		1: {2, 3, 1}, 2: {2, 3, 0}, 3: {2, 3, 1},
 		6: {6, 2, 0}, 7: {6, 2, 1},

@@ -16,12 +16,16 @@
     <input type="number" name="scene_gap" min="{{.MinScene}}" max="{{.MaxScene}}" value="{{.Settings.SceneGap}}" required>
   </label>
   <p class="note">Shots from one camera, each taken within this many minutes of the last, are one scene: its alike shots stack (a RAW and its JPEG too) even when they are not one burst. 0 stacks only frames of one burst.</p>
-  <label>How alike shots must be to stack
+  <label>Visual similarity (%)
+    <input type="number" name="similar_clip" min="0" max="{{.MaxCLIP}}" value="{{.Settings.SimilarCLIP}}" required>
+  </label>
+  <p class="note">How alike two shots of one scene must look, by what is in them, to count as one picture: they stack, and the Duplicates page lists them, even when they are reframed a little. {{.MinCLIP}}-{{.MaxCLIP}}: higher counts fewer shots as alike (93, the default, takes repeat shots of one subject but not different subjects side by side). 0 compares perceptual hashes only. Exact copies count as duplicates anywhere in the catalogue.</p>
+  <label>How alike shots' perceptual hashes must be to stack
     <input type="number" name="stack_hamming" min="{{.MinHamming}}" max="{{.MaxHamming}}" value="{{.Settings.StackHamming}}" required>
   </label>
-  <p class="note">The most bits a shot's perceptual hash may differ from the stack's best shot by: 0 stacks only shots that look the same, higher values stack more (6 suits frames of one burst; 10, the default, shots of one view minutes apart). The card shows the best shot; its page lists the others.</p>
+  <p class="note">The most bits a shot's perceptual hash may differ from the stack's best shot by: 0 stacks only shots that look the same, higher values stack more (6 suits frames of one burst; 10, the default, shots of one view minutes apart). It also covers shots not yet visually analysed. The card shows the best shot; its page lists the others.</p>
   <button class="btn primary">Save</button>
-  <p class="note">Bursts and stacks are worked out again, in the background, when a gap or the similarity changes.</p>
+  <p class="note">Bursts, stacks and duplicates are worked out again, in the background, when a gap or a similarity changes.</p>
 </form>
 </div>
 {{end}}

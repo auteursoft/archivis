@@ -25,7 +25,7 @@ func TestSettings(t *testing.T) {
 	if got := st.GetSettings(); got.BurstGap != 5 {
 		t.Fatalf("round trip: %+v", got)
 	}
-	if names := strings.Join(SettingNames(), " "); names != "burst_gap scene_gap stack_bursts stack_hamming" {
+	if names := strings.Join(SettingNames(), " "); names != "burst_gap scene_gap similar_clip stack_bursts stack_hamming" {
 		t.Fatalf("settings offered: %v", names)
 	}
 	// stacking settings round-trip too
@@ -36,10 +36,28 @@ func TestSettings(t *testing.T) {
 	if got := st.GetSettings(); got.StackBursts || got.StackHamming != 9 || got.SceneGap != 0 {
 		t.Fatalf("stacking round trip: %+v", got)
 	}
+	// visual similarity: 80-99, or 0 (off)
+	if DefaultSettings.SimilarCLIP != 93 {
+		t.Fatalf("default visual similarity %d", DefaultSettings.SimilarCLIP)
+	}
+	for _, ok := range []string{"0", "80", "99"} {
+		w := v
+		if err := w.Set("similar_clip", ok); err != nil {
+			t.Fatalf("similar_clip=%s: %v", ok, err)
+		}
+		if err := st.SetSettings(w); err != nil {
+			t.Fatal(err)
+		}
+		if got := st.GetSettings().Get("similar_clip"); got != ok {
+			t.Fatalf("similar_clip=%s read back as %s", ok, got)
+		}
+	}
+	v = st.GetSettings()
 
 	// out of range or malformed values are refused and change nothing
 	for _, bad := range [][2]string{{"burst_gap", "0"}, {"burst_gap", "61"}, {"burst_gap", "three"},
-		{"stack_hamming", "17"}, {"stack_hamming", "-1"}, {"scene_gap", "121"}, {"scene_gap", "-1"}, {"stack_bursts", "maybe"}, {"colour", "red"}} {
+		{"stack_hamming", "17"}, {"stack_hamming", "-1"}, {"scene_gap", "121"}, {"scene_gap", "-1"},
+		{"similar_clip", "79"}, {"similar_clip", "100"}, {"similar_clip", "50"}, {"similar_clip", "-1"}, {"similar_clip", "0.93"}, {"stack_bursts", "maybe"}, {"colour", "red"}} {
 		w := v
 		if err := w.Set(bad[0], bad[1]); err == nil {
 			t.Errorf("%s=%s accepted", bad[0], bad[1])

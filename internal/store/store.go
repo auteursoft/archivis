@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS photos (
 	-- stack_top: the best frame of this frame's stack of near-identical
 	-- frames (itself, for the top); stack_size: frames in that stack;
 	-- stacked: 1 for frames shown only through their stack's top.
-	-- dup_id: the set of identical images (same perceptual hash).
+	-- dup_id: the set of duplicates: identical images (same perceptual
+	-- hash) and the highly similar shots of a stack.
 	burst_id         INTEGER NOT NULL DEFAULT 0,
 	stack_top        INTEGER NOT NULL DEFAULT 0,
 	stack_size       INTEGER NOT NULL DEFAULT 0,
@@ -574,7 +575,7 @@ type Photo struct {
 	StackTop  int64 // best frame of this frame's stack (0 = not stacked)
 	StackSize int   // frames in that stack
 	Stacked   bool  // shown only through StackTop
-	DupID     int64 // the set of identical images (0 = none)
+	DupID     int64 // the set of duplicates (0 = none)
 }
 
 // Face is a detected face.
