@@ -124,6 +124,7 @@
 <form class="filters" method="get" action="{{$p.action}}">
   {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
   {{with $p.dir}}<input type="hidden" name="dir" value="{{.}}">{{end}}
+  {{with $p.keepq}}<input type="hidden" name="q" value="{{.}}">{{end}}
   {{with $p.iphone}}<input type="hidden" name="iphone" value="{{.}}">{{end}}
   {{with $p.asort}}<input type="hidden" name="asort" value="{{.}}">{{end}}
   {{with $p.lf}}<input type="hidden" name="lf" value="{{.}}">{{end}}

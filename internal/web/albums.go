@@ -411,8 +411,9 @@ type tab struct {
 }
 
 // tabs link to the album's photos, bursts and duplicates (on: the one
-// shown), each with the filters of q (and the photos' search text, which
-// only the photos take) and the way back to the album list.
+// shown), each with the filters of q, the album's search text (which only
+// the photos use; the others keep it for the way back) and the way back to
+// the album list.
 func (a album) tabs(q url.Values, on string) []tab {
 	v := carried(q)
 	v.Del("page")
@@ -427,15 +428,11 @@ func (a album) tabs(q url.Values, on string) []tab {
 	if a.lf != "" {
 		v.Set("lf", a.lf)
 	}
-	photos := url.Values{}
-	for k, vs := range v {
-		photos[k] = vs
-	}
-	if text := strings.TrimSpace(q.Get("q")); text != "" && on == "albums" {
-		photos.Set("q", text)
+	if text := strings.TrimSpace(q.Get("q")); text != "" {
+		v.Set("q", text)
 	}
 	return []tab{
-		{"Photos", albumHref(photos), on == "albums"},
+		{"Photos", albumHref(v), on == "albums"},
 		{"Bursts", "/bursts?" + v.Encode(), on == "bursts"},
 		{"Duplicates", "/duplicates?" + v.Encode(), on == "duplicates"},
 	}

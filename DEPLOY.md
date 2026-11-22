@@ -862,7 +862,10 @@ shot joins a stack when it looks like the best shot: their visual (CLIP)
 embeddings are at least `similar_clip` percent alike (93 by default), which
 a subject shot again a little reframed still is, or their perceptual hashes
 are within `stack_hamming` bits (which also covers shots not yet visually
-analysed). The card's page lists the others. A filter that leaves
+analysed). The embedding sees only the middle square of a frame, so looks
+alone stack only shots of the same shape, no wider than 2:1, taken with a
+camera named in their metadata; panoramas and photos without a camera stack
+by their hashes only. The card's page lists the others. A filter that leaves
 out a stack's best shot shows the other shots that match. Text search
 shows each stack once. Set `scene_gap 0` to stack only frames of one burst,
 as before; turn stacking off on the Settings page, or with

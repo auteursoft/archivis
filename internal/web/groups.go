@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/auteursoft/archivis/internal/catalog"
@@ -151,12 +152,13 @@ func (s *Server) handleGroups(gp groupPage) http.HandlerFunc {
 			d.Tabs = al.tabs(r.URL.Query(), gp.path[1:])
 			p.Title = gp.title + " · " + al.Name + " · Albums"
 			reset := url.Values{}
-			for _, k := range []string{"dir", "iphone", "asort", "lf"} {
+			for _, k := range []string{"dir", "iphone", "asort", "lf", "q"} {
 				if v := r.URL.Query().Get(k); v != "" {
 					reset.Set(k, v)
 				}
 			}
 			p.Params["reset"] = gp.path + "?" + reset.Encode()
+			p.Params["keepq"] = strings.TrimSpace(r.URL.Query().Get("q")) // the album's search, for the way back
 		}
 		if len(errs) > 0 {
 			p.Error = errs[0]

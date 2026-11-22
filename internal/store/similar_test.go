@@ -57,7 +57,7 @@ func TestStackFramesBySimilarity(t *testing.T) {
 		t.Fatalf("far: cosine %.3f", c)
 	}
 	f := func(id int64, h uint64, overall float64, clip []float32) *gphoto {
-		return &gphoto{id: id, phash: h, overall: overall, clip: clip}
+		return &gphoto{id: id, phash: h, overall: overall, clip: clip, w: 6000, h: 4000}
 	}
 	frames := func() []*gphoto {
 		return []*gphoto{
@@ -84,6 +84,34 @@ func TestStackFramesBySimilarity(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("off: got %v, want %v", got, want)
 	}
+
+	// An embedding sees only the centre square: looks alone don't stack
+	// shots whose crops miss much of the frame, or cover different shares
+	// of two frames, or whose size is unknown.
+	o := GroupOptions{Hamming: 10, Similar: 93}
+	pair := func(w1, h1, w2, h2 int) map[int64][3]int64 {
+		return stackFrames([]*gphoto{
+			{id: 1, phash: 0x0000_0000_0000_FFFF, overall: 9, clip: base, w: w1, h: h1},
+			{id: 2, phash: 0xFFFF_0000_0000_0000, overall: 8, clip: base, w: w2, h: h2}, // the same centre, hashes far apart
+		}, o)
+	}
+	stacked := map[int64][3]int64{1: {1, 2, 0}, 2: {1, 2, 1}}
+	for _, c := range []struct {
+		name           string
+		w1, h1, w2, h2 int
+		want           map[int64][3]int64
+	}{
+		{"3:2", 6000, 4000, 6000, 4000, stacked},
+		{"3:2, one stored before rotation", 6000, 4000, 4000, 6000, stacked},
+		{"2:1", 4000, 2000, 4000, 2000, stacked},
+		{"4:1 panoramas", 8000, 2000, 8000, 2000, map[int64][3]int64{}},
+		{"3:2 and 4:3", 6000, 4000, 4000, 3000, map[int64][3]int64{}},
+		{"size unknown", 0, 0, 6000, 4000, map[int64][3]int64{}},
+	} {
+		if got := pair(c.w1, c.h1, c.w2, c.h2); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
 }
 
 // The album in the report: three shots of a painting and three of a crane,
@@ -101,7 +129,7 @@ func TestSimilarShotsAreDuplicates(t *testing.T) {
 	var rs []*Result
 	add := func(name, cam string, at int64, hash uint64, overall float64, clip []float32) {
 		p := Photo{Path: "/a/" + name, Size: 1, MTime: 1, Fingerprint: name, CameraModel: cam,
-			TakenAt: at, PHash: hash, Overall: overall, Version: SchemaVersion}
+			TakenAt: at, PHash: hash, Overall: overall, Width: 6000, Height: 4000, Version: SchemaVersion}
 		if clip != nil {
 			p.CLIP = vindex.EncodeF16(clip)
 		}
@@ -115,6 +143,10 @@ func TestSimilarShotsAreDuplicates(t *testing.T) {
 	add("copy.JPG", "", 0, 0, 1, nil)                                                                // an identical copy of painting0, below
 	add("painting-next-day.NEF", "Z 8", t0+86400, rng.Uint64(), 3, subjectCLIP(rng, painting, 0.01)) // another scene
 	rs[6].Photo.PHash = rs[0].Photo.PHash
+	// no camera (exports, scans): one "scene" for every such photo, so
+	// looks alone don't stack them, though a minute apart and alike
+	add("export-a.jpg", "", t0+3600, rng.Uint64(), 2, subjectCLIP(rng, crane, 0.01))
+	add("export-b.jpg", "", t0+3660, rng.Uint64(), 2, subjectCLIP(rng, crane, 0.01))
 	if err := st.Save(rs); err != nil {
 		t.Fatal(err)
 	}
@@ -167,6 +199,11 @@ func TestSimilarShotsAreDuplicates(t *testing.T) {
 	if x := got.photos[id["painting-next-day.NEF"]]; x != [5]int64{} {
 		t.Fatalf("a like shot in another scene was grouped: %v", x)
 	}
+	for _, n := range []string{"export-a.jpg", "export-b.jpg"} {
+		if x := got.photos[id[n]]; x != [5]int64{} {
+			t.Fatalf("camera-less %s stacked on looks: %v", n, x)
+		}
+	}
 	// the Duplicates page lists both
 	gs, _, err := st.GroupPage(GroupDuplicate, Filter{Limit: 10}, 2, false)
 	if err != nil {
@@ -213,7 +250,12 @@ func TestSimilarGroupsMatchReference(t *testing.T) {
 		subjects[i] = randomCLIP(rng)
 	}
 	clips := map[int64][]float32{}
-	for _, p := range ps {
+	for i := range ps {
+		p := &ps[i]
+		p.Width, p.Height = []int{6000, 6000, 4000, 8000, 0}[i%5], 4000 // mostly 3:2; some 1:1, 2:1 or unknown
+		if _, err := st.DB.Exec(`UPDATE photos SET width = ?, height = ? WHERE id = ?`, p.Width, p.Height, p.ID); err != nil {
+			t.Fatal(err)
+		}
 		if rng.Intn(5) == 0 {
 			continue // not yet embedded
 		}
@@ -254,7 +296,7 @@ func TestAlikeEitherRule(t *testing.T) {
 	base := randomCLIP(rng)
 	h0 := rng.Uint64() | 1
 	pick := func() *gphoto {
-		p := &gphoto{}
+		p := &gphoto{w: 6000, h: 4000} // one shape: sameFrame's own cases are in TestStackFramesBySimilarity
 		switch rng.Intn(3) {
 		case 0:
 			p.phash = h0 ^ uint64(1)<<rng.Intn(64) ^ uint64(1)<<rng.Intn(64) // near

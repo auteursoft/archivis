@@ -32,7 +32,7 @@ const (
 )
 
 // groupsVersion changes when the grouping rules do, forcing a rebuild.
-const groupsVersion = "7"
+const groupsVersion = "8"
 
 // GroupOptions are the rules RebuildGroups groups by.
 type GroupOptions struct {
@@ -121,6 +121,7 @@ type gphoto struct {
 	source                                     int
 	cur                                        [5]int64  // burst_id, stack_top, stack_size, stacked, dup_id
 	clip                                       []float32 // unit-length CLIP embedding (nil: none, or not loaded)
+	w, h                                       int       // pixels (0: unknown)
 }
 
 type groupRow struct {
@@ -423,6 +424,14 @@ func (r *rebuild) chunkDetails(chunks []sceneChunk) error {
 		if err := r.clips(byID); err != nil {
 			return err
 		}
+		for _, p := range byID {
+			if p.camera == "" {
+				// no camera: dated photos without one (exports, scans,
+				// downloads) share a "scene", so their looks alone must
+				// not stack them; their hashes still may
+				p.clip = nil
+			}
+		}
 	}
 	// Work out every chunk, then queue the writes.
 	type plan struct {
@@ -587,11 +596,15 @@ func stackFrames(frames []*gphoto, o GroupOptions) map[int64][3]int64 {
 // differ by at most o.Hamming bits (which also covers shots not yet
 // embedded). The hashes are compared first: that is cheap, and identical
 // copies then need no embedding comparison.
+//
+// An embedding sees only the centre square of a frame (CLIP's crop), so
+// looks alone count only for shots of the same shape (sameFrame), whose
+// crops cover most of each frame and the same share of both.
 func alike(a, b *gphoto, o GroupOptions) bool {
 	if a.phash != 0 && b.phash != 0 && bits.OnesCount64(a.phash^b.phash) <= o.Hamming {
 		return true
 	}
-	if o.Similar == 0 || a.clip == nil || b.clip == nil || len(a.clip) != len(b.clip) {
+	if o.Similar == 0 || a.clip == nil || b.clip == nil || len(a.clip) != len(b.clip) || !sameFrame(a, b) {
 		return false
 	}
 	var dot float32
@@ -599,6 +612,29 @@ func alike(a, b *gphoto, o GroupOptions) bool {
 		dot += x * b.clip[k]
 	}
 	return float64(dot) >= float64(o.Similar)/100
+}
+
+// maxCropAspect is the widest frame (long side over short side) whose
+// embedding counts for stacking: CLIP's centre crop then covers at least
+// half of it (two thirds of a 3:2 frame; a quarter of a 4:1 panorama).
+const maxCropAspect = 2.0
+
+// sameFrame reports whether two shots' embeddings cover comparable frames:
+// both sizes known, neither wider than maxCropAspect, and their shapes
+// within 10% of each other (whichever way up, as sizes may be stored before
+// rotation).
+func sameFrame(a, b *gphoto) bool {
+	aspect := func(p *gphoto) float64 {
+		if p.w <= 0 || p.h <= 0 {
+			return 0
+		}
+		return float64(max(p.w, p.h)) / float64(min(p.w, p.h))
+	}
+	ra, rb := aspect(a), aspect(b)
+	if ra == 0 || rb == 0 || ra > maxCropAspect || rb > maxCropAspect {
+		return false
+	}
+	return max(ra, rb)/min(ra, rb) <= 1.1
 }
 
 // clips loads the photos' CLIP embeddings, scaled to unit length.
@@ -847,14 +883,14 @@ func (r *rebuild) details(ids []int64) (map[int64]*gphoto, error) {
 		chunk := ids[start:min(len(ids), start+500)]
 		rows, err := r.query(`SELECT id, taken_at, TRIM(COALESCE(camera_make, '') || ' ' || COALESCE(camera_model, '')), phash, COALESCE(overall, 0),
 			COALESCE(technical, 0), COALESCE(aesthetic, 0), COALESCE(focus_score, 0), COALESCE(colorfulness, 0), COALESCE(sharpness, 0), face_count,
-			source, burst_id, stack_top, stack_size, stacked, dup_id FROM photos WHERE id IN (`+placeholders(len(chunk))+`)`, int64sToAny(chunk)...)
+			source, burst_id, stack_top, stack_size, stacked, dup_id, COALESCE(width, 0), COALESCE(height, 0) FROM photos WHERE id IN (`+placeholders(len(chunk))+`)`, int64sToAny(chunk)...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
 			p := &gphoto{}
 			if err := rows.Scan(&p.id, &p.at, &p.camera, (*int64ptr)(&p.phash), &p.overall, &p.technical, &p.aesthetic,
-				&p.focus, &p.colr, &p.sharpness, &p.faces, &p.source, &p.cur[0], &p.cur[1], &p.cur[2], &p.cur[3], &p.cur[4]); err != nil {
+				&p.focus, &p.colr, &p.sharpness, &p.faces, &p.source, &p.cur[0], &p.cur[1], &p.cur[2], &p.cur[3], &p.cur[4], &p.w, &p.h); err != nil {
 				rows.Close()
 				return nil, err
 			}

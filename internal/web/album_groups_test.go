@@ -62,7 +62,7 @@ func seedOutAround(t *testing.T, s *Server) map[string]int64 {
 	var rs []*store.Result
 	add := func(path string, at int64, hash uint64, overall float64, clip []byte) {
 		rs = append(rs, &store.Result{Photo: store.Photo{Path: path, Size: 1, MTime: 1, Fingerprint: fmt.Sprintf("%032x", len(rs)+1),
-			CameraModel: "Z 8", TakenAt: at, PHash: hash, Overall: overall, CLIP: clip, Version: store.SchemaVersion}})
+			CameraModel: "Z 8", TakenAt: at, PHash: hash, Overall: overall, CLIP: clip, Width: 6000, Height: 4000, Version: store.SchemaVersion}})
 	}
 	t0 := int64(1_763_000_000)
 	for i := 0; i < 3; i++ {
@@ -155,6 +155,18 @@ func TestAlbumBurstsAndDuplicates(t *testing.T) {
 	body = get(t, h, "/duplicates?dir="+dir+"&min_overall=61")
 	if c := strings.Count(body, `class="card stack"`); c != 1 || !strings.Contains(body, `>2/3</span>`) {
 		t.Fatalf("filtered album duplicates: %d sets; the crane shows 2 of 3", c)
+	}
+	// the album's search survives a trip through its other tabs
+	body = html.UnescapeString(get(t, h, "/albums?dir="+dir+"&q=crane"))
+	mustContain(t, "searched album tabs", body,
+		`href="/bursts?dir=`+dir+`&q=crane">Bursts</a>`, `href="/duplicates?dir=`+dir+`&q=crane">Duplicates</a>`)
+	body = html.UnescapeString(get(t, h, "/duplicates?dir="+dir+"&q=crane"))
+	mustContain(t, "duplicates of a searched album", body,
+		`href="/albums?dir=`+dir+`&q=crane">Photos</a>`,
+		`<input type="hidden" name="q" value="crane">`,
+		`href="/duplicates?dir=`+dir+`&q=crane">Reset</a>`)
+	if c := strings.Count(body, `class="card stack"`); c != 2 {
+		t.Errorf("the search text narrowed the duplicates: %d sets", c)
 	}
 	// an album with none
 	body = get(t, h, "/duplicates?dir="+url.QueryEscape("/pics/other/none"))

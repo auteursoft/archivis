@@ -19,7 +19,7 @@
   <label>Visual similarity (%)
     <input type="number" name="similar_clip" min="0" max="{{.MaxCLIP}}" value="{{.Settings.SimilarCLIP}}" required>
   </label>
-  <p class="note">How alike two shots of one scene must look, by what is in them, to count as one picture: they stack, and the Duplicates page lists them, even when they are reframed a little. {{.MinCLIP}}-{{.MaxCLIP}}: higher counts fewer shots as alike (93, the default, takes repeat shots of one subject but not different subjects side by side). 0 compares perceptual hashes only. Exact copies count as duplicates anywhere in the catalogue.</p>
+  <p class="note">How alike two shots of one scene must look, by what is in them, to count as one picture: they stack, and the Duplicates page lists them, even when they are reframed a little. {{.MinCLIP}}-{{.MaxCLIP}}: higher counts fewer shots as alike (93, the default, takes repeat shots of one subject but not different subjects side by side). 0 compares perceptual hashes only. Looks count only for shots of the same shape, no wider than 2:1, with a camera in their metadata. Exact copies count as duplicates anywhere in the catalogue.</p>
   <label>How alike shots' perceptual hashes must be to stack
     <input type="number" name="stack_hamming" min="{{.MinHamming}}" max="{{.MaxHamming}}" value="{{.Settings.StackHamming}}" required>
   </label>

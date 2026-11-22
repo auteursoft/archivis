@@ -126,7 +126,11 @@ func referenceSimilar(ps []Photo, o GroupOptions, clips map[int64][]float32) gro
 	stack := func(shots []Photo) {
 		var gs []*gphoto
 		for _, p := range shots {
-			gs = append(gs, &gphoto{id: p.ID, phash: p.PHash, overall: p.Overall, clip: clips[p.ID]})
+			g := &gphoto{id: p.ID, phash: p.PHash, overall: p.Overall, clip: clips[p.ID], w: p.Width, h: p.Height}
+			if strings.TrimSpace(p.CameraMake+" "+p.CameraModel) == "" {
+				g.clip = nil // no camera: looks alone never stack
+			}
+			gs = append(gs, g)
 		}
 		for id, w := range stackFrames(gs, GroupOptions{Hamming: hamming, Similar: o.Similar}) {
 			x := out.photos[id]
