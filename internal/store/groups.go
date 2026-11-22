@@ -585,18 +585,20 @@ func stackFrames(frames []*gphoto, o GroupOptions) map[int64][3]int64 {
 // alike by what is in them (CLIP embeddings at least o.Similar percent
 // similar, which reframing barely changes), or their perceptual hashes
 // differ by at most o.Hamming bits (which also covers shots not yet
-// embedded).
+// embedded). The hashes are compared first: that is cheap, and identical
+// copies then need no embedding comparison.
 func alike(a, b *gphoto, o GroupOptions) bool {
-	if o.Similar > 0 && a.clip != nil && b.clip != nil && len(a.clip) == len(b.clip) {
-		var dot float32
-		for k, x := range a.clip {
-			dot += x * b.clip[k]
-		}
-		if float64(dot) >= float64(o.Similar)/100 {
-			return true
-		}
+	if a.phash != 0 && b.phash != 0 && bits.OnesCount64(a.phash^b.phash) <= o.Hamming {
+		return true
 	}
-	return a.phash != 0 && b.phash != 0 && bits.OnesCount64(a.phash^b.phash) <= o.Hamming
+	if o.Similar == 0 || a.clip == nil || b.clip == nil || len(a.clip) != len(b.clip) {
+		return false
+	}
+	var dot float32
+	for k, x := range a.clip {
+		dot += x * b.clip[k]
+	}
+	return float64(dot) >= float64(o.Similar)/100
 }
 
 // clips loads the photos' CLIP embeddings, scaled to unit length.

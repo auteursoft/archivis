@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"math/bits"
 	"math/rand"
 	"path/filepath"
 	"reflect"
@@ -242,5 +243,63 @@ func TestSimilarGroupsMatchReference(t *testing.T) {
 		if !reflect.DeepEqual(got.groups, want.groups) {
 			t.Fatalf("%+v: groups differ (%d vs %d)", o, len(got.groups), len(want.groups))
 		}
+	}
+}
+
+// alike accepts a pair when either rule does: CLIP cosine at least the
+// setting (with both embedded and the setting on), or both hashes set and
+// within the Hamming limit. Checking the cheap rule first changes no answer.
+func TestAlikeEitherRule(t *testing.T) {
+	rng := rand.New(rand.NewSource(9))
+	base := randomCLIP(rng)
+	h0 := rng.Uint64() | 1
+	pick := func() *gphoto {
+		p := &gphoto{}
+		switch rng.Intn(3) {
+		case 0:
+			p.phash = h0 ^ uint64(1)<<rng.Intn(64) ^ uint64(1)<<rng.Intn(64) // near
+		case 1:
+			p.phash = rng.Uint64() // far
+		}
+		switch rng.Intn(3) {
+		case 0:
+			p.clip = subjectCLIP(rng, base, []float64{0.005, 0.01, 0.02}[rng.Intn(3)]) // the same subject, more or less
+		case 1:
+			p.clip = randomCLIP(rng)
+		}
+		return p
+	}
+	seen := map[[2]bool]int{}
+	for i := 0; i < 4000; i++ {
+		a, b := pick(), pick()
+		for _, o := range []GroupOptions{{Hamming: 0}, {Hamming: 10}, {Hamming: 10, Similar: 85}, {Hamming: 0, Similar: 93}, {Hamming: 10, Similar: 93}} {
+			byHash := a.phash != 0 && b.phash != 0 && bits.OnesCount64(a.phash^b.phash) <= o.Hamming
+			byLook := o.Similar > 0 && a.clip != nil && b.clip != nil && cosine(a.clip, b.clip) >= float64(o.Similar)/100
+			if got := alike(a, b, o); got != (byHash || byLook) {
+				t.Fatalf("%+v: alike %v, want hash %v or look %v (cosine %.4f)", o, got, byHash, byLook, cosine(a.clip, b.clip))
+			}
+			seen[[2]bool{byHash, byLook}]++
+		}
+	}
+	for _, k := range [][2]bool{{true, true}, {true, false}, {false, true}, {false, false}} {
+		if seen[k] == 0 {
+			t.Fatalf("no pair where hash %v and look %v: %v", k[0], k[1], seen)
+		}
+	}
+}
+
+// A chunk of identical copies, each embedded: stacking them needs no
+// embedding comparisons.
+func BenchmarkStackFramesCopies(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	base := randomCLIP(rng)
+	var frames []*gphoto
+	for i := 0; i < 1000; i++ {
+		frames = append(frames, &gphoto{id: int64(i + 1), phash: 0xC0FFEE, overall: rng.Float64(), clip: subjectCLIP(rng, base, 0.01)})
+	}
+	o := GroupOptions{Hamming: 10, Similar: 93}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		stackFrames(frames, o)
 	}
 }
