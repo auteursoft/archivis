@@ -1,0 +1,2 @@
+dataset,method,n,spearman,ci_lo,ci_hi,pearson,delta,delta_lo,delta_hi,note
+KonIQ-10k test,MUSIQ koniq checkpoint,2015,0.8662,0.8524,0.8787,0.8966,,,,correctness gate; paper 0.916 / PLCC 0.928

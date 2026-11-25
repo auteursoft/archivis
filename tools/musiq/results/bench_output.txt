@@ -1,0 +1,41 @@
+
+KonIQ-10k official test split: 2015 photos (1024x768), MUSIQ paper: Spearman 0.916
+  MUSIQ koniq checkpoint                                     n= 2015  Spearman 0.945 [0.938, 0.950]  Pearson 0.955  (correctness gate; paper 0.916 / PLCC 0.928)
+
+BIQ2021 official split: train 9999 / test 2000 photos (missing from a harness: train 1, test 0 [])
+  archivis rating as shipped (Go, 'rating' column)           n= 2000  Spearman 0.632 [0.602, 0.659]  Pearson 0.687  (VALIDATION.md: 0.632)
+  archivis rating refit here (quadratic ridge on train)      n= 2000  Spearman 0.632 [0.604, 0.660]  Pearson 0.686  (same recipe, reproduces the above)
+  archivis technical score as shipped                        n= 2000  Spearman 0.627 [0.598, 0.656]  Pearson 0.678  (VALIDATION.md: 0.628)
+  MUSIQ koniq checkpoint (no refit)                          n= 2000  Spearman 0.755 [0.730, 0.777]  Pearson 0.783  vs archivis +0.123 [+0.095, +0.149]
+  MUSIQ spaq checkpoint (no refit)                           n= 2000  Spearman 0.655 [0.625, 0.683]  Pearson 0.708  vs archivis +0.023 [-0.003, +0.050]
+  MUSIQ paq2piq checkpoint (no refit)                        n= 2000  Spearman 0.690 [0.663, 0.716]  Pearson 0.723  vs archivis +0.058 [+0.029, +0.086]
+  blend: archivis measurements + MUSIQ koniq (quadratic, refit) n= 2000  Spearman 0.777 [0.756, 0.799]  Pearson 0.807  vs archivis +0.146 [+0.126, +0.166]
+  blend: archivis measurements + MUSIQ spaq (quadratic, refit) n= 2000  Spearman 0.714 [0.689, 0.737]  Pearson 0.771  vs archivis +0.082 [+0.063, +0.101]
+  blend: archivis measurements + MUSIQ paq2piq (quadratic, refit) n= 2000  Spearman 0.737 [0.713, 0.759]  Pearson 0.780  vs archivis +0.105 [+0.087, +0.123]
+  blend: archivis measurements + MUSIQ koniq (linear, refit) n= 2000  Spearman 0.765 [0.743, 0.787]  Pearson 0.791  vs archivis +0.134 [+0.110, +0.157]
+  blend: archivis measurements + MUSIQ spaq (linear, refit)  n= 2000  Spearman 0.696 [0.667, 0.720]  Pearson 0.744  vs archivis +0.064 [+0.042, +0.085]
+  blend: archivis measurements + MUSIQ paq2piq (linear, refit) n= 2000  Spearman 0.723 [0.698, 0.745]  Pearson 0.759  vs archivis +0.091 [+0.071, +0.112]
+  blend: MUSIQ koniq+spaq+paq2piq (linear, refit)            n= 2000  Spearman 0.758 [0.734, 0.782]  Pearson 0.788  vs archivis +0.126 [+0.098, +0.151]
+  blend: archivis measurements + all three MUSIQ (quadratic, refit) n= 2000  Spearman 0.780 [0.758, 0.801]  Pearson 0.814  vs archivis +0.149 [+0.129, +0.170]
+
+EVA: 4070 photos (aesthetic.py's selection), 393 of them in AVA's standard test list
+  archivis aesthetic (CLIP ridge head, 10-fold CV)           n= 4070  Spearman 0.782 [0.768, 0.795]  Pearson 0.793  (VALIDATION.md: 0.783)
+  MUSIQ ava checkpoint (no refit)                            n= 4070  Spearman 0.525 [0.501, 0.549]  Pearson 0.537  vs archivis -0.257 [-0.279, -0.234]  (most photos likely in its AVA training set)
+  MUSIQ koniq checkpoint (no refit)                          n= 4070  Spearman 0.311 [0.281, 0.339]  Pearson 0.382  vs archivis -0.471 [-0.501, -0.441]
+  blend: CLIP head + MUSIQ koniq (one ridge, 10-fold CV)     n= 4070  Spearman 0.795 [0.782, 0.808]  Pearson 0.809  vs archivis +0.013 [+0.009, +0.018]  (no AVA-trained checkpoint)
+  blend: CLIP head + MUSIQ ava (one ridge, 10-fold CV)       n= 4070  Spearman 0.805 [0.792, 0.816]  Pearson 0.814  vs archivis +0.022 [+0.017, +0.027]
+  blend: CLIP head + all MUSIQ scores (one ridge, 10-fold CV) n= 4070  Spearman 0.810 [0.797, 0.821]  Pearson 0.821  vs archivis +0.027 [+0.022, +0.033]
+  blend: MUSIQ scores only (linear, 10-fold CV)              n= 4070  Spearman 0.554 [0.532, 0.577]  Pearson 0.578  vs archivis -0.228 [-0.250, -0.207]
+  archivis aesthetic (same CV predictions)                   n=  393  Spearman 0.770 [0.719, 0.812]  Pearson 0.773
+  MUSIQ ava checkpoint (no refit)                            n=  393  Spearman 0.572 [0.506, 0.632]  Pearson 0.552  vs archivis -0.198 [-0.258, -0.137]  (test list, but see the AVA-panel rows)
+  blend: CLIP head + MUSIQ ava (same CV predictions)         n=  393  Spearman 0.800 [0.758, 0.835]  Pearson 0.794  vs archivis +0.029 [+0.011, +0.049]
+  archivis aesthetic (fit on EVA votes)                      n= 4070  Spearman 0.455 [0.430, 0.478]  Pearson 0.460  (VALIDATION.md: 0.455)
+  MUSIQ ava checkpoint                                       n= 4070  Spearman 0.865 [0.856, 0.872]  Pearson 0.856  (trained on AVA labels: leakage)
+  MUSIQ ava checkpoint                                       n=  393  Spearman 0.868 [0.837, 0.890]  Pearson 0.878  (paper: 0.726 on all of AVA test)
+  archivis aesthetic                                         n=  393  Spearman 0.508 [0.432, 0.580]  Pearson 0.501
+
+Speed (speed.py)
+  long_edge=512, size=512x384, tokens=385, cpu_s_per_photo=0.811, wall_s_one_photo_all_cores=0.282, cores=4, photos=263000, cpu_hours=59.2, wall_hours_all_cores=14.8
+  long_edge=1600, size=1600x1200, tokens=2093, cpu_s_per_photo=3.998, wall_s_one_photo_all_cores=1.257, cores=4, photos=263000, cpu_hours=292.1, wall_hours_all_cores=73.0
+
+wrote /home/user/data/out/r_all/results.csv

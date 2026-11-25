@@ -24,6 +24,9 @@ AVA.txt, L2-normalised CLIP embedding, ridge with the same alphas, 10-fold
 KFold(shuffle, random_state=0)). Confidence intervals are 95% percentile
 bootstraps over photos (2,000 resamples), as in aesthetic.py.
 
+Rows given archivis's own prediction on the same photos also carry a paired
+bootstrap (same resamples) of the difference in Spearman ("vs archivis").
+
 Writes DIR/results.csv (one row per dataset x method) and prints a summary.
 """
 import argparse
@@ -67,14 +70,28 @@ def boot(x, y, n=2000):
     return np.percentile(vals, [2.5, 97.5])
 
 
-def report(dataset, method, x, y, note=""):
+def boot_diff(x, b, y, n=2000):
+    """Paired bootstrap of rho(x, y) - rho(b, y): both scores on the same resampled photos."""
+    k = len(x)
+    vals = [rho(x[s], y[s]) - rho(b[s], y[s]) for s in (rng.integers(0, k, k) for _ in range(n))]
+    return np.percentile(vals, [2.5, 97.5])
+
+
+def report(dataset, method, x, y, note="", base=None):
+    """base: the archivis prediction on the same photos; adds a paired-bootstrap CI of the difference."""
     x, y = np.asarray(x, float), np.asarray(y, float)
     lo, hi = boot(x, y)
     r = dict(dataset=dataset, method=method, n=len(x), spearman=round(rho(x, y), 4), ci_lo=round(lo, 4),
-             ci_hi=round(hi, 4), pearson=round(pearsonr(x, y)[0], 4), note=note)
+             ci_hi=round(hi, 4), pearson=round(pearsonr(x, y)[0], 4), delta="", delta_lo="", delta_hi="", note=note)
+    extra = ""
+    if base is not None:
+        b = np.asarray(base, float)
+        dlo, dhi = boot_diff(x, b, y)
+        r.update(delta=round(rho(x, y) - rho(b, y), 4), delta_lo=round(dlo, 4), delta_hi=round(dhi, 4))
+        extra = f"  vs archivis {r['delta']:+.3f} [{dlo:+.3f}, {dhi:+.3f}]"
     results.append(r)
     print(f"  {method:<58} n={len(x):5d}  Spearman {r['spearman']:.3f} [{lo:.3f}, {hi:.3f}]  Pearson {r['pearson']:.3f}"
-          + (f"  ({note})" if note else ""))
+          + extra + (f"  ({note})" if note else ""))
 
 
 def read_musiq(path):
@@ -122,23 +139,23 @@ if a.biq_train_q:
         return make_pipeline(StandardScaler(), RidgeCV(alphas=ALPHAS_Q))
 
     D = "BIQ2021 test"
-    report(D, "archivis rating as shipped (Go, 'rating' column)", [float(qte[k]["rating"]) for k in kte], yte,
-           "VALIDATION.md: 0.632")
+    base = np.array([float(qte[k]["rating"]) for k in kte])
+    report(D, "archivis rating as shipped (Go, 'rating' column)", base, yte, "VALIDATION.md: 0.632")
     report(D, "archivis rating refit here (quadratic ridge on train)", quad().fit(Xtr, ytr).predict(Xte), yte,
            "same recipe, reproduces the above")
     report(D, "archivis technical score as shipped", [float(qte[k]["technical"]) for k in kte], yte,
            "VALIDATION.md: 0.628")
     for i, c in enumerate(TECH):
-        report(D, f"MUSIQ {c} checkpoint (no refit)", Mte[:, i], yte)
+        report(D, f"MUSIQ {c} checkpoint (no refit)", Mte[:, i], yte, base=base)
     for i, c in enumerate(TECH):
         report(D, f"blend: archivis measurements + MUSIQ {c} (quadratic, refit)",
-               quad().fit(np.c_[Xtr, Mtr[:, i]], ytr).predict(np.c_[Xte, Mte[:, i]]), yte)
+               quad().fit(np.c_[Xtr, Mtr[:, i]], ytr).predict(np.c_[Xte, Mte[:, i]]), yte, base=base)
     for i, c in enumerate(TECH):
         report(D, f"blend: archivis measurements + MUSIQ {c} (linear, refit)",
-               lin().fit(np.c_[Xtr, Mtr[:, i]], ytr).predict(np.c_[Xte, Mte[:, i]]), yte)
-    report(D, "blend: MUSIQ koniq+spaq+paq2piq (linear, refit)", lin().fit(Mtr, ytr).predict(Mte), yte)
+               lin().fit(np.c_[Xtr, Mtr[:, i]], ytr).predict(np.c_[Xte, Mte[:, i]]), yte, base=base)
+    report(D, "blend: MUSIQ koniq+spaq+paq2piq (linear, refit)", lin().fit(Mtr, ytr).predict(Mte), yte, base=base)
     report(D, "blend: archivis measurements + all three MUSIQ (quadratic, refit)",
-           quad().fit(np.c_[Xtr, Mtr], ytr).predict(np.c_[Xte, Mte]), yte)
+           quad().fit(np.c_[Xtr, Mtr], ytr).predict(np.c_[Xte, Mte]), yte, base=base)
 
 # --- EVA: aesthetics ----------------------------------------------------------
 if a.eva:
@@ -204,24 +221,27 @@ if a.eva:
     blend = cv_blend(X, m_ava, eva)
     D = "EVA (10-fold CV)"
     report(D, "archivis aesthetic (CLIP ridge head, 10-fold CV)", ours, eva, "VALIDATION.md: 0.783")
-    report(D, "MUSIQ ava checkpoint (no refit)", m_ava, eva, "most photos likely in its AVA training set")
+    report(D, "MUSIQ ava checkpoint (no refit)", m_ava, eva, "most photos likely in its AVA training set", base=ours)
     extra_tech = [c for c in TECH if c in next(iter(mus.values()))]
     if extra_tech:
         for c in extra_tech:
-            report(D, f"MUSIQ {c} checkpoint (no refit)", np.array([mus[i][c] for i in ids]), eva)
-    report(D, "blend: CLIP head + MUSIQ ava (one ridge, 10-fold CV)", blend, eva)
+            report(D, f"MUSIQ {c} checkpoint (no refit)", np.array([mus[i][c] for i in ids]), eva, base=ours)
+        for c in extra_tech:
+            report(D, f"blend: CLIP head + MUSIQ {c} (one ridge, 10-fold CV)",
+                   cv_blend(X, np.array([mus[i][c] for i in ids]), eva), eva, "no AVA-trained checkpoint", base=ours)
+    report(D, "blend: CLIP head + MUSIQ ava (one ridge, 10-fold CV)", blend, eva, base=ours)
     if extra_tech:
         allm = np.array([[mus[i][c] for c in ["ava"] + extra_tech] for i in ids])
-        report(D, "blend: CLIP head + all MUSIQ scores (one ridge, 10-fold CV)", cv_blend(X, allm, eva), eva)
-        report(D, "blend: MUSIQ scores only (linear, 10-fold CV)", cv_calibrated(allm, eva), eva)
+        report(D, "blend: CLIP head + all MUSIQ scores (one ridge, 10-fold CV)", cv_blend(X, allm, eva), eva, base=ours)
+        report(D, "blend: MUSIQ scores only (linear, 10-fold CV)", cv_calibrated(allm, eva), eva, base=ours)
     D2 = "EVA, photos in AVA's standard test list"
     report(D2, "archivis aesthetic (same CV predictions)", ours[held], eva[held])
-    report(D2, "MUSIQ ava checkpoint (no refit)", m_ava[held], eva[held], "photos it did not train on")
-    report(D2, "blend: CLIP head + MUSIQ ava (same CV predictions)", blend[held], eva[held])
+    report(D2, "MUSIQ ava checkpoint (no refit)", m_ava[held], eva[held], "test list, but see the AVA-panel rows", base=ours[held])
+    report(D2, "blend: CLIP head + MUSIQ ava (same CV predictions)", blend[held], eva[held], base=ours[held])
     D3 = "EVA photos vs AVA's own panel"
     report(D3, "archivis aesthetic (fit on EVA votes)", ours, avam, "VALIDATION.md: 0.455")
     report(D3, "MUSIQ ava checkpoint", m_ava, avam, "trained on AVA labels: leakage")
-    report(D3 + ", AVA test list only", "MUSIQ ava checkpoint", m_ava[held], avam[held])
+    report(D3 + ", AVA test list only", "MUSIQ ava checkpoint", m_ava[held], avam[held], "paper: 0.726 on all of AVA test")
     report(D3 + ", AVA test list only", "archivis aesthetic", ours[held], avam[held])
 
 with open(os.path.join(a.out, "results.csv"), "w", newline="") as f:
