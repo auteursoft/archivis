@@ -231,7 +231,7 @@ func RefreshBlend(st *store.Store, active []AestheticModel) (int, error) {
 		return 0, err
 	}
 	for start := 0; start < len(all); start += 50000 {
-		if err := st.SetBlendedScores(all[start:min(start+50000, len(all))]); err != nil {
+		if err := st.SetBlendedScores(all[start:min(start+50000, len(all))], Overall); err != nil {
 			return 0, err
 		}
 	}

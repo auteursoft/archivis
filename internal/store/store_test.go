@@ -495,7 +495,7 @@ func TestStaleScoreWritesSkipped(t *testing.T) {
 	st.DB.QueryRow(`SELECT seq FROM photos WHERE id = ?`, r.Photo.ID).Scan(&seq)
 	st.Save([]*Result{r}) // re-saved: seq moves on
 	stale := sql.NullFloat64{Float64: 1, Valid: true}
-	st.SetBlendedScores([]BlendUpdate{{ID: r.Photo.ID, Seq: seq, Aesthetic: stale, Overall: 99}})
+	st.SetBlendedScores([]BlendUpdate{{ID: r.Photo.ID, Seq: seq, Aesthetic: stale, Overall: 99}}, nil)
 	st.AddFreshAestheticScores("m-1", []SeqScore{{ID: r.Photo.ID, Seq: seq, Score: 1}})
 	p, _ := st.Photo(r.Photo.ID)
 	sc, _ := st.AestheticScores(r.Photo.ID)
@@ -503,7 +503,7 @@ func TestStaleScoreWritesSkipped(t *testing.T) {
 		t.Fatalf("stale writes applied: overall %.0f, aesthetic %v, scores %v", p.Overall, p.Aesthetic, sc)
 	}
 	st.DB.QueryRow(`SELECT seq FROM photos WHERE id = ?`, r.Photo.ID).Scan(&seq)
-	st.SetBlendedScores([]BlendUpdate{{ID: r.Photo.ID, Seq: seq, Aesthetic: stale, Overall: 50}})
+	st.SetBlendedScores([]BlendUpdate{{ID: r.Photo.ID, Seq: seq, Aesthetic: stale, Overall: 50}}, nil)
 	st.AddFreshAestheticScores("m-1", []SeqScore{{ID: r.Photo.ID, Seq: seq, Score: 1}})
 	p, _ = st.Photo(r.Photo.ID)
 	sc, _ = st.AestheticScores(r.Photo.ID)

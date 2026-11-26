@@ -654,6 +654,9 @@ func qualityCmd(args []string) error {
 	models := fs.String("models", "", "models dir: also score with MUSIQ (musiq/koniq.onnx), as archivis does")
 	workers := fs.Int("workers", 4, "parallel images")
 	fs.Parse(args)
+	if *workers < 1 {
+		return fmt.Errorf("-workers must be at least 1")
+	}
 	var mq *ml.MUSIQ
 	if *models != "" {
 		var err error
@@ -705,6 +708,9 @@ func clipCmd(args []string) error {
 	out := fs.String("out", "clip.csv", "output")
 	workers := fs.Int("workers", 4, "parallel images")
 	fs.Parse(args)
+	if *workers < 1 {
+		return fmt.Errorf("-workers must be at least 1")
+	}
 	o := initORT()
 	c, err := ml.NewCLIP(filepath.Join(*models, "clip"), o)
 	if err != nil {

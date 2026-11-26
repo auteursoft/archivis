@@ -132,6 +132,10 @@ type Analysis struct {
 	CLIP    []float32
 	Metrics quality.Metrics
 	Result  *store.Result
+	// MUSIQErr is why MUSIQ could not score the photo (nil: it did, or it
+	// is not installed): the photo is catalogued all the same, rated by its
+	// measurements, and quality backfill tries MUSIQ again
+	MUSIQErr error
 }
 
 // AnalyzeFile fully analyses a file and builds the catalogue record. Thumbnails
@@ -259,9 +263,7 @@ func AnalyzeImage(d *imageio.Decoded, eng *Engines) (*Analysis, error) {
 	// tracks human judgements far better than a hand-weighted mix; with
 	// MUSIQ, blended with its score (quality.RateWith), better still.
 	rating, musiq, err := Rating(img, eng.MUSIQ)
-	if err != nil {
-		return nil, err
-	}
+	a.MUSIQErr = err // the rating is then the measurements' alone
 	p.MUSIQ = musiq
 	p.Technical = round1(technical(rating, musiq.Valid, q, d.Blockiness))
 	p.Overall = Overall(p.Technical, p.Aesthetic)
@@ -281,7 +283,8 @@ func technical(rating float64, musiq bool, m quality.Metrics, blockiness float64
 
 // Rating is the human-calibrated technical rating (0..100) of an image of
 // any size, measured at quality.RatingSize, and MUSIQ's score of it when m
-// is set (else invalid).
+// is set (else invalid). If MUSIQ fails, the rating is the measurements'
+// alone, the score invalid, and the error says why.
 func Rating(img *imageio.RGB, m MUSIQScorer) (float64, sql.NullFloat64, error) {
 	small := quality.RatingImage(img)
 	metrics := quality.Analyze(small)
@@ -290,7 +293,7 @@ func Rating(img *imageio.RGB, m MUSIQScorer) (float64, sql.NullFloat64, error) {
 	}
 	s, err := m.Score(small)
 	if err != nil {
-		return 0, sql.NullFloat64{}, err
+		return quality.RateMetrics(metrics), sql.NullFloat64{}, fmt.Errorf("MUSIQ: %w", err)
 	}
 	return quality.RateWith(metrics, s), sql.NullFloat64{Float64: s, Valid: true}, nil
 }

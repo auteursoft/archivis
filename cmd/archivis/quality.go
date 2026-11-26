@@ -50,6 +50,9 @@ installed (new photos get it as they are indexed):
 		fmt.Println()
 		return nil
 	case "backfill":
+		if *workers < 1 {
+			return fmt.Errorf("--workers must be at least 1")
+		}
 		unlock, err := indexer.LockIndex(g.data) // not alongside an index run, which writes the same photos
 		if err != nil {
 			return err

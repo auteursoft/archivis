@@ -40,3 +40,13 @@ func TestBackfillMUSIQReport(t *testing.T) {
 		t.Fatalf("report: %q", got)
 	}
 }
+
+// A backfill with no workers would score nothing: it is refused.
+func TestQualityBackfillNeedsWorkers(t *testing.T) {
+	g := &globals{data: t.TempDir()}
+	for _, n := range []string{"0", "-2"} {
+		if err := runQuality(g, []string{"backfill", "--workers", n}); err == nil || !strings.Contains(err.Error(), "at least 1") {
+			t.Errorf("--workers %s: %v", n, err)
+		}
+	}
+}
