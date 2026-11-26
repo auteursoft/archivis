@@ -74,7 +74,7 @@ sudo install -m 755 archivis /usr/local/bin/archivis
 ### 3. Download the runtime and models
 
 ```sh
-archivis setup                  # ~800 MB into ~/.archivis, checksum-verified
+archivis setup                  # ~900 MB into ~/.archivis, checksum-verified
 ```
 
 **Intel Macs:** Microsoft no longer publishes ONNX Runtime for Intel Macs, so
@@ -183,6 +183,7 @@ cat > ~/Library/LaunchAgents/com.archivis.index.plist <<EOF
     <string>/usr/local/bin/archivis</string>
     <string>index</string>
     <string>--prune</string>
+    <string>--backfill</string><string>2h</string>
     <string>/Volumes/Archive1</string>
     <string>/Volumes/Archive2</string>
   </array>
@@ -235,6 +236,28 @@ a run in progress, which picks up where it left off at 2:30. For services
 started at boot ([Start at boot, with nobody
 logged in](#start-at-boot-with-nobody-logged-in)), swap the comment marks on
 the first two lines.
+
+`--backfill 2h` then spends up to two hours a night scoring, with MUSIQ,
+photos indexed before it was installed (see [Technical score and
+MUSIQ](#technical-score-and-musiq)); new photos are scored as they are
+indexed. Change `2h` to give it more or less time, or score them all at once
+with `archivis quality backfill`. To add it to a job set up without it (run
+it as the one above, swapping the first two lines the same way):
+
+<!-- ci: backfill-on (run as written by the deploy job in .github/workflows/ci.yml) -->
+```sh
+d=~/Library/LaunchAgents; dom=gui/$(id -u); s=        # agents
+# d=/Library/LaunchDaemons; dom=system; s=sudo        # services started at boot
+p=$d/com.archivis.index.plist
+args=$($s /usr/libexec/PlistBuddy -c "Print :ProgramArguments" "$p")
+if [ -n "$args" ] && ! grep -qxE ' *--?backfill' <<<"$args"; then
+  $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:4 string 2h" "$p"           # after "index"
+  $s /usr/libexec/PlistBuddy -c "Add :ProgramArguments:4 string --backfill" "$p"
+  $s launchctl bootout $dom/com.archivis.index
+  while $s launchctl print $dom/com.archivis.index >/dev/null 2>&1; do sleep 1; done
+  $s launchctl bootstrap $dom "$p"
+fi
+```
 
 ### Managing the services
 
@@ -402,7 +425,7 @@ sudo install -m 755 archivis /usr/local/bin/archivis
 ### 4. Download the runtime and models
 
 ```sh
-archivis setup                               # ~800 MB into ~/.archivis, checksum-verified
+archivis setup                               # ~900 MB into ~/.archivis, checksum-verified
 ```
 
 **NVIDIA GPU (optional, untested):** run `archivis setup --cuda` instead, and
@@ -469,7 +492,7 @@ User=$(id -un)
 Environment=ARCHIVIS_DATA=$HOME/.archivis
 Nice=10
 IOSchedulingClass=idle
-ExecStart=/usr/local/bin/archivis index --prune /mnt/archive1 /mnt/archive2
+ExecStart=/usr/local/bin/archivis index --prune --backfill 2h /mnt/archive1 /mnt/archive2
 EOF
 
 sudo tee /etc/systemd/system/archivis-index.timer >/dev/null <<EOF
@@ -503,6 +526,16 @@ service set up without it:
 ```sh
 grep -q 'archivis index --prune' /etc/systemd/system/archivis-index.service ||
   sudo sed -i 's|archivis index |archivis index --prune |' /etc/systemd/system/archivis-index.service
+sudo systemctl daemon-reload
+```
+
+`--backfill 2h` spends up to two hours a night scoring, with MUSIQ, photos
+indexed before it was installed (see [Technical score and
+MUSIQ](#technical-score-and-musiq)). To add it:
+
+```sh
+grep -q -- '--backfill' /etc/systemd/system/archivis-index.service ||
+  sudo sed -i 's|archivis index |archivis index --backfill 2h |' /etc/systemd/system/archivis-index.service
 sudo systemctl daemon-reload
 ```
 
@@ -868,6 +901,32 @@ Settings saved before scenes stacked kept the old similarity default, 6:
 they now read as 10 until saved again. A similarity set to anything else
 is kept.
 
+### Technical score and MUSIQ
+
+The technical score blends archivis's own measurements (focus, exposure,
+noise and the rest) with **MUSIQ**, Google Research's image-quality model,
+which `archivis setup` downloads (about 110 MB). Together they agree with
+people's ratings far better than the measurements alone (see
+VALIDATION.md). Without MUSIQ installed, the technical score is the
+measurements' rating, as before.
+
+New photos are scored as they are indexed. Photos indexed before MUSIQ was
+installed need each file read again: the nightly `--backfill 2h` does a
+couple of hours' worth each night, and the command does them all:
+
+```sh
+archivis quality                       # how many are scored, how many not
+archivis quality backfill              # score the rest now (resumable; Ctrl-C to stop)
+archivis quality backfill --for 3h     # or for at most 3 hours
+```
+
+It takes the index lock, so it doesn't run alongside an index: if one is
+running, it says so and stops. While it runs, the nightly index can't start
+either and waits for the next night, so give a long backfill `--for` to end
+before 2:30, or let that night's index be skipped. A photo's file that is missing (an unmounted drive) is skipped
+and tried again next time. Each photo's technical and overall scores update
+as it is scored; bursts, stacks and album covers follow on the next regroup.
+
 ### Bursts and identical images
 
 The **Bursts** and **Duplicates** pages read groups that are worked out once
@@ -1104,7 +1163,12 @@ Disk Access afterwards (step 4). If you also changed a service's settings,
 nobody logged in](#start-at-boot-with-nobody-logged-in).
 
 Catalogue changes are applied automatically when Archivis opens it; nothing
-needs re-indexing unless the release notes say so. A release with a new
+needs re-indexing unless the release notes say so. When `archivis setup`
+adds MUSIQ (the technical score's learned half), photos indexed before it
+keep their technical score until MUSIQ scores them: add `--backfill 2h` to
+the nightly job ([macOS](#7-index-new-photos-every-night),
+[Ubuntu](#7-index-first-run-and-every-night)), or run `archivis quality
+backfill` to do them all at once. A release with a new
 built-in aesthetic model adds it next to the old one, and it scores your
 photos from their stored embeddings. Earlier scores, and models you
 trained, are kept.

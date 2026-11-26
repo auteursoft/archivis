@@ -56,7 +56,7 @@ indexing, access from other devices, backups) follow **[DEPLOY.md](DEPLOY.md)**.
 ```sh
 go build -o archivis ./cmd/archivis
 sudo mkdir -p /usr/local/bin && sudo install -m 755 archivis /usr/local/bin/archivis   # on your PATH
-archivis setup          # downloads ONNX Runtime + models (~800 MB) into ~/.archivis
+archivis setup          # downloads ONNX Runtime + models (~900 MB) into ~/.archivis
 ```
 
 (Without the install step, run it as `./archivis` from this folder instead.
@@ -114,6 +114,7 @@ archivis aesthetic models  # every aesthetic model used, and the current blend
 archivis retag          # after editing ~/.archivis/categories.txt
 archivis prune /Volumes/Archive1   # forget files deleted from that drive
 archivis index --prune /Volumes/Archive1 /Volumes/Archive2   # index, then forget deleted files if both drives are there
+archivis quality backfill   # MUSIQ-score photos indexed before it was installed (or nightly: index --backfill 2h)
 archivis stats ; archivis errors
 archivis inspect --previews ~/Desktop/check /Volumes/Card/DCIM   # what Archivis reads from your camera's files
 ```

@@ -1,8 +1,10 @@
 package quality
 
 import (
+	"encoding/json"
 	"math"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/auteursoft/archivis/internal/imageio"
@@ -134,5 +136,44 @@ func BenchmarkAnalyze(b *testing.B) {
 	d, _ := imageio.Load("testdata/t1.jpg", 0)
 	for i := 0; i < b.N; i++ {
 		Analyze(d.Img)
+	}
+}
+
+// The MUSIQ rating model must be the one fit on BIQ2021, not the
+// placeholder the code was written against.
+func TestMUSIQRatingModelIsFitted(t *testing.T) {
+	var r struct {
+		TrainedOn string `json:"trained_on"`
+		Features  []string
+	}
+	if err := json.Unmarshal(ratingMUSIQJSON, &r); err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(r.TrainedOn, "PLACEHOLDER") {
+		t.Fatalf("rating_musiq_model.json is still the placeholder: fit it with tools/validate/fit_quality.py --export-musiq")
+	}
+	if len(r.Features) != len(rating.Features)+1 || r.Features[len(r.Features)-1] != "musiq" {
+		t.Fatalf("features %v: want the rating's, then musiq", r.Features)
+	}
+}
+
+// A better MUSIQ score gives a better rating, all else equal, across
+// typical photos' measurements, and the rating stays within 0..100.
+func TestRateWithFollowsMUSIQ(t *testing.T) {
+	img := load(t)
+	m := Analyze(RatingImage(img))
+	prev := -1.0
+	for s := 10.0; s <= 90; s += 10 {
+		r := RateWith(m, s)
+		if r < 0 || r > 100 {
+			t.Fatalf("musiq %v: rating %v outside 0..100", s, r)
+		}
+		if r < prev {
+			t.Fatalf("musiq %v: rating %v fell from %v", s, r, prev)
+		}
+		prev = r
+	}
+	if RateWith(m, 90) <= RateWith(m, 10) {
+		t.Fatalf("the rating does not follow MUSIQ: %v at 10, %v at 90", RateWith(m, 10), RateWith(m, 90))
 	}
 }

@@ -31,6 +31,15 @@ type Engines struct {
 	Aesthetics []AestheticModel
 	Tagger     *Tagger
 	Sources    *Sources // tells memes and screenshots (needs the CLIP text model)
+	// MUSIQ scores technical quality as people see it, blended into the
+	// technical score (quality.RateWith); without it, the measurements
+	// alone (quality.Rate)
+	MUSIQ MUSIQScorer
+}
+
+// MUSIQScorer scores an image no larger than quality.RatingSize (ml.MUSIQ).
+type MUSIQScorer interface {
+	Score(img *imageio.RGB) (float64, error)
 }
 
 // Layout of the data directory.
@@ -247,12 +256,34 @@ func AnalyzeImage(d *imageio.Decoded, eng *Engines) (*Analysis, error) {
 	}
 	p.FocusScore, p.ExposureScore, p.ColorScore, p.NoiseScore = q.FocusScore, q.ExposureScore, q.ColorScore, q.NoiseScore
 	// Technical is the human-calibrated rating (see quality.Rate), which
-	// tracks human judgements far better than a hand-weighted mix.
-	p.Technical = round1(quality.Technical(quality.Rate(img), q, d.Blockiness))
+	// tracks human judgements far better than a hand-weighted mix; with
+	// MUSIQ, blended with its score (quality.RateWith), better still.
+	rating, musiq, err := Rating(img, eng.MUSIQ)
+	if err != nil {
+		return nil, err
+	}
+	p.MUSIQ = musiq
+	p.Technical = round1(quality.Technical(rating, q, d.Blockiness))
 	p.Overall = Overall(p.Technical, p.Aesthetic)
 	a.Metrics = q
 	p.Version = store.SchemaVersion
 	return a, nil
+}
+
+// Rating is the human-calibrated technical rating (0..100) of an image of
+// any size, measured at quality.RatingSize, and MUSIQ's score of it when m
+// is set (else invalid).
+func Rating(img *imageio.RGB, m MUSIQScorer) (float64, sql.NullFloat64, error) {
+	small := quality.RatingImage(img)
+	metrics := quality.Analyze(small)
+	if m == nil {
+		return quality.RateMetrics(metrics), sql.NullFloat64{}, nil
+	}
+	s, err := m.Score(small)
+	if err != nil {
+		return 0, sql.NullFloat64{}, err
+	}
+	return quality.RateWith(metrics, s), sql.NullFloat64{Float64: s, Valid: true}, nil
 }
 
 // FaceFocusScore maps Laplacian variance of an aligned 112px face crop to 0..1.
