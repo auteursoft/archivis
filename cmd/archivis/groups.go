@@ -11,7 +11,7 @@ import (
 )
 
 func runGroups(g *globals, args []string) error {
-	fs := newFlagSet("groups", `Bursts, stacks of alike shots, identical images, and the
+	fs := newFlagSet("groups", `Bursts, stacks of alike shots, duplicates, and the
 folders Albums shows:
   groups status     whether they are up to date
   groups rebuild    work them out again now (index runs and the web
@@ -64,7 +64,7 @@ func regroup(ctx context.Context, dir string, st *store.Store) {
 	stats, ran, err := indexer.Regroup(ctx, dir, st, st.GroupOptions(), false)
 	switch {
 	case err != nil:
-		fmt.Fprintf(os.Stderr, "warning: working out bursts and identical images failed after %s: %v (the web interface retries; or run `archivis groups rebuild`)\n",
+		fmt.Fprintf(os.Stderr, "warning: working out bursts and duplicates failed after %s: %v (the web interface retries; or run `archivis groups rebuild`)\n",
 			time.Since(start).Round(time.Second), err)
 	case ran:
 		fmt.Fprintf(os.Stderr, "grouped: %s\n", stats)

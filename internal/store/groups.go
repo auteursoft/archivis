@@ -12,13 +12,18 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/auteursoft/archivis/internal/vindex"
 )
 
 // Groups: bursts (frames one camera shot within a few seconds of each
 // other), stacks (alike shots of one scene, shown as one card: a scene is
-// one camera's shots each within minutes of the last) and sets of identical images (same perceptual hash). RebuildGroups works
-// them out after indexing and stores them, so pages only read an index:
-// per photo in the photos table's group columns, per group in photo_groups.
+// one camera's shots each within minutes of the last; alike is visually
+// similar by CLIP embedding, or a close perceptual hash) and duplicates
+// (sets of identical images, by perceptual hash, anywhere, joined with the
+// stacks: highly similar shots of one scene). RebuildGroups works them out
+// after indexing and stores them, so pages only read an index: per photo in
+// the photos table's group columns, per group in photo_groups.
 
 // Group kinds (photo_groups.kind).
 const (
@@ -27,13 +32,14 @@ const (
 )
 
 // groupsVersion changes when the grouping rules do, forcing a rebuild.
-const groupsVersion = "6"
+const groupsVersion = "8"
 
 // GroupOptions are the rules RebuildGroups groups by.
 type GroupOptions struct {
 	Gap     int64 // most seconds between frames of one burst
 	Hamming int   // most differing perceptual-hash bits for frames to stack
 	Scene   int64 // most seconds between shots of one scene, whose alike shots stack (below Gap: Gap)
+	Similar int   // least CLIP similarity, in percent, for shots to stack (0: perceptual hashes only)
 }
 
 // sceneGap is the most seconds between shots of one scene.
@@ -42,7 +48,7 @@ func (o GroupOptions) sceneGap() int64 { return max(o.Scene, o.Gap) }
 // GroupOptions are the catalogue's grouping rules (from its Settings).
 func (s *Store) GroupOptions() GroupOptions {
 	v := s.GetSettings()
-	return GroupOptions{Gap: int64(v.BurstGap), Hamming: v.StackHamming, Scene: int64(v.SceneGap) * 60}
+	return GroupOptions{Gap: int64(v.BurstGap), Hamming: v.StackHamming, Scene: int64(v.SceneGap) * 60, Similar: v.SimilarCLIP}
 }
 
 // RebuildStats reports what RebuildGroups found and wrote.
@@ -92,7 +98,8 @@ func (s *Store) GroupRulesChanged(o GroupOptions) bool {
 	return s.GetMeta("groups_version") != groupsVersion ||
 		s.GetMeta("groups_gap") != strconv.FormatInt(o.Gap, 10) ||
 		s.GetMeta("groups_hamming") != strconv.Itoa(o.Hamming) ||
-		s.GetMeta("groups_scene") != strconv.FormatInt(o.sceneGap(), 10)
+		s.GetMeta("groups_scene") != strconv.FormatInt(o.sceneGap(), 10) ||
+		s.GetMeta("groups_similar") != strconv.Itoa(o.Similar)
 }
 
 // GroupsRebuilding reports whether a rebuild is in progress (for a note on
@@ -112,7 +119,9 @@ type gphoto struct {
 	sharpness                                  float64
 	faces                                      int
 	source                                     int
-	cur                                        [5]int64 // burst_id, stack_top, stack_size, stacked, dup_id
+	cur                                        [5]int64  // burst_id, stack_top, stack_size, stacked, dup_id
+	clip                                       []float32 // unit-length CLIP embedding (nil: none, or not loaded)
+	w, h                                       int       // pixels (0: unknown)
 }
 
 type groupRow struct {
@@ -139,9 +148,10 @@ type rebuild struct {
 	pending []groupRow // groups found, not yet compared with the stored ones
 	ids     [3][]int64 // new group ids by kind (burst, dup)
 	members [3][]int64 // new groups' members by kind
+	similar [][]int64  // the stacks found (2+ shots each): highly similar shots, so duplicates too
 }
 
-// RebuildGroups works out every burst, stack and set of identical images
+// RebuildGroups works out every burst, stack and set of duplicates
 // and stores them, writing only what changed, in short transactions. It
 // does not change photos' seq, so it does not make anything reload.
 // Callers serialise runs (indexer.LockGroups).
@@ -175,7 +185,8 @@ func (s *Store) RebuildGroups(ctx context.Context, o GroupOptions) (RebuildStats
 	for k, v := range map[string]string{
 		"groups_seq": strconv.FormatInt(seq, 10), "groups_gap": strconv.FormatInt(o.Gap, 10),
 		"groups_hamming": strconv.Itoa(o.Hamming), "groups_scene": strconv.FormatInt(o.sceneGap(), 10),
-		"groups_clean": dirty, "groups_version": groupsVersion,
+		"groups_similar": strconv.Itoa(o.Similar),
+		"groups_clean":   dirty, "groups_version": groupsVersion,
 	} {
 		if err := s.SetMeta(k, v); err != nil {
 			return r.st, err
@@ -409,6 +420,19 @@ func (r *rebuild) chunkDetails(chunks []sceneChunk) error {
 	if err != nil {
 		return err
 	}
+	if r.o.Similar > 0 {
+		if err := r.clips(byID); err != nil {
+			return err
+		}
+		for _, p := range byID {
+			if p.camera == "" {
+				// no camera: dated photos without one (exports, scans,
+				// downloads) share a "scene", so their looks alone must
+				// not stack them; their hashes still may
+				p.clip = nil
+			}
+		}
+	}
 	// Work out every chunk, then queue the writes.
 	type plan struct {
 		shots []*gphoto
@@ -439,7 +463,21 @@ func (r *rebuild) chunkDetails(chunks []sceneChunk) error {
 			r.st.Bursts++
 			r.addGroup(GroupBurst, frames)
 		}
-		pl.want = stackFrames(pl.shots, r.o.Hamming)
+		pl.want = stackFrames(pl.shots, r.o)
+		stacks := map[int64][]int64{} // top -> its stack, in shot order
+		var tops []int64
+		for _, p := range pl.shots {
+			p.clip = nil // done with: the copy a group keeps of its best shot needs none
+			if top := pl.want[p.id][0]; top != 0 {
+				if stacks[top] == nil {
+					tops = append(tops, top)
+				}
+				stacks[top] = append(stacks[top], p.id)
+			}
+		}
+		for _, top := range tops {
+			r.similar = append(r.similar, stacks[top])
+		}
 		plans = append(plans, pl)
 	}
 	for _, pl := range plans {
@@ -511,12 +549,13 @@ func (r *rebuild) hugeBurst(ids []int64) error {
 // a real burst.
 var maxStackRun = 1000 // a variable so tests can make huge runs cheaply
 
-// stackFrames clusters a scene's shots into stacks of alike shots: taking frames best first (overall, then lower id), each frame not
-// yet in a stack starts one and takes every later frame not yet in a stack
-// whose perceptual hash is within the threshold of its own. So the top is
-// the best frame, and a slow pan does not chain into one stack. It returns
-// each frame's (stack_top, stack_size, stacked); frames alone get zeros.
-func stackFrames(frames []*gphoto, hamming int) map[int64][3]int64 {
+// stackFrames clusters a scene's shots into stacks of alike shots: taking
+// frames best first (overall, then lower id), each frame not yet in a stack
+// starts one and takes every later frame not yet in a stack that is alike
+// to it (alike). So the top is the best frame, and a slow pan does not
+// chain into one stack. It returns each frame's (stack_top, stack_size,
+// stacked); frames alone get zeros.
+func stackFrames(frames []*gphoto, o GroupOptions) map[int64][3]int64 {
 	order := append([]*gphoto(nil), frames...)
 	sort.Slice(order, func(i, j int) bool {
 		if order[i].overall != order[j].overall {
@@ -527,12 +566,12 @@ func stackFrames(frames []*gphoto, hamming int) map[int64][3]int64 {
 	out := make(map[int64][3]int64, len(frames))
 	taken := make([]bool, len(order))
 	for i, top := range order {
-		if taken[i] || top.phash == 0 {
+		if taken[i] || (top.phash == 0 && top.clip == nil) {
 			continue
 		}
 		stack := []int{i}
 		for j := i + 1; j < len(order); j++ {
-			if !taken[j] && order[j].phash != 0 && bits.OnesCount64(top.phash^order[j].phash) <= hamming {
+			if !taken[j] && alike(top, order[j], o) {
 				stack = append(stack, j)
 			}
 		}
@@ -551,11 +590,130 @@ func stackFrames(frames []*gphoto, hamming int) map[int64][3]int64 {
 	return out
 }
 
+// alike reports whether two shots of one scene are one picture: they look
+// alike by what is in them (CLIP embeddings at least o.Similar percent
+// similar, which reframing barely changes), or their perceptual hashes
+// differ by at most o.Hamming bits (which also covers shots not yet
+// embedded). The hashes are compared first: that is cheap, and identical
+// copies then need no embedding comparison.
+//
+// An embedding sees only the centre square of a frame (CLIP's crop), so
+// looks alone count only for shots of the same shape (sameFrame), whose
+// crops cover most of each frame and the same share of both.
+func alike(a, b *gphoto, o GroupOptions) bool {
+	if a.phash != 0 && b.phash != 0 && bits.OnesCount64(a.phash^b.phash) <= o.Hamming {
+		return true
+	}
+	if o.Similar == 0 || a.clip == nil || b.clip == nil || len(a.clip) != len(b.clip) || !sameFrame(a, b) {
+		return false
+	}
+	var dot float32
+	for k, x := range a.clip {
+		dot += x * b.clip[k]
+	}
+	return float64(dot) >= float64(o.Similar)/100
+}
+
+// maxCropAspect is the widest frame (long side over short side) whose
+// embedding counts for stacking: CLIP's centre crop then covers at least
+// half of it (two thirds of a 3:2 frame; a quarter of a 4:1 panorama).
+const maxCropAspect = 2.0
+
+// sameFrame reports whether two shots' embeddings cover comparable frames:
+// both sizes known, neither wider than maxCropAspect, and their shapes
+// within 10% of each other (whichever way up, as sizes may be stored before
+// rotation).
+func sameFrame(a, b *gphoto) bool {
+	aspect := func(p *gphoto) float64 {
+		if p.w <= 0 || p.h <= 0 {
+			return 0
+		}
+		return float64(max(p.w, p.h)) / float64(min(p.w, p.h))
+	}
+	ra, rb := aspect(a), aspect(b)
+	if ra == 0 || rb == 0 || ra > maxCropAspect || rb > maxCropAspect {
+		return false
+	}
+	return max(ra, rb)/min(ra, rb) <= 1.1
+}
+
+// clips loads the photos' CLIP embeddings, scaled to unit length.
+func (r *rebuild) clips(byID map[int64]*gphoto) error {
+	ids := make([]int64, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(len(ids), start+500)]
+		rows, err := r.query(`SELECT photo_id, clip FROM photo_clip WHERE photo_id IN (`+placeholders(len(chunk))+`)`, int64sToAny(chunk)...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id int64
+			var b []byte
+			if err := rows.Scan(&id, &b); err != nil {
+				rows.Close()
+				return err
+			}
+			if p := byID[id]; p != nil {
+				p.clip = unitVector(vindex.DecodeF16(b))
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unitVector scales v to length 1 (nil if empty or all zeros).
+func unitVector(v []float32) []float32 {
+	var n float64
+	for _, x := range v {
+		n += float64(x) * float64(x)
+	}
+	if n == 0 || math.IsNaN(n) || math.IsInf(n, 0) {
+		return nil
+	}
+	k := float32(1 / math.Sqrt(n))
+	for i := range v {
+		v[i] *= k
+	}
+	return v
+}
+
 // duplicates scans photos by perceptual hash (the photos_phash index covers
-// it); each hash shared by 2+ photos is a set of identical images.
+// it); each hash shared by 2+ photos is a set of identical images. The
+// stacks bursts found are highly similar shots, so duplicates too: a stack
+// and the identical copies of any of its shots, anywhere, are one set (a
+// photo is in at most one).
 func (r *rebuild) duplicates() error {
+	sets := newUnionFind()
+	for _, st := range r.similar {
+		for _, id := range st[1:] {
+			sets.union(st[0], id)
+		}
+	}
+	r.similar = nil
 	var pending [][]int64
 	pendingN := 0
+	// add queues a set of identical images, or joins it to the stacks of
+	// its shots
+	add := func(g []int64) {
+		for _, id := range g {
+			if sets.has(id) {
+				for _, o := range g {
+					sets.union(id, o)
+				}
+				return
+			}
+		}
+		pending = append(pending, g)
+		pendingN += len(g)
+	}
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -626,8 +784,7 @@ func (r *rebuild) duplicates() error {
 		for _, x := range batch {
 			if len(cur) > 0 && x[0] != curHash {
 				if len(cur) >= 2 {
-					pending = append(pending, cur)
-					pendingN += len(cur)
+					add(cur)
 				}
 				cur = nil
 			}
@@ -644,9 +801,70 @@ func (r *rebuild) duplicates() error {
 		}
 	}
 	if len(cur) >= 2 {
-		pending = append(pending, cur)
+		add(cur)
+	}
+	// then the stacks, with the identical copies joined to them
+	for _, g := range sets.sets() {
+		pending = append(pending, g)
+		pendingN += len(g)
+		if pendingN >= 2000 {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
 	}
 	return flush()
+}
+
+// unionFind joins photo ids into disjoint sets.
+type unionFind struct{ parent map[int64]int64 }
+
+func newUnionFind() *unionFind { return &unionFind{parent: map[int64]int64{}} }
+
+func (u *unionFind) has(id int64) bool { _, ok := u.parent[id]; return ok }
+
+func (u *unionFind) find(id int64) int64 {
+	p, ok := u.parent[id]
+	if !ok {
+		u.parent[id] = id
+		return id
+	}
+	if p == id {
+		return id
+	}
+	root := u.find(p)
+	u.parent[id] = root
+	return root
+}
+
+func (u *unionFind) union(a, b int64) {
+	ra, rb := u.find(a), u.find(b)
+	if ra != rb {
+		u.parent[max(ra, rb)] = min(ra, rb)
+	}
+}
+
+// sets returns the sets, each in ascending order, by their smallest id.
+func (u *unionFind) sets() [][]int64 {
+	by := map[int64][]int64{}
+	var roots []int64
+	ids := make([]int64, 0, len(u.parent))
+	for id := range u.parent {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		root := u.find(id)
+		if by[root] == nil {
+			roots = append(roots, root)
+		}
+		by[root] = append(by[root], id)
+	}
+	out := make([][]int64, 0, len(roots))
+	for _, root := range roots {
+		out = append(out, by[root])
+	}
+	return out
 }
 
 // query reads, first committing pending writes: a write transaction must
@@ -665,14 +883,14 @@ func (r *rebuild) details(ids []int64) (map[int64]*gphoto, error) {
 		chunk := ids[start:min(len(ids), start+500)]
 		rows, err := r.query(`SELECT id, taken_at, TRIM(COALESCE(camera_make, '') || ' ' || COALESCE(camera_model, '')), phash, COALESCE(overall, 0),
 			COALESCE(technical, 0), COALESCE(aesthetic, 0), COALESCE(focus_score, 0), COALESCE(colorfulness, 0), COALESCE(sharpness, 0), face_count,
-			source, burst_id, stack_top, stack_size, stacked, dup_id FROM photos WHERE id IN (`+placeholders(len(chunk))+`)`, int64sToAny(chunk)...)
+			source, burst_id, stack_top, stack_size, stacked, dup_id, COALESCE(width, 0), COALESCE(height, 0) FROM photos WHERE id IN (`+placeholders(len(chunk))+`)`, int64sToAny(chunk)...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
 			p := &gphoto{}
 			if err := rows.Scan(&p.id, &p.at, &p.camera, (*int64ptr)(&p.phash), &p.overall, &p.technical, &p.aesthetic,
-				&p.focus, &p.colr, &p.sharpness, &p.faces, &p.source, &p.cur[0], &p.cur[1], &p.cur[2], &p.cur[3], &p.cur[4]); err != nil {
+				&p.focus, &p.colr, &p.sharpness, &p.faces, &p.source, &p.cur[0], &p.cur[1], &p.cur[2], &p.cur[3], &p.cur[4], &p.w, &p.h); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -1020,7 +1238,7 @@ type GroupPageInfo struct {
 	Partial bool // the page stopped at maxGroupWalk groups checked; more may match
 }
 
-// Group is a burst or a set of identical images, as a page shows it.
+// Group is a burst or a set of duplicates, as a page shows it.
 type Group struct {
 	Kind     int
 	ID       int64
@@ -1068,9 +1286,11 @@ func groupSort(name string) string {
 
 // photoFirst reports whether a filter picks out few photos through an
 // index, so matching groups are best found from the photos (then ordered)
-// rather than by walking groups in order and checking their members.
+// rather than by walking groups in order and checking their members: a
+// person, a tag, the starred photos or folders holding few photos (an
+// album's).
 func (f Filter) photoFirst() bool {
-	return f.PersonID > 0 || f.Tag != "" || f.Starred
+	return f.PersonID > 0 || f.Tag != "" || f.Starred || (len(f.Dirs) > 0 && f.DirsByPath)
 }
 
 // maxGroupWalk bounds how many groups a page with a quality-style filter
@@ -1454,7 +1674,7 @@ func (s *Store) bestOf(members map[int64][]int64, keep map[int64]bool) (map[int6
 func (st RebuildStats) String() string {
 	var s string
 	if !st.FoldersOnly {
-		s = fmt.Sprintf("%d bursts (%d stacks), %d sets of identical images; %d photos and %d groups updated; ",
+		s = fmt.Sprintf("%d bursts (%d stacks), %d sets of duplicates; %d photos and %d groups updated; ",
 			st.Bursts, st.Stacks, st.Duplicates, st.PhotoWrites, st.GroupWrites)
 	}
 	if st.FoldersOnly || st.Folders > 0 || st.FolderWrites > 0 {

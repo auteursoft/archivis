@@ -732,7 +732,7 @@ type photoData struct {
 	Faces   []faceView
 	Tags    []store.Tag
 	Similar []catalog.PhotoHit
-	Copies  []catalog.PhotoHit // the other photos with the identical image (its Duplicates set)
+	Copies  []catalog.PhotoHit // the other photos in its Duplicates set (identical, or highly similar shots of its scene)
 	Stack   []catalog.PhotoHit // the other frames of its stack of near-identical burst frames
 	Metrics []metricRow
 	Cast    string
@@ -785,7 +785,7 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	if ph.DupID != 0 {
 		copies, err := s.cat.Store.GroupMembers(store.GroupDuplicate, ph.DupID)
-		errs.note("identical copies", err)
+		errs.note("duplicates", err)
 		for _, c := range copies {
 			if c.ID != id {
 				d.Copies = append(d.Copies, catalog.PhotoHit{Photo: c})

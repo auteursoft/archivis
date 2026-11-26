@@ -24,7 +24,8 @@ everything runs locally, nothing leaves your machine.
   ("worst first" for culling). The *Scores* page in the UI explains each
   number.
 * **Journalistic triage.** Bursts/sequences with the best frame first,
-  duplicate detection, zero-shot categories (protest, speech, sports, crowd,
+  duplicate detection (identical copies anywhere, and highly similar shots of
+  one scene by visual similarity; also per album), zero-shot categories (protest, speech, sports, crowd,
   portrait, document/screenshot, …; editable), EXIF/camera/lens/date filters,
   export of picks as symlinks or copies (e.g. to import into Lightroom).
   Albums browse the indexed folders, with every Apple Photos library together
