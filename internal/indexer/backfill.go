@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/auteursoft/archivis/internal/imageio"
@@ -53,8 +54,9 @@ var backfillBatch = 50
 // stops at deadline (zero: when every photo has been tried) or when ctx is
 // cancelled, saving what it scored; a later run picks up the rest. Files
 // that are missing or unreadable are skipped and tried again next time.
-// Progress lines go to w (may be nil).
-func BackfillMUSIQ(ctx context.Context, st *store.Store, m MUSIQScorer, deadline time.Time, w io.Writer) (BackfillStats, error) {
+// workers photos are read and scored at once. Progress lines go to w (may
+// be nil).
+func BackfillMUSIQ(ctx context.Context, st *store.Store, m MUSIQScorer, deadline time.Time, workers int, w io.Writer) (BackfillStats, error) {
 	start := time.Now()
 	var b BackfillStats
 	if m == nil {
@@ -66,33 +68,54 @@ func BackfillMUSIQ(ctx context.Context, st *store.Store, m MUSIQScorer, deadline
 	done := func() bool {
 		return ctx.Err() != nil || (!deadline.IsZero() && time.Now().After(deadline))
 	}
+	workers = max(1, workers)
 	lastReport := time.Now()
 	after := int64(0)
 	for !done() {
-		batch, err := st.UnscoredMUSIQ(after, backfillBatch)
+		batch, err := st.UnscoredMUSIQ(after, max(backfillBatch, 4*workers))
 		if err != nil {
 			return b, err
 		}
 		if len(batch) == 0 {
 			break
 		}
-		var ups []store.MUSIQUpdate
-		for _, p := range batch {
+		// score the batch workers at a time; photos not started when the
+		// time is up stay for the next run
+		type result struct {
+			u   store.MUSIQUpdate
+			err error
+			ran bool
+		}
+		res := make([]result, len(batch))
+		sem := make(chan struct{}, workers)
+		var wg sync.WaitGroup
+		for i, p := range batch {
+			sem <- struct{}{}
 			if done() {
+				<-sem
 				break
 			}
 			after = p.ID
-			u, err := scoreFile(p, m)
+			wg.Add(1)
+			go func() {
+				defer func() { <-sem; wg.Done() }()
+				u, err := scoreFile(p, m)
+				res[i] = result{u, err, true}
+			}()
+		}
+		wg.Wait()
+		var ups []store.MUSIQUpdate
+		for i, r := range res {
 			switch {
-			case errors.Is(err, fs.ErrNotExist):
+			case !r.ran:
+			case errors.Is(r.err, fs.ErrNotExist):
 				b.Missing++
-				continue
-			case err != nil:
+			case r.err != nil:
 				b.Failed++
-				fmt.Fprintf(w, "warning: MUSIQ: %s: %v\n", p.Path, err)
-				continue
+				fmt.Fprintf(w, "warning: MUSIQ: %s: %v\n", batch[i].Path, r.err)
+			default:
+				ups = append(ups, r.u)
 			}
-			ups = append(ups, u)
 		}
 		n, err := st.SetMUSIQ(ups)
 		if err != nil {

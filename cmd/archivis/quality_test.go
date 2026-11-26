@@ -24,16 +24,16 @@ func TestBackfillMUSIQReport(t *testing.T) {
 	}
 	defer st.Close()
 	var log strings.Builder
-	if backfillMUSIQ(context.Background(), st, nil, time.Time{}, &log) || log.Len() != 0 {
+	if backfillMUSIQ(context.Background(), st, nil, time.Time{}, 1, &log) || log.Len() != 0 {
 		t.Fatalf("without MUSIQ: %q", log.String())
 	}
-	if backfillMUSIQ(context.Background(), st, fixedMUSIQ(50), time.Time{}, &log) || log.Len() != 0 {
+	if backfillMUSIQ(context.Background(), st, fixedMUSIQ(50), time.Time{}, 1, &log) || log.Len() != 0 {
 		t.Fatalf("nothing to score: %q", log.String())
 	}
 	if err := st.Save([]*store.Result{{Photo: store.Photo{Path: "/gone.jpg", Size: 1, MTime: 1, Fingerprint: "g", Version: store.SchemaVersion}}}); err != nil {
 		t.Fatal(err)
 	}
-	if backfillMUSIQ(context.Background(), st, fixedMUSIQ(50), time.Time{}, &log) {
+	if backfillMUSIQ(context.Background(), st, fixedMUSIQ(50), time.Time{}, 2, &log) {
 		t.Fatal("reported a change with nothing scored")
 	}
 	if got := log.String(); !strings.Contains(got, "quality: scored 0 photos") || !strings.Contains(got, "1 files not found; 1 left") {

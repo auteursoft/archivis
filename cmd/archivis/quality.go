@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/auteursoft/archivis/internal/catalog"
@@ -16,12 +17,13 @@ func runQuality(g *globals, args []string) error {
 	fs := newFlagSet("quality", `MUSIQ's part of the technical score, for photos indexed before it was
 installed (new photos get it as they are indexed):
   quality status              how many photos MUSIQ has scored, and how many not
-  quality backfill [--for D]  score them now: each file is read again (a few
-                              photos a second); stops after D (e.g. 2h) if
+  quality backfill [--for D]  score them now: each file is read again (about
+                              a second of CPU each); stops after D (e.g. 2h) if
                               given, else when all are done; resumes where it
                               left off. index --backfill D does the same
                               after a nightly index run`)
 	limit := fs.Duration("for", 0, "stop after this long (e.g. 2h); default: when every photo is scored")
+	workers := fs.Int("workers", max(1, runtime.NumCPU()/2), "photos read and scored at once")
 	g.register(fs)
 	pos := parseInterleaved(fs, args)
 	if len(pos) == 0 {
@@ -53,7 +55,7 @@ installed (new photos get it as they are indexed):
 			return err
 		}
 		defer unlock()
-		eng, err := g.engines(need{musiq: true}, 1)
+		eng, err := g.engines(need{musiq: true}, *workers)
 		if err != nil {
 			return err
 		}
@@ -71,7 +73,7 @@ installed (new photos get it as they are indexed):
 		if *limit > 0 {
 			deadline = time.Now().Add(*limit)
 		}
-		if backfillMUSIQ(ctx, cat.Store, eng.MUSIQ, deadline, os.Stderr) && ctx.Err() == nil {
+		if backfillMUSIQ(ctx, cat.Store, eng.MUSIQ, deadline, *workers, os.Stderr) && ctx.Err() == nil {
 			regroupAndMark(ctx, g.data, cat.Store) // stacks, groups and album covers rank by the new scores
 		}
 		return nil
@@ -82,11 +84,11 @@ installed (new photos get it as they are indexed):
 // backfillMUSIQ scores photos indexed before MUSIQ was installed until
 // deadline (zero: all of them), logging what it did; it reports whether it
 // changed any scores. Without MUSIQ (m nil) it does nothing.
-func backfillMUSIQ(ctx context.Context, st *store.Store, m indexer.MUSIQScorer, deadline time.Time, w io.Writer) bool {
+func backfillMUSIQ(ctx context.Context, st *store.Store, m indexer.MUSIQScorer, deadline time.Time, workers int, w io.Writer) bool {
 	if m == nil {
 		return false
 	}
-	b, err := indexer.BackfillMUSIQ(ctx, st, m, deadline, w)
+	b, err := indexer.BackfillMUSIQ(ctx, st, m, deadline, workers, w)
 	if err != nil {
 		fmt.Fprintf(w, "warning: scoring older photos with MUSIQ: %v (retried on the next run)\n", err)
 		return b.Scored > 0

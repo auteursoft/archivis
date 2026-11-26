@@ -100,7 +100,7 @@ func TestBackfillMUSIQ(t *testing.T) {
 	}
 	m := &stubMUSIQ{score: 77}
 	var log strings.Builder
-	b, err := BackfillMUSIQ(context.Background(), st, m, time.Time{}, &log)
+	b, err := BackfillMUSIQ(context.Background(), st, m, time.Time{}, 3, &log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestBackfillMUSIQ(t *testing.T) {
 	}
 	// next run: only the missing file is tried again, and it is still missing
 	calls := m.calls.Load()
-	b, err = BackfillMUSIQ(context.Background(), st, m, time.Time{}, nil)
+	b, err = BackfillMUSIQ(context.Background(), st, m, time.Time{}, 1, nil)
 	if err != nil || b.Scored != 0 || b.Missing != 1 || m.calls.Load() != calls {
 		t.Fatalf("second run: %+v %v (%d new calls)", b, err, m.calls.Load()-calls)
 	}
@@ -148,7 +148,7 @@ func TestBackfillMUSIQ(t *testing.T) {
 func TestBackfillMUSIQStopsAndResumes(t *testing.T) {
 	st, _ := backfillFixture(t, 4)
 	m := &stubMUSIQ{score: 60}
-	b, err := BackfillMUSIQ(context.Background(), st, m, time.Now().Add(-time.Second), nil)
+	b, err := BackfillMUSIQ(context.Background(), st, m, time.Now().Add(-time.Second), 1, nil)
 	if err != nil || b.Scored != 0 || !b.Stopped || b.Left != 4 {
 		t.Fatalf("out of time at once: %+v %v", b, err)
 	}
@@ -158,12 +158,12 @@ func TestBackfillMUSIQStopsAndResumes(t *testing.T) {
 			cancel() // stop after this photo
 		}
 	}
-	b, err = BackfillMUSIQ(ctx, st, m, time.Time{}, nil)
+	b, err = BackfillMUSIQ(ctx, st, m, time.Time{}, 1, nil)
 	if err != nil || b.Scored != 2 || !b.Stopped || b.Left != 2 {
 		t.Fatalf("cancelled: %+v %v", b, err)
 	}
 	m.before = nil
-	b, err = BackfillMUSIQ(context.Background(), st, m, time.Time{}, nil)
+	b, err = BackfillMUSIQ(context.Background(), st, m, time.Time{}, 1, nil)
 	if err != nil || b.Scored != 1 || b.Missing != 1 || b.Stopped {
 		t.Fatalf("resumed: %+v %v", b, err)
 	}
@@ -180,7 +180,7 @@ func TestBackfillMUSIQSkipsChangedPhotos(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	b, err := BackfillMUSIQ(context.Background(), st, m, time.Time{}, nil)
+	b, err := BackfillMUSIQ(context.Background(), st, m, time.Time{}, 1, nil)
 	if err != nil || b.Changed != 1 || b.Scored != 0 {
 		t.Fatalf("%+v %v", b, err)
 	}
@@ -193,7 +193,7 @@ func TestBackfillMUSIQSkipsChangedPhotos(t *testing.T) {
 // Without MUSIQ there is nothing to backfill with.
 func TestBackfillMUSIQNeedsTheModel(t *testing.T) {
 	st, _ := backfillFixture(t, 1)
-	if _, err := BackfillMUSIQ(context.Background(), st, nil, time.Time{}, nil); err == nil {
+	if _, err := BackfillMUSIQ(context.Background(), st, nil, time.Time{}, 1, nil); err == nil {
 		t.Fatal("ran without a model")
 	}
 }

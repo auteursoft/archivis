@@ -911,8 +911,11 @@ VALIDATION.md). Without MUSIQ installed, the technical score is the
 measurements' rating, as before.
 
 New photos are scored as they are indexed. Photos indexed before MUSIQ was
-installed need each file read again: the nightly `--backfill 2h` does a
-couple of hours' worth each night, and the command does them all:
+installed need each file read again, about a second of processor time per
+photo (more for RAW files), several at once (`--workers`, half the cores
+by default): roughly a day for 250,000 photos on an 8-core Mac. The
+nightly `--backfill 2h` does two hours' worth each night; the command does
+them all:
 
 ```sh
 archivis quality                       # how many are scored, how many not

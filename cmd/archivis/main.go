@@ -454,7 +454,7 @@ func runIndex(g *globals, args []string) error {
 		classifySources(ctx, cat.Store, eng.Sources, false)
 	}
 	if *backfill > 0 && ctx.Err() == nil {
-		backfillMUSIQ(ctx, cat.Store, eng.MUSIQ, time.Now().Add(*backfill), os.Stderr)
+		backfillMUSIQ(ctx, cat.Store, eng.MUSIQ, time.Now().Add(*backfill), max(1, *workers/2), os.Stderr)
 	}
 	if ctx.Err() == nil {
 		release() // indexing is done: another index run may start while this regroups
