@@ -158,6 +158,10 @@ table.users form { margin: 0; display: inline; }
 .albumnames label { display: flex; flex-direction: column; gap: 3px; flex: 1 1 260px; min-width: 0; }
 .albumnames label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
 .crumbs { margin: 8px 0 12px; font-size: 14px; overflow-wrap: anywhere; }
+.albumtabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.albumtabs a { padding: 6px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.albumtabs a:hover { color: var(--ink); text-decoration: none; }
+.albumtabs a.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 
 /* Stars: on each photo card (top right corner, under any count) and on the photo page */
 .cell { position: relative; }

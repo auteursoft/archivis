@@ -52,6 +52,7 @@ type albumsData struct {
 	Name        string  // the album shown
 	Path        string  // its folder, when Name is a display name
 	Crumbs      []crumb // the way up to it
+	Tabs        []tab   // the album's photos, bursts and duplicates
 	Folders     []albumCard
 	Sort        string      // how the album cards are ordered (albumSorts)
 	Keep        [][2]string // the page's other parameters, for the album sort form
@@ -298,32 +299,12 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 	lf := q.Get("lf") // the filtered album list this album was opened from
 	total := 0
 	reset := url.Values{}
+	al := s.openAlbum(dir, iphone, roots, names, libs, d.Sort, lf, fail)
+	d.Name, d.Path, d.Crumbs, d.Tabs, f.Dirs, total = al.Name, al.Path, al.Crumbs, al.tabs(q, "albums"), al.dirs, al.total
 	if iphone {
-		d.Name = "iPhone"
-		if n := names[store.IPhoneAlbum]; n != "" {
-			d.Name = n
-		}
 		reset.Set("iphone", "1")
-		d.Crumbs = []crumb{{"Albums", listTop(d.Sort, lf), ""}}
-		for _, l := range libs {
-			f.Dirs = append(f.Dirs, l.Path)
-			total += l.Total
-		}
-		if len(f.Dirs) == 0 {
-			f.Dirs = []string{"\x00none"} // no libraries: nothing
-		}
 	} else {
 		reset.Set("dir", dir)
-		d.Name = store.Folder{Path: dir}.Name()
-		if n := names[dir]; n != "" && slices.Contains(roots, dir) {
-			d.Name, d.Path = n, dir
-		}
-		f.Dirs = []string{dir}
-		if fo, err := st.Folder(dir); err != nil {
-			fail(err)
-		} else if fo != nil {
-			total = fo.Total
-		}
 		subs, err := st.Subfolders(dir)
 		fail(err)
 		d.Folders = s.albumCards(subs, d.Sort, fail)
@@ -345,7 +326,6 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 		for i := range d.Folders {
 			d.Folders[i].Href = withFilters(d.Folders[i].Href, carried(q), lf)
 		}
-		d.Crumbs = crumbs(dir, roots, names, d.Sort, lf)
 	}
 	p.Title = d.Name + " · Albums"
 	f.DirsByPath = total < byPathMax
@@ -373,6 +353,115 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 	p.Params["reset"] = albumHref(reset)
 	d.browseData = s.browse(r, p, f, text, "/albums", known)
 	s.render(w, r, "albums", p)
+}
+
+// album is an album a page shows, or shows the bursts or duplicates of: a
+// folder (with everything below it), or the Apple Photos libraries
+// together (iPhone).
+type album struct {
+	dir    string
+	iphone bool
+	Name   string  // as shown
+	Path   string  // its folder, when Name is a display name
+	Crumbs []crumb // Albums down to its parent
+	dirs   []string
+	total  int // photos in it, memes too
+	asort  string
+	lf     string // the filtered album list it was opened from
+}
+
+// openAlbum works out the album dir names (or, iphone, the Apple Photos
+// libraries libs), with the album cards' order asort and the list lf it
+// was opened from for the way back.
+func (s *Server) openAlbum(dir string, iphone bool, roots []string, names map[string]string, libs []store.Folder, asort, lf string, fail func(error)) album {
+	a := album{dir: dir, iphone: iphone, asort: asort, lf: lf}
+	if iphone {
+		a.Name = "iPhone"
+		if n := names[store.IPhoneAlbum]; n != "" {
+			a.Name = n
+		}
+		a.Crumbs = []crumb{{"Albums", listTop(asort, lf), ""}}
+		for _, l := range libs {
+			a.dirs = append(a.dirs, l.Path)
+			a.total += l.Total
+		}
+		if len(a.dirs) == 0 {
+			a.dirs = []string{"\x00none"} // no libraries: nothing
+		}
+		return a
+	}
+	a.Name = store.Folder{Path: dir}.Name()
+	if n := names[dir]; n != "" && slices.Contains(roots, dir) {
+		a.Name, a.Path = n, dir
+	}
+	a.dirs = []string{dir}
+	if fo, err := s.cat.Store.Folder(dir); err != nil {
+		fail(err)
+	} else if fo != nil {
+		a.total = fo.Total
+	}
+	a.Crumbs = crumbs(dir, slices.Clone(roots), names, asort, lf)
+	return a
+}
+
+// tab is a link to one view of an album.
+type tab struct {
+	Name, Href string
+	On         bool
+}
+
+// tabs link to the album's photos, bursts and duplicates (on: the one
+// shown), each with the filters of q, the album's search text (which only
+// the photos use; the others keep it for the way back) and the way back to
+// the album list.
+func (a album) tabs(q url.Values, on string) []tab {
+	v := carried(q)
+	v.Del("page")
+	if a.iphone {
+		v.Set("iphone", "1")
+	} else {
+		v.Set("dir", a.dir)
+	}
+	if a.asort != albumSorts[0] {
+		v.Set("asort", a.asort)
+	}
+	if a.lf != "" {
+		v.Set("lf", a.lf)
+	}
+	if text := strings.TrimSpace(q.Get("q")); text != "" {
+		v.Set("q", text)
+	}
+	return []tab{
+		{"Photos", albumHref(v), on == "albums"},
+		{"Bursts", "/bursts?" + v.Encode(), on == "bursts"},
+		{"Duplicates", "/duplicates?" + v.Encode(), on == "duplicates"},
+	}
+}
+
+// albumOf is the album a bursts or duplicates page is limited to by its
+// dir or iphone parameter (nil: none, the whole catalogue).
+func (s *Server) albumOf(q url.Values, fail func(error)) *album {
+	dir, iphone := store.TrimDir(q.Get("dir")), q.Get("iphone") != ""
+	if dir == "" && !iphone {
+		return nil
+	}
+	st := s.cat.Store
+	roots, err := st.Roots()
+	fail(err)
+	names, err := st.AlbumNames()
+	fail(err)
+	var libs []store.Folder
+	if iphone {
+		dir = ""
+		libs, err = st.PhotosLibraries()
+		fail(err)
+	}
+	asort := albumSorts[0]
+	if v := q.Get("asort"); slices.Contains(albumSorts, v) {
+		asort = v
+	}
+	a := s.openAlbum(dir, iphone, roots, names, libs, asort, q.Get("lf"), fail)
+	return &a
 }
 
 // iphoneAlbum folds the Apple Photos libraries into one album (nil if none).

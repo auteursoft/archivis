@@ -44,7 +44,7 @@ Commands:
   retag        recompute category tags from stored embeddings
   prune        drop catalogue entries for files that no longer exist
   stats        catalogue summary
-  groups       bursts, stacks, identical images and folders: status | rebuild
+  groups       bursts, stacks, duplicates and folders: status | rebuild
   quality      MUSIQ scores of photos indexed before it was installed: status | backfill
   roots        the indexed folders Albums starts from: list | add | remove | name
   errors       show files that failed to index

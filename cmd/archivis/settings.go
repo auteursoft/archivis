@@ -19,6 +19,9 @@ Settings:
   burst_gap      most seconds between frames of one burst (1-60, default 3)
   scene_gap      most minutes between one camera's shots of one scene, whose
                  alike shots stack (0-120, default 10; 0: only bursts stack)
+  similar_clip   how alike shots of one scene must look to stack and be
+                 listed as duplicates: the percent similarity of their CLIP
+                 embeddings (80-99, default 93; 0: perceptual hashes only)
   stack_bursts   show alike shots of one scene as one card on the Photos
                  page (on/off, default on)
   stack_hamming  how alike shots must be to stack: the most bits their

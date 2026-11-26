@@ -5,7 +5,9 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/auteursoft/archivis/internal/catalog"
@@ -17,7 +19,7 @@ import (
 // arriving (an index run regroups when it finishes anyway).
 const regroupEvery = 30 * time.Minute
 
-// regroup brings the bursts, stacks, sets of identical images and folders
+// regroup brings the bursts, stacks, sets of duplicates and folders
 // up to date in the background, if they are stale; now skips the wait (the rules
 // changed). One runs at a time.
 func (s *Server) regroup(now bool) {
@@ -42,7 +44,7 @@ func (s *Server) regroup(now bool) {
 	stats, ran, err := indexer.Regroup(ctx, s.cat.Layout.Dir, st, o, false)
 	switch {
 	case err != nil && ctx.Err() == nil: // stopping at shutdown is not a failure
-		log.Printf("grouping bursts and identical images: %v", err)
+		log.Printf("grouping bursts and duplicates: %v", err)
 	case ran:
 		log.Printf("grouped: %s", stats)
 	}
@@ -88,26 +90,42 @@ type groupsData struct {
 	Groups     []groupView
 	Page       int
 	Prev, Next template.URL
-	Filtered   bool // filters are set: groups show only matching members
-	Regrouping bool // groups are being worked out now
-	Stale      bool // groups were worked out by other rules, or never
-	Partial    bool // the search for matching groups stopped early; more may match
-	NoMemes    bool // memes and screenshots are left out (the default)
+	Filtered   bool   // filters are set: groups show only matching members
+	Regrouping bool   // groups are being worked out now
+	Stale      bool   // groups were worked out by other rules, or never
+	Partial    bool   // the search for matching groups stopped early; more may match
+	NoMemes    bool   // memes and screenshots are left out (the default)
+	Album      *album // the album the page is limited to (nil: none)
+	Tabs       []tab  // its photos, bursts and duplicates
 }
 
-// handleGroups serves a page of bursts or sets of identical images, with the
+// handleGroups serves a page of bursts or sets of duplicates, with the
 // Photos page's filters and sorts: a group is listed if any member matches,
 // with just the matching members, ranked by its best (worst, for "worst
-// first") member.
+// first") member. With dir (or iphone), as an album's page, only the
+// groups with a member in that album, with just those members.
 func (s *Server) handleGroups(gp groupPage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		f := parseFilter(r)
+		var errs []string
+		fail := func(err error) {
+			if err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+		al := s.albumOf(r.URL.Query(), fail)
+		if al != nil {
+			f.Dirs, f.DirsByPath = al.dirs, al.total < byPathMax
+		}
 		pg, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		pg = min(max(pg, 0), maxPage) // bounded, as on the Photos page: no overflow, no huge offsets
 		f.Offset, f.Limit = pg*gp.perPage, gp.perPage
 		st := s.cat.Store
 		gs, info, err := st.GroupPage(gp.kind, f, gp.minSize, gp.summary)
-		d := &groupsData{Page: pg, Filtered: f.Narrows(), Regrouping: st.GroupsRebuilding(), Partial: info.Partial, NoMemes: f.Source == "photos"}
+		fail(err)
+		plain := f
+		plain.Dirs = nil // the album alone is not a filter
+		d := &groupsData{Page: pg, Filtered: plain.Narrows(), Regrouping: st.GroupsRebuilding(), Partial: info.Partial, NoMemes: f.Source == "photos", Album: al}
 		if !d.Regrouping {
 			// never grouped, or the rules changed: say so, and group at once
 			// (new photos only wait for the next regroup)
@@ -129,8 +147,21 @@ func (s *Server) handleGroups(gp groupPage) http.HandlerFunc {
 		}
 		p := &page{Title: gp.title, Nav: gp.path[1:], Filter: f, Data: d}
 		s.filterForm(r, p, gp.path)
-		if err != nil {
-			p.Error = err.Error()
+		if al != nil {
+			// inside the album: its tabs, and a reset that stays in it
+			d.Tabs = al.tabs(r.URL.Query(), gp.path[1:])
+			p.Title = gp.title + " · " + al.Name + " · Albums"
+			reset := url.Values{}
+			for _, k := range []string{"dir", "iphone", "asort", "lf", "q"} {
+				if v := r.URL.Query().Get(k); v != "" {
+					reset.Set(k, v)
+				}
+			}
+			p.Params["reset"] = gp.path + "?" + reset.Encode()
+			p.Params["keepq"] = strings.TrimSpace(r.URL.Query().Get("q")) // the album's search, for the way back
+		}
+		if len(errs) > 0 {
+			p.Error = errs[0]
 		}
 		s.render(w, r, gp.path[1:], p)
 	}
