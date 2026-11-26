@@ -5,7 +5,7 @@
 //	validate lfwpairs -data D -lfw ROOT -pairs pairs.txt -out p.csv  verification scores from a catalogue
 //	validate autolabel -data D -lfw ROOT -k 1 -out a.csv             simulate naming people, then auto-match (on a snapshot of D)
 //	validate ladder   -out l.csv DIR...                              quality metrics under graded degradations
-//	validate quality  -out q.csv DIR...                              quality metrics per image (for MOS)
+//	validate quality  [-models M] -out q.csv DIR...                  quality metrics per image (for MOS); with -models, MUSIQ's score too
 //	validate text     -data D -models M -queries q.tsv -out t.csv    text search rankings
 //	validate personal -eva EVA -clip eva_clip.csv -out p.csv         training on one person's aesthetic judgements
 package main
@@ -608,20 +608,50 @@ func ladder(args []string) error {
 func qualityCmd(args []string) error {
 	fs := flag.NewFlagSet("quality", flag.ExitOnError)
 	out := fs.String("out", "quality.csv", "output")
+	models := fs.String("models", "", "models dir: also score with MUSIQ (musiq/koniq.onnx), as archivis does")
+	workers := fs.Int("workers", 4, "parallel images")
 	fs.Parse(args)
-	w, done := csvOut(*out, append([]string{"image"}, metricHeader...))
+	var mq *ml.MUSIQ
+	if *models != "" {
+		var err error
+		if mq, err = ml.NewMUSIQ(*models, initORT()); err != nil {
+			return err
+		}
+		defer mq.Close()
+	}
+	// musiq: the score archivis stores (ml.MUSIQ on quality.RatingImage);
+	// rating_musiq: the technical rating that score gives (quality.RateWith)
+	w, done := csvOut(*out, append(append([]string{"image"}, metricHeader...), "musiq", "rating_musiq"))
 	defer done()
 	var mu sync.Mutex
-	parallel(listImages(fs.Args()), 4, func(p string) {
+	failed := 0
+	parallel(listImages(fs.Args()), *workers, func(p string) {
 		d, err := imageio.Load(p, indexer.WorkSize)
 		if err != nil {
 			return
 		}
 		row := append([]string{filepath.Base(p)}, metricRow(quality.Analyze(d.Img), naiveLaplacian(d.Img), quality.Rate(d.Img), quality.GrayEdgeCast(d.Img), d.Blockiness)...)
+		s, r := "", ""
+		if mq != nil {
+			small := quality.RatingImage(d.Img)
+			v, err := mq.Score(small)
+			if err != nil {
+				mu.Lock()
+				failed++
+				mu.Unlock()
+				fmt.Fprintf(os.Stderr, "%s: musiq: %v\n", p, err)
+				return
+			}
+			s, r = ff(v), ff(quality.RateWith(quality.Analyze(small), v))
+		}
+		row = append(row, s, r)
 		mu.Lock()
 		w.Write(row)
 		mu.Unlock()
 	})
+	if failed > 0 {
+		return fmt.Errorf("MUSIQ failed on %d images", failed)
+	}
 	return nil
 }
 

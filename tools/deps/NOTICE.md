@@ -15,6 +15,10 @@ Each file stays under its own licence:
 - **CLIP ViT-B/32 ONNX export** (`clip-ViT-B-32-*.onnx`): OpenAI CLIP,
   MIT License; ONNX export by Jina AI clip-as-service (Apache-2.0).
   https://github.com/openai/CLIP, https://github.com/jina-ai/clip-as-service
+- **MUSIQ, KonIQ-10k checkpoint, ONNX export** (`musiq-koniq.onnx`): Google
+  Research, MUSIQ (Ke et al., ICCV 2021), Apache-2.0; converted by
+  Archivis's tools/musiq/export_onnx.py, weights unchanged.
+  https://github.com/google-research/google-research/tree/master/musiq
 - **Camera samples** (test files only):
   - raw.pixls.us files: CC0.
   - rawpy test files (letmaik/rawpy): NEFs are NASA photographs (public

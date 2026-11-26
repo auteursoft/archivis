@@ -12,3 +12,4 @@ c9b4b7086b529ad814f428c1bad028e20a25d7dc0699836775faace4ab5b78b2 onnxruntime-win
 80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f buffalo_l.zip https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
 06395063c0a5c28b1a8d4bd585261501a878c8f52d1216db6c4cbb651f7c13f1 clip-ViT-B-32-visual.onnx https://clip-as-service.s3.us-east-2.amazonaws.com/models-436c69702d61732d53657276696365/onnx/ViT-B-32/visual.onnx
 0af04c287a3be2570eaef7a1ef896d81c1989602df67a8905941afed589e545e clip-ViT-B-32-textual.onnx https://clip-as-service.s3.us-east-2.amazonaws.com/models-436c69702d61732d53657276696365/onnx/ViT-B-32/textual.onnx
+9873f28a7db80af9742bf35f5b48301d68e10770cb4ea188ffc36569bdf19c41 musiq-koniq.onnx https://github.com/auteursoft/archivis/releases/download/musiq-koniq-1/musiq-koniq.onnx
