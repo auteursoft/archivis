@@ -479,9 +479,14 @@ func Technical(rating float64, m Metrics, blockiness float64) float64 {
 	return technical(rating, m, blockiness, ratingPenalties)
 }
 
-// TechnicalWithMUSIQ is Technical for a rating from RateWith: MUSIQ
-// already sees much of what the penalties add, so they were tuned again
-// for it, the same way (tools/musiq/FIT.md, "Penalties").
+// TechnicalWithMUSIQ is Technical for a rating from RateWith, with the
+// penalties tuned again for it the same way, on tuning data only
+// (tools/musiq/FIT.md, "Penalties"): the strongest that cost at most 0.01
+// agreement with people. MUSIQ already marks much of what they add, so
+// they are milder, and there is no colour penalty: even 0.1 cost 0.014,
+// because people (and MUSIQ) seldom mark a warm or tinted photo down; casts
+// stay reported by the colour score. On BIQ2021 test photos this agrees with
+// people at Spearman 0.768, against 0.627 for Technical on today's rating.
 func TechnicalWithMUSIQ(rating float64, m Metrics, blockiness float64) float64 {
 	return technical(rating, m, blockiness, musiqPenalties)
 }
@@ -492,7 +497,7 @@ type penalties struct{ exposure, color, compression float64 }
 
 var (
 	ratingPenalties = penalties{0.1, 0.1, 0.2}
-	musiqPenalties  = penalties{0.1, 0.1, 0.2}
+	musiqPenalties  = penalties{exposure: 0.1, color: 0, compression: 0.1}
 )
 
 func technical(rating float64, m Metrics, blockiness float64, p penalties) float64 {

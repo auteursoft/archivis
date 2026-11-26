@@ -177,3 +177,30 @@ func TestRateWithFollowsMUSIQ(t *testing.T) {
 		t.Fatalf("the rating does not follow MUSIQ: %v at 10, %v at 90", RateWith(m, 10), RateWith(m, 90))
 	}
 }
+
+// Photos MUSIQ has scored get its own penalties: none on a clean photo, as
+// before; exposure and JPEG blockiness still lower the score (compression
+// half as much as before); a colour cast does not (it stays reported by the
+// colour score). Without MUSIQ, today's penalties are unchanged.
+func TestTechnicalWithMUSIQPenalties(t *testing.T) {
+	clean := Metrics{ExposureScore: 1, ColorScore: 1}
+	if got := TechnicalWithMUSIQ(80, clean, 1); got != 80 || Technical(80, clean, 1) != 80 {
+		t.Fatalf("a clean photo is penalised: %v, %v", got, Technical(80, clean, 1))
+	}
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+	dark := Metrics{ExposureScore: 0, ColorScore: 1}
+	if got := TechnicalWithMUSIQ(80, dark, 1); !near(got, 80*0.9) {
+		t.Errorf("poor exposure with MUSIQ: %v, want %v", got, 80*0.9)
+	}
+	cast := Metrics{ExposureScore: 1, ColorScore: 0}
+	if got := TechnicalWithMUSIQ(80, cast, 1); got != 80 {
+		t.Errorf("a colour cast lowered the MUSIQ technical score: %v", got)
+	}
+	if got := Technical(80, cast, 1); !near(got, 80*0.9) {
+		t.Errorf("a colour cast without MUSIQ: %v, want %v", got, 80*0.9)
+	}
+	const blocky = 2.0 // at or past full JPEG penalty
+	if got, old := TechnicalWithMUSIQ(80, clean, blocky), Technical(80, clean, blocky); !near(got, 80*0.9) || !near(old, 80*0.8) {
+		t.Errorf("heavy JPEG blockiness: with MUSIQ %v (want %v), without %v (want %v)", got, 80*0.9, old, 80*0.8)
+	}
+}

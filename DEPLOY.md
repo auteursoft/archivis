@@ -913,8 +913,8 @@ is kept.
 The technical score blends archivis's own measurements (focus, exposure,
 noise and the rest) with **MUSIQ**, Google Research's image-quality model,
 which `archivis setup` downloads (about 110 MB). Together they agree with
-people's ratings far better than the measurements alone (see
-VALIDATION.md). Without MUSIQ installed, the technical score is the
+people's ratings far better than the measurements alone: Spearman 0.77
+against 0.63 on 2,000 photos neither saw in training (see VALIDATION.md). Without MUSIQ installed, the technical score is the
 measurements' rating, as before.
 
 New photos are scored as they are indexed. Photos indexed before MUSIQ was
