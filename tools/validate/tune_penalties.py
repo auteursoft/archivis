@@ -6,11 +6,15 @@ rating misses) without degrading agreement with human ratings.
 Tuning data only: BIQ2021 *train* split + the tuning half of the ladder
 photos. Report results on held-out data separately.
 
-    tune_penalties.py biq_train.csv biq_train_mos.csv ladder_tune.csv [more_ladder.csv ...]
+    tune_penalties.py [--rating-col NAME] biq_train.csv biq_train_mos.csv ladder_tune.csv [more_ladder.csv ...]
+
+--rating-col picks the rating the penalties multiply: "rating" (default, the
+shipped rating) or "rating_musiq" (the rating of photos MUSIQ has scored;
+needs CSVs written with -models).
 """
+import argparse
 import csv
 import itertools
-import sys
 from collections import defaultdict
 from urllib.parse import unquote
 
@@ -19,8 +23,17 @@ from scipy.stats import spearmanr
 from sklearn.metrics import roc_auc_score
 
 
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument("--rating-col", default="rating", help="column holding the rating to penalise (default: rating)")
+ap.add_argument("biq_quality")
+ap.add_argument("biq_mos")
+ap.add_argument("ladder", nargs="+")
+args = ap.parse_args()
+COL = args.rating_col
+
+
 def penalised(r, a, b, g):
-    rating = float(r["rating"])
+    rating = float(r[COL])
     e = float(r["exposure_score"])
     c = float(r["color_score"])
     blk = float(r.get("blockiness") or 1)
@@ -28,13 +41,13 @@ def penalised(r, a, b, g):
     return rating * (1 - a * (1 - e)) * (1 - b * (1 - c)) * (1 - g * jp)
 
 
-q = {unquote(r["image"]): r for r in csv.DictReader(open(sys.argv[1]))}
-m = {r["Image Name"]: float(r["MOS"]) for r in csv.DictReader(open(sys.argv[2]))}
+q = {unquote(r["image"]): r for r in csv.DictReader(open(args.biq_quality))}
+m = {r["Image Name"]: float(r["MOS"]) for r in csv.DictReader(open(args.biq_mos))}
 keys = [k for k in m if k in q]
 y = np.array([m[k] for k in keys])
 
 lad = defaultdict(dict)
-for path in sys.argv[3:]:
+for path in args.ladder:
     for r in csv.DictReader(open(path)):
         lad[r["image"]][(r["degradation"], float(r["level"]))] = r
 imgs = [i for i in lad if ("none", 0.0) in lad[i]]
@@ -60,6 +73,7 @@ def ladder_auc(a, b, g):
 
 
 base = spearmanr([penalised(q[k], 0, 0, 0) for k in keys], y).statistic
+print(f"rating column: {COL}")
 print(f"BIQ2021 train SROCC without penalties: {base:.3f}")
 best = None
 grid = np.round(np.arange(0, 0.85, 0.1), 2)
