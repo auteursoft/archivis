@@ -92,7 +92,7 @@ func musiqSequence(img *imageio.RGB) ([]float32, error) {
 	}
 	x := make([]float32, len(img.Pix))
 	for i, v := range img.Pix {
-		x[i] = float32(v)/255*2 - 1
+		x[i] = float32(float32(v)/255*2) - 1 // float32(): see musiqWeights
 	}
 	seq := make([]float32, musiqTokens*musiqTokLen)
 	n := 0
@@ -124,7 +124,7 @@ func musiqResize(x []float32, h, w, rh, rw int) []float32 {
 		for _, t := range k {
 			src := x[t.i*w*3 : (t.i+1)*w*3]
 			for j, v := range src {
-				dst[j] += t.w * v
+				dst[j] += float32(t.w * v)
 			}
 		}
 	}
@@ -135,9 +135,9 @@ func musiqResize(x []float32, h, w, rh, rw int) []float32 {
 			var r, g, b float32
 			for _, t := range k {
 				p := row[t.i*3:]
-				r += t.w * p[0]
-				g += t.w * p[1]
-				b += t.w * p[2]
+				r += float32(t.w * p[0])
+				g += float32(t.w * p[1])
+				b += float32(t.w * p[2])
 			}
 			o := out[(y*rw+ox)*3:]
 			o[0], o[1], o[2] = r, g, b
@@ -154,13 +154,19 @@ type musiqTap struct {
 // musiqWeights are TF's ScaleAndTranslate spans for a Gaussian kernel
 // (radius 1.5, sigma 0.5), no antialiasing, no translation, normalised per
 // output pixel.
+//
+// Every product is rounded to float32 by an explicit conversion: Go may
+// otherwise fuse a multiply and an add into one instruction (it does on
+// arm64), skipping that rounding, and a tap exactly 1.5 px away (as when
+// 512 px become 224) then falls on the other side of the kernel's edge from
+// TF and the PyTorch port: other pixels on Apple-silicon Macs than on PCs.
 func musiqWeights(in, out int) [][]musiqTap {
 	scale := float32(out) / float32(in)
 	inv := 1 / scale
 	const radius = float32(1.5)
 	res := make([][]musiqTap, out)
 	for x := 0; x < out; x++ {
-		sample := (float32(x) + 0.5) * inv
+		sample := float32((float32(x) + 0.5) * inv)
 		if sample < 0 || sample > float32(in) {
 			continue
 		}
@@ -174,7 +180,7 @@ func musiqWeights(in, out int) [][]musiqTap {
 			d := float32(math.Abs(float64(float32(i) + 0.5 - sample)))
 			var wt float32
 			if d < radius {
-				wt = float32(math.Exp(float64(-d * d / (2 * 0.5 * 0.5))))
+				wt = float32(math.Exp(float64(float32(-d*d) / (2 * 0.5 * 0.5))))
 			}
 			taps = append(taps, musiqTap{i, wt})
 			sum += wt
