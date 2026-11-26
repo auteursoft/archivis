@@ -476,9 +476,28 @@ func scores(m *Metrics) {
 // a warm or bright photo flawed), so those properties are reported as
 // separate scores instead (tools/validate/tune_penalties.py).
 func Technical(rating float64, m Metrics, blockiness float64) float64 {
-	const exposurePenalty, colorPenalty, compressionPenalty = 0.1, 0.1, 0.2
+	return technical(rating, m, blockiness, ratingPenalties)
+}
+
+// TechnicalWithMUSIQ is Technical for a rating from RateWith: MUSIQ
+// already sees much of what the penalties add, so they were tuned again
+// for it, the same way (tools/musiq/FIT.md, "Penalties").
+func TechnicalWithMUSIQ(rating float64, m Metrics, blockiness float64) float64 {
+	return technical(rating, m, blockiness, musiqPenalties)
+}
+
+// penalties are the strengths of Technical's exposure, colour and
+// compression penalties.
+type penalties struct{ exposure, color, compression float64 }
+
+var (
+	ratingPenalties = penalties{0.1, 0.1, 0.2}
+	musiqPenalties  = penalties{0.1, 0.1, 0.2}
+)
+
+func technical(rating float64, m Metrics, blockiness float64, p penalties) float64 {
 	jp := math.Max(0, math.Min(1, (blockiness-1.15)/0.85))
-	return rating * (1 - exposurePenalty*(1-m.ExposureScore)) * (1 - colorPenalty*(1-m.ColorScore)) * (1 - compressionPenalty*jp)
+	return rating * (1 - p.exposure*(1-m.ExposureScore)) * (1 - p.color*(1-m.ColorScore)) * (1 - p.compression*jp)
 }
 
 // RatingSize is the long edge at which the human-calibrated rating model

@@ -147,6 +147,6 @@ func scoreFile(p store.MUSIQInput, m MUSIQScorer) (store.MUSIQUpdate, error) {
 	if err != nil {
 		return store.MUSIQUpdate{}, err
 	}
-	tech := round1(quality.Technical(rating, quality.Metrics{ExposureScore: p.ExposureScore, ColorScore: p.ColorScore}, p.Blockiness))
+	tech := round1(technical(rating, s.Valid, quality.Metrics{ExposureScore: p.ExposureScore, ColorScore: p.ColorScore}, p.Blockiness))
 	return store.MUSIQUpdate{ID: p.ID, Seq: p.Seq, MUSIQ: s.Float64, Technical: tech, Overall: Overall(tech, p.Aesthetic)}, nil
 }

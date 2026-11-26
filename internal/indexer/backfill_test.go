@@ -124,7 +124,7 @@ func TestBackfillMUSIQ(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantTech := round1(quality.Technical(rating, quality.Metrics{ExposureScore: 0.8, ColorScore: 0.9}, 1))
+		wantTech := round1(quality.TechnicalWithMUSIQ(rating, quality.Metrics{ExposureScore: 0.8, ColorScore: 0.9}, 1))
 		if !g.MUSIQ.Valid || g.MUSIQ.Float64 != 77 || s.Float64 != 77 || g.Technical != wantTech || g.Overall != Overall(wantTech, p.Aesthetic) {
 			t.Errorf("photo %d: musiq %v technical %v overall %v, want 77, %v, %v", p.ID, g.MUSIQ, g.Technical, g.Overall, wantTech, Overall(wantTech, p.Aesthetic))
 		}

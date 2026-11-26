@@ -263,11 +263,20 @@ func AnalyzeImage(d *imageio.Decoded, eng *Engines) (*Analysis, error) {
 		return nil, err
 	}
 	p.MUSIQ = musiq
-	p.Technical = round1(quality.Technical(rating, q, d.Blockiness))
+	p.Technical = round1(technical(rating, musiq.Valid, q, d.Blockiness))
 	p.Overall = Overall(p.Technical, p.Aesthetic)
 	a.Metrics = q
 	p.Version = store.SchemaVersion
 	return a, nil
+}
+
+// technical is the technical score from a rating: with the penalties tuned
+// for MUSIQ's rating if MUSIQ scored the photo.
+func technical(rating float64, musiq bool, m quality.Metrics, blockiness float64) float64 {
+	if musiq {
+		return quality.TechnicalWithMUSIQ(rating, m, blockiness)
+	}
+	return quality.Technical(rating, m, blockiness)
 }
 
 // Rating is the human-calibrated technical rating (0..100) of an image of
