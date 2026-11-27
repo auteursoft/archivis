@@ -80,9 +80,16 @@ def main():
     names = a.models.split(",")
     paths = images(a.paths)
     done = set()
-    if os.path.exists(a.out):  # resume
+    if os.path.exists(a.out) and os.path.getsize(a.out) > 0:  # resume
         with open(a.out) as f:
-            done = {r["image"] for r in csv.DictReader(f)}
+            r = csv.reader(f)
+            header = next(r, [])
+            # rows are appended in this run's model order: the file must have
+            # exactly these columns, or new scores would land under others
+            if header != ["image"] + names:
+                sys.exit(f"{a.out} has columns {header}, but -models {a.models} writes {['image'] + names}: "
+                         "resume with the same -models, in the same order, or write to a new -out")
+            done = {row[0] for row in r if row}
     todo = [p for p in paths if os.path.basename(p) not in done]
     print(f"{len(paths)} images, {len(todo)} to score with {names}", file=sys.stderr)
     if a.limit:

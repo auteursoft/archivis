@@ -75,7 +75,7 @@ jobs:
           ARCHIVIS_REQUIRE_MODELS: "1"
           ARCHIVIS_TEST_MODELS: ${{ env.DATA }}/models
           ONNXRUNTIME_LIB: ${{ env.DATA }}/lib/${{ matrix.lib }}
-        run: go test -count=1 -v -run 'Faces|CLIP|Tokenizer' ./internal/ml/
+        run: go test -count=1 -v -run 'Faces|CLIP|Tokenizer|MUSIQ' ./internal/ml/
       # CoreML, with every unit and with the CPU and GPU only, gives what the
       # CPU gives (runners have no Neural Engine or GPU to use, but ORT must
       # take each setting: a refused one falls back to the CPU with a warning,

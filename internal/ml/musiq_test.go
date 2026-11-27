@@ -99,7 +99,7 @@ func TestMUSIQSequenceRefusesLargeImages(t *testing.T) {
 // With the model, the score matches the PyTorch port's.
 func TestMUSIQScoreMatchesReference(t *testing.T) {
 	dir := modelsDir(t)
-	m, err := NewMUSIQ(dir, Options{})
+	m, err := NewMUSIQ(dir, testOptions())
 	if err != nil {
 		if os.Getenv("ARCHIVIS_REQUIRE_MODELS") == "" {
 			t.Skip(err)
