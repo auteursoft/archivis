@@ -33,7 +33,7 @@ const usage = `Archivis — face search and quality ranking for large photo arch
 Usage: archivis <command> [flags]
 
 Commands:
-  setup        download ONNX Runtime and the models (~800 MB, once)
+  setup        download ONNX Runtime and the models (~900 MB, once)
   index        catalogue photos under one or more folders (incremental, resumable)
   serve        run the web interface (search, people, quality browsing)
   search       search from the terminal: text, --face IMAGE or --like IMAGE
@@ -45,6 +45,7 @@ Commands:
   prune        drop catalogue entries for files that no longer exist
   stats        catalogue summary
   groups       bursts, stacks, duplicates and folders: status | rebuild
+  quality      MUSIQ scores of photos indexed before it was installed: status | backfill
   roots        the indexed folders Albums starts from: list | add | remove | name
   errors       show files that failed to index
   inspect      show what Archivis reads from photo files (camera, lens, preview, rotation)
@@ -176,7 +177,7 @@ func parseInterleaved(fs *flag.FlagSet, args []string) []string {
 	}
 }
 
-type need struct{ faces, clip bool }
+type need struct{ faces, clip, musiq bool }
 
 // modelOptions are the face and CLIP models' options: opts, with the
 // provider --face-provider or --clip-provider names, if any.
@@ -232,6 +233,17 @@ func (g *globals) engines(n need, workers int) (*indexer.Engines, error) {
 			}
 		}
 	}
+	if n.musiq {
+		// optional: without it the technical score is the measurements'
+		// rating alone, as before MUSIQ was added
+		if !fileExists(filepath.Join(g.modelsDir(), "musiq", "koniq.onnx")) {
+			fmt.Fprintln(os.Stderr, "note: MUSIQ is not installed, so technical scores use archivis's measurements alone; run `archivis setup` to add it")
+		} else if m, err := ml.NewMUSIQ(g.modelsDir(), clipOpts); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: MUSIQ could not be loaded, so technical scores use archivis's measurements alone: %v\n", err)
+		} else {
+			eng.MUSIQ = m // only a loaded model: a nil *ml.MUSIQ would be a non-nil scorer
+		}
+	}
 	return eng, nil
 }
 
@@ -252,7 +264,7 @@ func main() {
 		"setup": runSetup, "index": runIndex, "serve": runServe, "search": runSearch,
 		"list": runList, "export": runExport, "people": runPeople, "retag": runRetag,
 		"prune": runPrune, "stats": runStats, "errors": runErrors, "aesthetic": runAesthetic, "inspect": runInspect,
-		"users": runUsers, "version": runVersion, "settings": runSettings, "groups": runGroups,
+		"users": runUsers, "version": runVersion, "settings": runSettings, "groups": runGroups, "quality": runQuality,
 		"roots": runRoots,
 	}
 	fn, ok := cmds[cmd]
@@ -354,6 +366,7 @@ func runIndex(g *globals, args []string) error {
 	noFaces := fs.Bool("no-faces", false, "skip face detection")
 	noMatch := fs.Bool("no-match", false, "don't auto-label people after indexing")
 	minBytes := fs.Int64("min-bytes", 4096, "skip files smaller than this many bytes (icons, tiny thumbnails)")
+	backfill := fs.Duration("backfill", 0, "afterwards, spend up to this long (e.g. 2h) scoring photos indexed before MUSIQ was installed (archivis quality backfill does them all at once)")
 	prune := fs.Bool("prune", false, "afterwards, remove photos deleted from these folders from the catalogue; only when every folder is there and not empty (an unmounted drive's is not) before and after the run, and the run read and recorded everything; else an error says why and nothing is removed")
 	g.register(fs)
 	roots := parseInterleaved(fs, args)
@@ -393,7 +406,7 @@ func runIndex(g *globals, args []string) error {
 	}
 	release := sync.OnceFunc(unlock)
 	defer release()
-	eng, err := g.engines(need{faces: !*noFaces, clip: true}, *workers)
+	eng, err := g.engines(need{faces: !*noFaces, clip: true, musiq: true}, *workers)
 	if err != nil {
 		return err
 	}
@@ -439,6 +452,9 @@ func runIndex(g *globals, args []string) error {
 	}
 	if ctx.Err() == nil {
 		classifySources(ctx, cat.Store, eng.Sources, false)
+	}
+	if *backfill > 0 && ctx.Err() == nil {
+		backfillMUSIQ(ctx, cat.Store, eng.MUSIQ, time.Now().Add(*backfill), max(1, *workers/2), os.Stderr)
 	}
 	if ctx.Err() == nil {
 		release() // indexing is done: another index run may start while this regroups

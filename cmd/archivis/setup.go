@@ -82,6 +82,17 @@ var modelFiles = []modelFile{
 		},
 		sha256: "0af04c287a3be2570eaef7a1ef896d81c1989602df67a8905941afed589e545e",
 	},
+	{
+		// Google Research's MUSIQ, KonIQ-10k checkpoint (Apache-2.0),
+		// converted by tools/musiq/export_onnx.py: the technical score's
+		// learned half (see ml.MUSIQ)
+		dest: "musiq/koniq.onnx",
+		urls: []string{
+			"https://github.com/auteursoft/archivis/releases/download/musiq-koniq-1/musiq-koniq.onnx",
+			mirrorBase + "musiq-koniq.onnx",
+		},
+		sha256: "9873f28a7db80af9742bf35f5b48301d68e10770cb4ea188ffc36569bdf19c41",
+	},
 }
 
 // ortArchive names the release archive for a platform.

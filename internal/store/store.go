@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS photos (
 	color_score      REAL,
 	noise_score      REAL,
 	technical        REAL,
+	-- MUSIQ's predicted opinion score (0-100, at 512 px; ml.MUSIQ), part of
+	-- technical; NULL until scored (archivis quality backfill)
+	musiq            REAL,
 	aesthetic        REAL,
 	overall          REAL,
 	face_count       INTEGER NOT NULL DEFAULT 0,
@@ -476,7 +479,7 @@ type columnDef struct{ name, decl string }
 
 // nullableColumns are scanned into sql.Null* types, where NULL means unknown.
 var nullableColumns = map[string]bool{
-	"gps_lat": true, "gps_lon": true, "face_sharpness": true, "aesthetic": true,
+	"gps_lat": true, "gps_lon": true, "face_sharpness": true, "aesthetic": true, "musiq": true,
 	"person_id": true, "person_source": true, "person_sim": true,
 }
 
@@ -561,6 +564,7 @@ type Photo struct {
 	ColorScore      float64
 	NoiseScore      float64
 	Technical       float64
+	MUSIQ           sql.NullFloat64 // MUSIQ's opinion score (0-100), part of Technical; invalid until scored
 	Aesthetic       sql.NullFloat64
 	Overall         float64
 	FaceCount       int
@@ -605,7 +609,7 @@ const photoCols = `id, path, size, mtime, fingerprint, format, width, height, ta
 	gps_lat, gps_lon, artist, phash, sharpness, sharpness_global, face_sharpness, brightness,
 	highlights, shadows, dynamic_range, contrast, cast_a, cast_b, cast_strength, colorfulness,
 	saturation, monochrome, noise, focus_score, exposure_score, color_score, noise_score,
-	technical, aesthetic, overall, face_count, blockiness, indexed_at, version, source`
+	technical, aesthetic, overall, face_count, blockiness, indexed_at, version, source, musiq`
 
 // readCols are photoCols plus the group columns. Reads use them; writes
 // (insertPhotoSQL, updatePhotoSQL) use photoCols, so saving a re-indexed
@@ -618,7 +622,7 @@ func (p *Photo) scanArgs() []any {
 		&p.GPSLat, &p.GPSLon, &p.Artist, (*int64ptr)(&p.PHash), &p.Sharpness, &p.SharpnessGlobal, &p.FaceSharpness, &p.Brightness,
 		&p.Highlights, &p.Shadows, &p.DynamicRange, &p.Contrast, &p.CastA, &p.CastB, &p.CastStrength, &p.Colorfulness,
 		&p.Saturation, &p.Monochrome, &p.Noise, &p.FocusScore, &p.ExposureScore, &p.ColorScore, &p.NoiseScore,
-		&p.Technical, &p.Aesthetic, &p.Overall, &p.FaceCount, &p.Blockiness, &p.IndexedAt, &p.Version, &p.Source,
+		&p.Technical, &p.Aesthetic, &p.Overall, &p.FaceCount, &p.Blockiness, &p.IndexedAt, &p.Version, &p.Source, &p.MUSIQ,
 		&p.BurstID, &p.StackTop, &p.StackSize, &p.Stacked, &p.DupID}
 }
 
@@ -643,7 +647,7 @@ func (p *Photo) insertArgs() []any {
 		p.GPSLat, p.GPSLon, p.Artist, int64(p.PHash), p.Sharpness, p.SharpnessGlobal, p.FaceSharpness, p.Brightness,
 		p.Highlights, p.Shadows, p.DynamicRange, p.Contrast, p.CastA, p.CastB, p.CastStrength, p.Colorfulness,
 		p.Saturation, p.Monochrome, p.Noise, p.FocusScore, p.ExposureScore, p.ColorScore, p.NoiseScore,
-		p.Technical, p.Aesthetic, p.Overall, p.FaceCount, p.Blockiness, p.IndexedAt, p.Version, p.Source}
+		p.Technical, p.Aesthetic, p.Overall, p.FaceCount, p.Blockiness, p.IndexedAt, p.Version, p.Source, p.MUSIQ}
 }
 
 var insertPhotoSQL = func() string {

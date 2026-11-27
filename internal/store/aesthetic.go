@@ -264,10 +264,18 @@ type BlendUpdate struct {
 	Overall   float64
 }
 
+// OverallFunc works out a photo's overall score from its technical and
+// aesthetic scores (indexer.Overall).
+type OverallFunc func(technical float64, aesthetic sql.NullFloat64) float64
+
 // SetBlendedScores writes blended scores, in photo id order, skipping photos
 // that changed since they were computed: the indexer has already scored
-// those afresh.
-func (s *Store) SetBlendedScores(updates []BlendUpdate) error {
+// those afresh. With overall set, each photo's overall score is worked out
+// from its technical score as it is when written (in the same transaction),
+// not as it was when the update was computed: a MUSIQ backfill may have
+// changed it meanwhile (it does not change seq). Without, u.Overall is
+// written.
+func (s *Store) SetBlendedScores(updates []BlendUpdate, overall OverallFunc) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
@@ -278,8 +286,24 @@ func (s *Store) SetBlendedScores(updates []BlendUpdate) error {
 		return err
 	}
 	defer st.Close()
+	tech, err := tx.Prepare(`SELECT COALESCE(technical, 0) FROM photos WHERE id = ? AND seq = ?`)
+	if err != nil {
+		return err
+	}
+	defer tech.Close()
 	for _, u := range updates {
-		if _, err := st.Exec(u.Aesthetic, u.Overall, u.ID, u.Seq); err != nil {
+		o := u.Overall
+		if overall != nil {
+			var t float64
+			switch err := tech.QueryRow(u.ID, u.Seq).Scan(&t); {
+			case errors.Is(err, sql.ErrNoRows):
+				continue // changed since: skipped, as the update would be
+			case err != nil:
+				return err
+			}
+			o = overall(t, u.Aesthetic)
+		}
+		if _, err := st.Exec(u.Aesthetic, o, u.ID, u.Seq); err != nil {
 			return err
 		}
 	}

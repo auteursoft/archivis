@@ -1,8 +1,10 @@
 package quality
 
 import (
+	"encoding/json"
 	"math"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/auteursoft/archivis/internal/imageio"
@@ -134,5 +136,71 @@ func BenchmarkAnalyze(b *testing.B) {
 	d, _ := imageio.Load("testdata/t1.jpg", 0)
 	for i := 0; i < b.N; i++ {
 		Analyze(d.Img)
+	}
+}
+
+// The MUSIQ rating model must be the one fit on BIQ2021, not the
+// placeholder the code was written against.
+func TestMUSIQRatingModelIsFitted(t *testing.T) {
+	var r struct {
+		TrainedOn string `json:"trained_on"`
+		Features  []string
+	}
+	if err := json.Unmarshal(ratingMUSIQJSON, &r); err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(r.TrainedOn, "PLACEHOLDER") {
+		t.Fatalf("rating_musiq_model.json is still the placeholder: fit it with tools/validate/fit_quality.py --export-musiq")
+	}
+	if len(r.Features) != len(rating.Features)+1 || r.Features[len(r.Features)-1] != "musiq" {
+		t.Fatalf("features %v: want the rating's, then musiq", r.Features)
+	}
+}
+
+// A better MUSIQ score gives a better rating, all else equal, across
+// typical photos' measurements, and the rating stays within 0..100.
+func TestRateWithFollowsMUSIQ(t *testing.T) {
+	img := load(t)
+	m := Analyze(RatingImage(img))
+	prev := -1.0
+	for s := 10.0; s <= 90; s += 10 {
+		r := RateWith(m, s)
+		if r < 0 || r > 100 {
+			t.Fatalf("musiq %v: rating %v outside 0..100", s, r)
+		}
+		if r < prev {
+			t.Fatalf("musiq %v: rating %v fell from %v", s, r, prev)
+		}
+		prev = r
+	}
+	if RateWith(m, 90) <= RateWith(m, 10) {
+		t.Fatalf("the rating does not follow MUSIQ: %v at 10, %v at 90", RateWith(m, 10), RateWith(m, 90))
+	}
+}
+
+// Photos MUSIQ has scored get its own penalties: none on a clean photo, as
+// before; exposure and JPEG blockiness still lower the score (compression
+// half as much as before); a colour cast does not (it stays reported by the
+// colour score). Without MUSIQ, today's penalties are unchanged.
+func TestTechnicalWithMUSIQPenalties(t *testing.T) {
+	clean := Metrics{ExposureScore: 1, ColorScore: 1}
+	if got := TechnicalWithMUSIQ(80, clean, 1); got != 80 || Technical(80, clean, 1) != 80 {
+		t.Fatalf("a clean photo is penalised: %v, %v", got, Technical(80, clean, 1))
+	}
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+	dark := Metrics{ExposureScore: 0, ColorScore: 1}
+	if got := TechnicalWithMUSIQ(80, dark, 1); !near(got, 80*0.9) {
+		t.Errorf("poor exposure with MUSIQ: %v, want %v", got, 80*0.9)
+	}
+	cast := Metrics{ExposureScore: 1, ColorScore: 0}
+	if got := TechnicalWithMUSIQ(80, cast, 1); got != 80 {
+		t.Errorf("a colour cast lowered the MUSIQ technical score: %v", got)
+	}
+	if got := Technical(80, cast, 1); !near(got, 80*0.9) {
+		t.Errorf("a colour cast without MUSIQ: %v, want %v", got, 80*0.9)
+	}
+	const blocky = 2.0 // at or past full JPEG penalty
+	if got, old := TechnicalWithMUSIQ(80, clean, blocky), Technical(80, clean, blocky); !near(got, 80*0.9) || !near(old, 80*0.8) {
+		t.Errorf("heavy JPEG blockiness: with MUSIQ %v (want %v), without %v (want %v)", got, 80*0.9, old, 80*0.8)
 	}
 }

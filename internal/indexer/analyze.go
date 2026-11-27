@@ -31,6 +31,15 @@ type Engines struct {
 	Aesthetics []AestheticModel
 	Tagger     *Tagger
 	Sources    *Sources // tells memes and screenshots (needs the CLIP text model)
+	// MUSIQ scores technical quality as people see it, blended into the
+	// technical score (quality.RateWith); without it, the measurements
+	// alone (quality.Rate)
+	MUSIQ MUSIQScorer
+}
+
+// MUSIQScorer scores an image no larger than quality.RatingSize (ml.MUSIQ).
+type MUSIQScorer interface {
+	Score(img *imageio.RGB) (float64, error)
 }
 
 // Layout of the data directory.
@@ -123,6 +132,10 @@ type Analysis struct {
 	CLIP    []float32
 	Metrics quality.Metrics
 	Result  *store.Result
+	// MUSIQErr is why MUSIQ could not score the photo (nil: it did, or it
+	// is not installed): the photo is catalogued all the same, rated by its
+	// measurements, and quality backfill tries MUSIQ again
+	MUSIQErr error
 }
 
 // AnalyzeFile fully analyses a file and builds the catalogue record. Thumbnails
@@ -247,12 +260,42 @@ func AnalyzeImage(d *imageio.Decoded, eng *Engines) (*Analysis, error) {
 	}
 	p.FocusScore, p.ExposureScore, p.ColorScore, p.NoiseScore = q.FocusScore, q.ExposureScore, q.ColorScore, q.NoiseScore
 	// Technical is the human-calibrated rating (see quality.Rate), which
-	// tracks human judgements far better than a hand-weighted mix.
-	p.Technical = round1(quality.Technical(quality.Rate(img), q, d.Blockiness))
+	// tracks human judgements far better than a hand-weighted mix; with
+	// MUSIQ, blended with its score (quality.RateWith), better still.
+	rating, musiq, err := Rating(img, eng.MUSIQ)
+	a.MUSIQErr = err // the rating is then the measurements' alone
+	p.MUSIQ = musiq
+	p.Technical = round1(technical(rating, musiq.Valid, q, d.Blockiness))
 	p.Overall = Overall(p.Technical, p.Aesthetic)
 	a.Metrics = q
 	p.Version = store.SchemaVersion
 	return a, nil
+}
+
+// technical is the technical score from a rating: with the penalties tuned
+// for MUSIQ's rating if MUSIQ scored the photo.
+func technical(rating float64, musiq bool, m quality.Metrics, blockiness float64) float64 {
+	if musiq {
+		return quality.TechnicalWithMUSIQ(rating, m, blockiness)
+	}
+	return quality.Technical(rating, m, blockiness)
+}
+
+// Rating is the human-calibrated technical rating (0..100) of an image of
+// any size, measured at quality.RatingSize, and MUSIQ's score of it when m
+// is set (else invalid). If MUSIQ fails, the rating is the measurements'
+// alone, the score invalid, and the error says why.
+func Rating(img *imageio.RGB, m MUSIQScorer) (float64, sql.NullFloat64, error) {
+	small := quality.RatingImage(img)
+	metrics := quality.Analyze(small)
+	if m == nil {
+		return quality.RateMetrics(metrics), sql.NullFloat64{}, nil
+	}
+	s, err := m.Score(small)
+	if err != nil {
+		return quality.RateMetrics(metrics), sql.NullFloat64{}, fmt.Errorf("MUSIQ: %w", err)
+	}
+	return quality.RateWith(metrics, s), sql.NullFloat64{Float64: s, Valid: true}, nil
 }
 
 // FaceFocusScore maps Laplacian variance of an aligned 112px face crop to 0..1.

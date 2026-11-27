@@ -1,0 +1,30 @@
+dataset,method,n,spearman,ci_lo,ci_hi,pearson,delta,delta_lo,delta_hi,note
+KonIQ-10k test,MUSIQ koniq checkpoint,2015,0.9447,0.9376,0.9504,0.9553,,,,correctness gate; paper 0.916 / PLCC 0.928
+BIQ2021 test,"archivis rating as shipped (Go, 'rating' column)",2000,0.6317,0.602,0.6588,0.6871,,,,VALIDATION.md: 0.632
+BIQ2021 test,archivis rating refit here (quadratic ridge on train),2000,0.6317,0.6036,0.6597,0.6863,,,,"same recipe, reproduces the above"
+BIQ2021 test,archivis technical score as shipped,2000,0.6274,0.5978,0.6555,0.6778,,,,VALIDATION.md: 0.628
+BIQ2021 test,MUSIQ koniq checkpoint (no refit),2000,0.7546,0.7296,0.7772,0.7833,0.1229,0.0952,0.1492,
+BIQ2021 test,MUSIQ spaq checkpoint (no refit),2000,0.6546,0.6248,0.6832,0.7075,0.0228,-0.0033,0.0505,
+BIQ2021 test,MUSIQ paq2piq checkpoint (no refit),2000,0.6897,0.6628,0.7157,0.7231,0.058,0.0293,0.0859,
+BIQ2021 test,"blend: archivis measurements + MUSIQ koniq (quadratic, refit)",2000,0.7774,0.7559,0.7986,0.8074,0.1457,0.1264,0.1658,
+BIQ2021 test,"blend: archivis measurements + MUSIQ spaq (quadratic, refit)",2000,0.7139,0.6887,0.737,0.7709,0.0821,0.0632,0.1008,
+BIQ2021 test,"blend: archivis measurements + MUSIQ paq2piq (quadratic, refit)",2000,0.7366,0.7129,0.7591,0.7801,0.1048,0.0867,0.1231,
+BIQ2021 test,"blend: archivis measurements + MUSIQ koniq (linear, refit)",2000,0.7655,0.7435,0.7867,0.791,0.1337,0.1103,0.1565,
+BIQ2021 test,"blend: archivis measurements + MUSIQ spaq (linear, refit)",2000,0.6956,0.6673,0.7198,0.7438,0.0638,0.0422,0.0853,
+BIQ2021 test,"blend: archivis measurements + MUSIQ paq2piq (linear, refit)",2000,0.7228,0.6981,0.7455,0.7587,0.0911,0.0707,0.1117,
+BIQ2021 test,"blend: MUSIQ koniq+spaq+paq2piq (linear, refit)",2000,0.7576,0.7336,0.7818,0.7882,0.1258,0.0984,0.151,
+BIQ2021 test,"blend: archivis measurements + all three MUSIQ (quadratic, refit)",2000,0.7803,0.7583,0.8008,0.8137,0.1486,0.1286,0.1699,
+EVA (10-fold CV),"archivis aesthetic (CLIP ridge head, 10-fold CV)",4070,0.7823,0.768,0.7948,0.7933,,,,VALIDATION.md: 0.783
+EVA (10-fold CV),MUSIQ ava checkpoint (no refit),4070,0.5254,0.5013,0.5485,0.5366,-0.2569,-0.2788,-0.2336,most photos likely in its AVA training set
+EVA (10-fold CV),MUSIQ koniq checkpoint (no refit),4070,0.3115,0.2815,0.3389,0.3818,-0.4708,-0.5006,-0.4413,
+EVA (10-fold CV),"blend: CLIP head + MUSIQ koniq (one ridge, 10-fold CV)",4070,0.7955,0.7815,0.8083,0.8091,0.0132,0.0088,0.0179,no AVA-trained checkpoint
+EVA (10-fold CV),"blend: CLIP head + MUSIQ ava (one ridge, 10-fold CV)",4070,0.8046,0.7915,0.8163,0.8139,0.0223,0.017,0.0274,
+EVA (10-fold CV),"blend: CLIP head + all MUSIQ scores (one ridge, 10-fold CV)",4070,0.8096,0.7971,0.8209,0.8208,0.0273,0.0215,0.0332,
+EVA (10-fold CV),"blend: MUSIQ scores only (linear, 10-fold CV)",4070,0.5543,0.5316,0.5766,0.5782,-0.228,-0.2503,-0.2068,
+"EVA, photos in AVA's standard test list",archivis aesthetic (same CV predictions),393,0.7703,0.719,0.8118,0.7728,,,,
+"EVA, photos in AVA's standard test list",MUSIQ ava checkpoint (no refit),393,0.5724,0.5064,0.6319,0.5521,-0.1979,-0.2582,-0.1374,"test list, but see the AVA-panel rows"
+"EVA, photos in AVA's standard test list",blend: CLIP head + MUSIQ ava (same CV predictions),393,0.7997,0.7584,0.8348,0.7943,0.0294,0.0113,0.049,
+EVA photos vs AVA's own panel,archivis aesthetic (fit on EVA votes),4070,0.4546,0.4305,0.4782,0.4601,,,,VALIDATION.md: 0.455
+EVA photos vs AVA's own panel,MUSIQ ava checkpoint,4070,0.8648,0.8562,0.8722,0.8555,,,,trained on AVA labels: leakage
+"EVA photos vs AVA's own panel, AVA test list only",MUSIQ ava checkpoint,393,0.8677,0.837,0.89,0.8785,,,,paper: 0.726 on all of AVA test
+"EVA photos vs AVA's own panel, AVA test list only",archivis aesthetic,393,0.5082,0.432,0.5804,0.501,,,,

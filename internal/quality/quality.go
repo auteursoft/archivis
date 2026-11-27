@@ -476,9 +476,33 @@ func scores(m *Metrics) {
 // a warm or bright photo flawed), so those properties are reported as
 // separate scores instead (tools/validate/tune_penalties.py).
 func Technical(rating float64, m Metrics, blockiness float64) float64 {
-	const exposurePenalty, colorPenalty, compressionPenalty = 0.1, 0.1, 0.2
+	return technical(rating, m, blockiness, ratingPenalties)
+}
+
+// TechnicalWithMUSIQ is Technical for a rating from RateWith, with the
+// penalties tuned again for it the same way, on tuning data only
+// (tools/musiq/FIT.md, "Penalties"): the strongest that cost at most 0.01
+// agreement with people. MUSIQ already marks much of what they add, so
+// they are milder, and there is no colour penalty: even 0.1 cost 0.014,
+// because people (and MUSIQ) seldom mark a warm or tinted photo down; casts
+// stay reported by the colour score. On BIQ2021 test photos this agrees with
+// people at Spearman 0.768, against 0.627 for Technical on today's rating.
+func TechnicalWithMUSIQ(rating float64, m Metrics, blockiness float64) float64 {
+	return technical(rating, m, blockiness, musiqPenalties)
+}
+
+// penalties are the strengths of Technical's exposure, colour and
+// compression penalties.
+type penalties struct{ exposure, color, compression float64 }
+
+var (
+	ratingPenalties = penalties{0.1, 0.1, 0.2}
+	musiqPenalties  = penalties{exposure: 0.1, color: 0, compression: 0.1}
+)
+
+func technical(rating float64, m Metrics, blockiness float64, p penalties) float64 {
 	jp := math.Max(0, math.Min(1, (blockiness-1.15)/0.85))
-	return rating * (1 - exposurePenalty*(1-m.ExposureScore)) * (1 - colorPenalty*(1-m.ColorScore)) * (1 - compressionPenalty*jp)
+	return rating * (1 - p.exposure*(1-m.ExposureScore)) * (1 - p.color*(1-m.ColorScore)) * (1 - p.compression*jp)
 }
 
 // RatingSize is the long edge at which the human-calibrated rating model
@@ -510,16 +534,38 @@ type ratingParams struct {
 	Intercept float64     `json:"intercept"`
 }
 
-var rating = func() ratingParams {
+// The MUSIQ rating model adds ml.MUSIQ's score (0..100, at RatingSize) to
+// the same measurements, fit the same way on the same photos: on the
+// BIQ2021 test split the two together agree with people far better than
+// the measurements alone (see VALIDATION.md). Regenerate with
+// tools/validate/fit_quality.py --export-musiq.
+//
+//go:embed rating_musiq_model.json
+var ratingMUSIQJSON []byte
+
+var rating, ratingMUSIQ = loadRating("rating_model.json", ratingModelJSON), loadRating("rating_musiq_model.json", ratingMUSIQJSON)
+
+func loadRating(name string, b []byte) ratingParams {
 	var r ratingParams
-	if err := json.Unmarshal(ratingModelJSON, &r); err != nil {
-		panic("quality: bad rating_model.json: " + err.Error())
+	if err := json.Unmarshal(b, &r); err != nil {
+		panic("quality: bad " + name + ": " + err.Error())
+	}
+	n := len(r.Features)
+	if len(r.Mean1) != n || len(r.Scale1) != n || len(r.Mean2) != len(r.Powers) || len(r.Scale2) != len(r.Powers) || len(r.Coef) != len(r.Powers) {
+		panic("quality: " + name + ": inconsistent sizes")
+	}
+	for _, pw := range r.Powers {
+		if len(pw) != n {
+			panic("quality: " + name + ": a term's powers don't match the features")
+		}
 	}
 	return r
-}()
+}
 
-func ratingFeature(m Metrics, name string) float64 {
+func ratingFeature(m Metrics, musiq float64, name string) float64 {
 	switch name {
+	case "musiq":
+		return musiq
 	case "sharpness":
 		return m.Sharpness
 	case "sharpness_global":
@@ -551,20 +597,31 @@ func (m Metrics) LabCast() float64 { return m.labCast }
 // Rate predicts human-perceived technical quality on a 0..100 scale. src
 // may be any size; it is measured at RatingSize.
 func Rate(src *imageio.RGB) float64 {
-	img := src
-	if max(img.W, img.H) > RatingSize {
-		w, h := scaleTo(img.W, img.H, RatingSize)
-		img = imageio.Resize(src, w, h, imageio.Bilinear)
+	return RateMetrics(Analyze(RatingImage(src)))
+}
+
+// RatingImage is src at RatingSize (src itself if no larger): what the
+// rating models measure, and what MUSIQ scores.
+func RatingImage(src *imageio.RGB) *imageio.RGB {
+	if max(src.W, src.H) <= RatingSize {
+		return src
 	}
-	return RateMetrics(Analyze(img))
+	w, h := scaleTo(src.W, src.H, RatingSize)
+	return imageio.Resize(src, w, h, imageio.Bilinear)
 }
 
 // RateMetrics applies the rating model to metrics measured at RatingSize.
-func RateMetrics(m Metrics) float64 {
-	r := &rating
+func RateMetrics(m Metrics) float64 { return rate(&rating, m, 0) }
+
+// RateWith is the technical rating (0..100) of a photo MUSIQ has scored:
+// metrics measured at RatingSize, and MUSIQ's score (0..100) of the same
+// RatingImage.
+func RateWith(m Metrics, musiq float64) float64 { return rate(&ratingMUSIQ, m, musiq) }
+
+func rate(r *ratingParams, m Metrics, musiq float64) float64 {
 	x := make([]float64, len(r.Features))
 	for i, f := range r.Features {
-		v := ratingFeature(m, f)
+		v := ratingFeature(m, musiq, f)
 		for _, l := range r.LogFeat {
 			if l == f {
 				v = math.Log1p(v)

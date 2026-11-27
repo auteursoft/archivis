@@ -17,7 +17,7 @@ everything runs locally, nothing leaves your machine.
   (with face focus for portraits), exposure/clipping, colour cast / white
   balance, noise and JPEG compression — each checked against photos with known
   applied defects — plus a technical score calibrated on 10,000 photos rated by
-  people, and an aesthetic score fit to ~30 people's ratings of appeal per
+  people, with Google Research's MUSIQ image-quality model blended in, and an aesthetic score fit to ~30 people's ratings of appeal per
   photo, which learns your own taste from ratings you give on photo pages.
   Filter ("sharp, well exposed, neutral colour, no heavy
   compression"), see warning badges on thumbnails, and sort
@@ -57,7 +57,7 @@ indexing, access from other devices, backups) follow **[DEPLOY.md](DEPLOY.md)**.
 ```sh
 go build -o archivis ./cmd/archivis
 sudo mkdir -p /usr/local/bin && sudo install -m 755 archivis /usr/local/bin/archivis   # on your PATH
-archivis setup          # downloads ONNX Runtime + models (~800 MB) into ~/.archivis
+archivis setup          # downloads ONNX Runtime + models (~900 MB) into ~/.archivis
 ```
 
 (Without the install step, run it as `./archivis` from this folder instead.
@@ -115,6 +115,7 @@ archivis aesthetic models  # every aesthetic model used, and the current blend
 archivis retag          # after editing ~/.archivis/categories.txt
 archivis prune /Volumes/Archive1   # forget files deleted from that drive
 archivis index --prune /Volumes/Archive1 /Volumes/Archive2   # index, then forget deleted files if both drives are there
+archivis quality backfill   # MUSIQ-score photos indexed before it was installed (or nightly: index --backfill 2h)
 archivis stats ; archivis errors
 archivis inspect --previews ~/Desktop/check /Volumes/Card/DCIM   # what Archivis reads from your camera's files
 ```
@@ -170,7 +171,7 @@ they were fixed. Headlines: 99.65% on the LFW face-verification benchmark;
 99.9% precision / 98.9% recall when naming people from a single confirmed
 face among 5,400 strangers; a scripted "label every photo of this person" task
 completed 10/10 times in 3.0 actions; technical score agrees with human
-ratings at Spearman 0.63 on held-out photos; training on 20 of a person's
+ratings at Spearman 0.77 on held-out photos with MUSIQ (0.63 without); training on 20 of a person's
 own ratings cuts the aesthetic score's error for that person by a fifth. Rerun everything with
 `tools/validate/`.
 

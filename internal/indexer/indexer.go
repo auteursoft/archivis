@@ -367,6 +367,9 @@ func (ix *Indexer) process(j job) (o outcome) {
 		o.err = err
 		return
 	}
+	if a.MUSIQErr != nil {
+		ix.logf("warning: %s: %v (rated by its measurements; archivis quality backfill tries MUSIQ again)\n", j.path, a.MUSIQErr)
+	}
 	ix.Stats.Indexed.Add(1)
 	o.res, o.faces = a.Result, len(a.Faces)
 	return

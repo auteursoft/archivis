@@ -1,0 +1,3 @@
+long_edge,size,tokens,cpu_s_per_photo,wall_s_one_photo_all_cores,cores,photos,cpu_hours,wall_hours_all_cores
+512,512x384,385,0.811,0.282,4,263000,59.2,14.8
+1600,1600x1200,2093,3.998,1.257,4,263000,292.1,73.0

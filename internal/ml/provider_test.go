@@ -1,6 +1,7 @@
 package ml
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -84,6 +85,48 @@ func TestProviderMatchesCPU(t *testing.T) {
 		t.Logf("CLIP text %q: %s vs cpu cos %.5f", s, prov, c)
 		if c < 0.99 {
 			t.Errorf("CLIP text %q: %s differs from the CPU (cos %.5f)", s, prov, c)
+		}
+	}
+
+	// MUSIQ (archivis loads it with CLIP's options: on a Mac, CoreML by
+	// default), on the synthetic fixtures and the photos at 512 px
+	musiqs := map[string]*MUSIQ{}
+	for name, o := range map[string]Options{"cpu": cpu, prov: other} {
+		m, err := NewMUSIQ(dir, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer m.Close()
+		musiqs[name] = m
+	}
+	musiqImgs := map[string]*imageio.RGB{}
+	for _, c := range musiqCases(t) {
+		musiqImgs[fmt.Sprintf("fixture %dx%d", c.W, c.H)] = musiqImage(c.W, c.H)
+	}
+	for _, name := range photos {
+		d, err := imageio.Load("testdata/"+name, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		img := d.Img
+		if max(img.W, img.H) > MUSIQSize { // as quality.RatingImage
+			w, h := imageio.FitWithin(img.W, img.H, MUSIQSize)
+			img = imageio.Resize(img, w, h, imageio.Bilinear)
+		}
+		musiqImgs[name] = img
+	}
+	for name, img := range musiqImgs {
+		a, err := musiqs["cpu"].Score(img)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := musiqs[prov].Score(img)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("MUSIQ %s: cpu %.3f, %s %.3f", name, a, prov, b)
+		if math.Abs(a-b) > 0.5 {
+			t.Errorf("MUSIQ %s: %s scores %.3f, the CPU %.3f", name, prov, b, a)
 		}
 	}
 

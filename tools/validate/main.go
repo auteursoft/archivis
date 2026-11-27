@@ -4,8 +4,8 @@
 //	validate detect   -models M -det 640 -out det.csv DIR...       face detections per image
 //	validate lfwpairs -data D -lfw ROOT -pairs pairs.txt -out p.csv  verification scores from a catalogue
 //	validate autolabel -data D -lfw ROOT -k 1 -out a.csv             simulate naming people, then auto-match (on a snapshot of D)
-//	validate ladder   -out l.csv DIR...                              quality metrics under graded degradations
-//	validate quality  -out q.csv DIR...                              quality metrics per image (for MOS)
+//	validate ladder   [-models M] -out l.csv DIR...                  quality metrics under graded degradations; with -models, MUSIQ's score too
+//	validate quality  [-models M] -out q.csv DIR...                  quality metrics per image (for MOS); with -models, MUSIQ's score too
 //	validate text     -data D -models M -queries q.tsv -out t.csv    text search rankings
 //	validate personal -eva EVA -clip eva_clip.csv -out p.csv         training on one person's aesthetic judgements
 package main
@@ -567,6 +567,7 @@ func ladder(args []string) error {
 	maxDim := fs.Int("max", 1600, "resize inputs so the long edge is at most this")
 	only := fs.String("only", "", "comma-separated degradations to run (default all)")
 	limit := fs.Int("n", 0, "use at most this many images")
+	models := fs.String("models", "", "models dir: also score every version with MUSIQ (musiq/koniq.onnx), as validate quality -models does")
 	fs.Parse(args)
 	sel := map[string]bool{}
 	for _, d := range strings.Split(*only, ",") {
@@ -574,13 +575,23 @@ func ladder(args []string) error {
 			sel[d] = true
 		}
 	}
+	var mq *ml.MUSIQ
+	if *models != "" {
+		var err error
+		if mq, err = ml.NewMUSIQ(*models, initORT()); err != nil {
+			return err
+		}
+		defer mq.Close()
+	}
 	imgs := listImages(fs.Args())
 	if *limit > 0 && len(imgs) > *limit {
 		imgs = imgs[:*limit]
 	}
-	w, done := csvOut(*out, append([]string{"image", "degradation", "level"}, metricHeader...))
+	// musiq, rating_musiq: as in validate quality (empty without -models)
+	w, done := csvOut(*out, append(append([]string{"image", "degradation", "level"}, metricHeader...), "musiq", "rating_musiq"))
 	defer done()
 	var mu sync.Mutex
+	failed := 0
 	parallel(imgs, 4, func(p string) {
 		d, err := imageio.Load(p, *maxDim)
 		if err != nil {
@@ -588,40 +599,105 @@ func ladder(args []string) error {
 		}
 		r := rand.New(rand.NewSource(int64(len(p))))
 		id := filepath.Base(p)
-		rows := [][]string{append([]string{id, "none", "0"}, metricRow(quality.Analyze(d.Img), naiveLaplacian(d.Img), quality.Rate(d.Img), quality.GrayEdgeCast(d.Img), imageio.BlockinessRGB(d.Img))...)}
+		row := func(img *imageio.RGB, dg string, lv float64) ([]string, error) {
+			out := append([]string{id, dg, ff(lv)}, metricRow(quality.Analyze(img), naiveLaplacian(img), quality.Rate(img), quality.GrayEdgeCast(img), imageio.BlockinessRGB(img))...)
+			s, rm := "", ""
+			if mq != nil {
+				small := quality.RatingImage(img)
+				v, err := mq.Score(small)
+				if err != nil {
+					return nil, err
+				}
+				s, rm = ff(v), ff(quality.RateWith(quality.Analyze(small), v))
+			}
+			return append(out, s, rm), nil
+		}
+		var rows [][]string
+		fail := func(err error) {
+			mu.Lock()
+			failed++
+			mu.Unlock()
+			fmt.Fprintf(os.Stderr, "%s: musiq: %v\n", p, err)
+		}
+		o, err := row(d.Img, "none", 0)
+		if err != nil {
+			fail(err)
+			return
+		}
+		rows = append(rows, o)
 		for _, dg := range degradations {
 			if len(sel) > 0 && !sel[dg.name] {
 				continue
 			}
 			for _, lv := range dg.levels {
-				img := dg.apply(d.Img, lv, r)
-				rows = append(rows, append([]string{id, dg.name, ff(lv)}, metricRow(quality.Analyze(img), naiveLaplacian(img), quality.Rate(img), quality.GrayEdgeCast(img), imageio.BlockinessRGB(img))...))
+				x, err := row(dg.apply(d.Img, lv, r), dg.name, lv)
+				if err != nil {
+					fail(err)
+					return
+				}
+				rows = append(rows, x)
 			}
 		}
 		mu.Lock()
 		w.WriteAll(rows)
 		mu.Unlock()
 	})
+	if failed > 0 {
+		return fmt.Errorf("MUSIQ failed on %d images", failed)
+	}
 	return nil
 }
 
 func qualityCmd(args []string) error {
 	fs := flag.NewFlagSet("quality", flag.ExitOnError)
 	out := fs.String("out", "quality.csv", "output")
+	models := fs.String("models", "", "models dir: also score with MUSIQ (musiq/koniq.onnx), as archivis does")
+	workers := fs.Int("workers", 4, "parallel images")
 	fs.Parse(args)
-	w, done := csvOut(*out, append([]string{"image"}, metricHeader...))
+	if *workers < 1 {
+		return fmt.Errorf("-workers must be at least 1")
+	}
+	var mq *ml.MUSIQ
+	if *models != "" {
+		var err error
+		if mq, err = ml.NewMUSIQ(*models, initORT()); err != nil {
+			return err
+		}
+		defer mq.Close()
+	}
+	// musiq: the score archivis stores (ml.MUSIQ on quality.RatingImage);
+	// rating_musiq: the technical rating that score gives (quality.RateWith)
+	w, done := csvOut(*out, append(append([]string{"image"}, metricHeader...), "musiq", "rating_musiq"))
 	defer done()
 	var mu sync.Mutex
-	parallel(listImages(fs.Args()), 4, func(p string) {
+	failed := 0
+	parallel(listImages(fs.Args()), *workers, func(p string) {
 		d, err := imageio.Load(p, indexer.WorkSize)
 		if err != nil {
 			return
 		}
 		row := append([]string{filepath.Base(p)}, metricRow(quality.Analyze(d.Img), naiveLaplacian(d.Img), quality.Rate(d.Img), quality.GrayEdgeCast(d.Img), d.Blockiness)...)
+		s, r := "", ""
+		if mq != nil {
+			small := quality.RatingImage(d.Img)
+			v, err := mq.Score(small)
+			if err != nil {
+				mu.Lock()
+				failed++
+				mu.Unlock()
+				fmt.Fprintf(os.Stderr, "%s: musiq: %v\n", p, err)
+				return
+			}
+			s, r = ff(v), ff(quality.RateWith(quality.Analyze(small), v))
+		}
+		row = append(row, s, r)
 		mu.Lock()
 		w.Write(row)
 		mu.Unlock()
 	})
+	if failed > 0 {
+		return fmt.Errorf("MUSIQ failed on %d images", failed)
+	}
 	return nil
 }
 
@@ -632,6 +708,9 @@ func clipCmd(args []string) error {
 	out := fs.String("out", "clip.csv", "output")
 	workers := fs.Int("workers", 4, "parallel images")
 	fs.Parse(args)
+	if *workers < 1 {
+		return fmt.Errorf("-workers must be at least 1")
+	}
 	o := initORT()
 	c, err := ml.NewCLIP(filepath.Join(*models, "clip"), o)
 	if err != nil {

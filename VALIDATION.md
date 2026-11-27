@@ -24,6 +24,7 @@ timings are pessimistic.
 | Face detection | Open Images V5, 500 photos, 929 human-drawn face boxes | recall **87.3%** overall, **92.9%** for unoccluded faces ≥ 32 px (was 85.0% / 90.6%); false detections on face-free photos 9.3% |
 | Pets mistaken for people | 1,998 Oxford-IIIT Pets photos | **10.7%** counted as "with people" (was 31.9% with any face) |
 | Technical quality vs people | BIQ2021 test split, 2,000 photos × 30 raters | Spearman **0.63** (was 0.43); separates worst from best quarter 92% of the time |
+| Technical quality vs people, with MUSIQ | BIQ2021 test split, as above; MUSIQ never saw BIQ2021 | Spearman **0.768** [0.746, 0.788], **+0.141** [+0.123, +0.159] over the technical score without it; worst vs best quarter 96% |
 | Aesthetics vs people | EVA, 4,070 photos × ~30 raters (photos unseen by the model) | Spearman **0.78** (LAION predictor it replaced: 0.42); the raters' own panel reliability is 0.90 |
 | Learning one person's taste | 25 EVA raters, their own held-out votes, 75 trials per row | error **1.81 → 1.46** points after 20 ratings; rank agreement **0.477 → 0.517** after 400; worse in < 1% of trials |
 | Overall score vs people | EVA appeal ratings / BIQ2021 quality ratings | **0.71 / 0.71** (was 0.41 / 0.64) |
@@ -229,7 +230,10 @@ score, versus **23%** with the textbook Laplacian-variance measure.
 
 | Score | Spearman | Pearson |
 |---|---|---|
-| **Technical (shipped)** | **0.628** | 0.678 |
+| **Technical with MUSIQ (shipped, for photos MUSIQ has scored)** | **0.768** | 0.802 |
+| Rating with MUSIQ, before penalties | 0.777 | 0.807 |
+| MUSIQ alone (KonIQ checkpoint) | 0.753 | 0.782 |
+| **Technical without MUSIQ (shipped)** | **0.628** | 0.678 |
 | Human-calibrated rating alone | 0.632 | 0.687 |
 | Original hand-weighted formula | 0.427 | 0.476 |
 | Focus alone | 0.442 | 0.481 |
@@ -246,6 +250,46 @@ harness output refits it identically (coefficients equal to 1e-15), and
 applied to the exported features on all 1,998 test photos (max difference
 0.0001 points). That check fails, by up to 14 points, if the model is fed the
 reported grey-edge cast instead of its own colour input (`lab_cast`).
+
+### Technical rating with MUSIQ
+
+Photos MUSIQ has scored (`archivis setup` installs it; older photos with
+`archivis quality backfill`) are rated by Google Research's MUSIQ (Ke et
+al., ICCV 2021; its KonIQ-10k checkpoint, run in Go through ONNX Runtime at
+512 px) together with the measurements above, in the same quadratic ridge,
+fit on the BIQ2021 train split only. Measured on the 2,000 test photos
+through archivis's own code, with 95% bootstrap intervals:
+
+| Score | Spearman [95% CI] | vs technical without MUSIQ [paired] |
+|---|---|---|
+| Technical without MUSIQ | 0.627 [0.597, 0.655] | — |
+| MUSIQ alone | 0.753 [0.729, 0.775] | |
+| Rating with MUSIQ | 0.777 [0.756, 0.796] | |
+| **Technical with MUSIQ** | **0.768** [0.746, 0.788] | **+0.141** [+0.123, +0.159] |
+
+The exposure, colour and JPEG penalties were tuned again for the new
+rating, by the same rule and tool (`tools/validate/tune_penalties.py`) on
+tuning data only: the strongest that cost at most 0.01 on BIQ2021 train.
+They came out milder, exposure 0.1, colour 0 and compression 0.1 (0.1 / 0.1
+/ 0.2 without MUSIQ, which the same run chooses again for today's rating).
+Today's strengths would have cost the new rating 0.028; these cost 0.009.
+There is **no colour penalty**: even 0.1 cost 0.014, because people (and
+MUSIQ) seldom mark a warm or tinted photo down. Casts stay reported by the
+colour score and the thumbnail badge.
+
+On a rebuilt set of 153 photos with applied defects (`tools/musiq/
+ladder_photos.txt`; the original set was not recorded), the 73 held out
+from tuning show what that trades. Against the technical score without
+MUSIQ, the new one falls further below the original photo for over-exposure
+(AUC 0.74 vs 0.55 at +2 EV), JPEG (0.81 vs 0.69 at quality 8), blur and
+motion blur. It falls less for colour casts (0.47 vs 0.52–0.59 at 35%:
+no longer at all), and slightly less for under-exposure, noise and haze
+(from the MUSIQ rating itself). The separate focus, exposure, colour and
+noise scores are unchanged and still flag each defect.
+
+Details, commands and every number: `tools/musiq/FIT.md`; the earlier
+PyTorch benchmark (and why MUSIQ was not adopted for aesthetics):
+`tools/musiq/RESULTS.md`.
 
 ### What the testing changed
 

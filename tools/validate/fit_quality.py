@@ -2,6 +2,11 @@
 """Fit and evaluate technical-quality models on BIQ2021 (official train/test split).
 
     fit_quality.py train_quality.csv train_mos.csv test_quality.csv test_mos.csv [train_clip.csv test_clip.csv]
+        [--export rating_model.json] [--export-musiq rating_musiq_model.json]
+
+--export writes the shipped rating model (archivis's measurements);
+--export-musiq the one that adds MUSIQ's score (the "musiq" column that
+`validate quality -models` writes), used for photos MUSIQ has scored.
 """
 import csv
 import sys
@@ -84,7 +89,7 @@ if len(sys.argv) > 6 and not sys.argv[5].startswith("--"):
     print(f"  CLIP head alpha={cr.alpha_}; weights saved to clip_quality_head.npy")
 
 
-def export_quadratic(Xtr, ytr, path):
+def export_quadratic(Xtr, ytr, path, features=RAW):
     """Fit the shipped rating model (quadratic ridge) and write its parameters."""
     import json
     from sklearn.preprocessing import PolynomialFeatures
@@ -93,7 +98,7 @@ def export_quadratic(Xtr, ytr, path):
     s1, pf, s2, rg = pipe.steps[0][1], pipe.steps[1][1], pipe.steps[2][1], pipe.steps[3][1]
     s2scale = np.where(s2.scale_ == 0, 1, s2.scale_)
     json.dump({
-        "features": RAW, "log_features": ["sharpness", "sharpness_global", "noise"],
+        "features": list(features), "log_features": ["sharpness", "sharpness_global", "noise"],
         "mean1": s1.mean_.tolist(), "scale1": s1.scale_.tolist(),
         "powers": pf.powers_.tolist(),
         "mean2": s2.mean_.tolist(), "scale2": s2scale.tolist(),
@@ -106,3 +111,12 @@ def export_quadratic(Xtr, ytr, path):
 if __name__ == "__main__" and "--export" in sys.argv:
     p = export_quadratic(Xtr, ytr, sys.argv[sys.argv.index("--export") + 1])
     report("exported quadratic model", p.predict(Xte), yte)
+
+if __name__ == "__main__" and "--export-musiq" in sys.argv:
+    # archivis's measurements plus MUSIQ's score (0-100), in the same
+    # quadratic ridge, fit on train only
+    mtr = np.array([float(qtr[k]["musiq"]) for k in ktr])
+    mte = np.array([float(qte[k]["musiq"]) for k in kte])
+    report("MUSIQ alone (Go/ONNX)", mte, yte)
+    p = export_quadratic(np.c_[Xtr, mtr], ytr, sys.argv[sys.argv.index("--export-musiq") + 1], RAW + ["musiq"])
+    report("exported quadratic model with MUSIQ", p.predict(np.c_[Xte, mte]), yte)

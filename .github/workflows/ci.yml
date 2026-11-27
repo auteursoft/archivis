@@ -75,7 +75,7 @@ jobs:
           ARCHIVIS_REQUIRE_MODELS: "1"
           ARCHIVIS_TEST_MODELS: ${{ env.DATA }}/models
           ONNXRUNTIME_LIB: ${{ env.DATA }}/lib/${{ matrix.lib }}
-        run: go test -count=1 -v -run 'Faces|CLIP|Tokenizer' ./internal/ml/
+        run: go test -count=1 -v -run 'Faces|CLIP|Tokenizer|MUSIQ' ./internal/ml/
       # CoreML, with every unit and with the CPU and GPU only, gives what the
       # CPU gives (runners have no Neural Engine or GPU to use, but ORT must
       # take each setting: a refused one falls back to the CPU with a warning,
@@ -164,6 +164,27 @@ jobs:
           /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$i" "$p"   # as set up before --prune
           case "$(args)" in *--prune*) echo "::error::--prune not deleted"; exit 1 ;; esac
           tools/deploy-test/block.sh prune-on | zsh
+          check
+      - name: Turn on the MUSIQ backfill (already on, then on a job set up without it)
+        shell: zsh -e -o pipefail {0}
+        run: |
+          p=~/Library/LaunchAgents/com.archivis.index.plist
+          args() { plutil -extract ProgramArguments json -o - "$p" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)))'; }
+          check() {
+            a=$(args)
+            [ "$(grep -o -- ' --backfill 2h ' <<<" $a " | wc -l | tr -d ' ')" = 1 ] || { echo "::error::want one --backfill 2h: $a"; exit 1; }
+            case "$a" in *" index "*"--backfill 2h"*) ;; *) echo "::error::--backfill not after index: $a"; exit 1 ;; esac
+            [ "$(grep -o -- ' --prune ' <<<" $a " | wc -l | tr -d ' ')" = 1 ] || { echo "::error::--prune lost: $a"; exit 1; }
+            launchctl print gui/$(id -u)/com.archivis.index >/dev/null || { echo "::error::the index agent is not loaded"; exit 1; }
+            echo "backfill: ok ($a)"
+          }
+          tools/deploy-test/block.sh backfill-on | zsh   # the agent from step 7 has it: nothing changes
+          check
+          i=$(plutil -extract ProgramArguments json -o - "$p" | python3 -c 'import json,sys; print(json.load(sys.stdin).index("--backfill"))')
+          /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$i" "$p"   # "--backfill"
+          /usr/libexec/PlistBuddy -c "Delete :ProgramArguments:$i" "$p"   # its "2h": as set up before it
+          case "$(args)" in *--backfill*|*" 2h "*) echo "::error::--backfill not deleted"; exit 1 ;; esac
+          tools/deploy-test/block.sh backfill-on | zsh
           check
       - name: Move to system services
         shell: zsh {0}

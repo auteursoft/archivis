@@ -525,7 +525,7 @@ func TestScoreChangesMakeGroupsStale(t *testing.T) {
 	}
 	var seq int64
 	st.DB.QueryRow(`SELECT seq FROM photos WHERE id = ?`, ps[1].ID).Scan(&seq)
-	if err := st.SetBlendedScores([]BlendUpdate{{ID: ps[1].ID, Seq: seq, Aesthetic: sql.NullFloat64{Float64: 5, Valid: true}, Overall: 98}}); err != nil {
+	if err := st.SetBlendedScores([]BlendUpdate{{ID: ps[1].ID, Seq: seq, Aesthetic: sql.NullFloat64{Float64: 5, Valid: true}, Overall: 98}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !st.GroupsStale(o) {
